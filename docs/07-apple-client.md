@@ -57,6 +57,7 @@ Implemented:
 - `contextRequest` forwarding for current file, current folder, and workspace scopes
 - basic live event rendering for assistant, thinking, tool, approval, and system events
 - grouped, collapsible thinking/tool activity rows, one activity group per user turn
+- streaming thinking/reasoning deltas coalesced into smooth activity blocks instead of one row per token
 - approval and denial buttons for `approval.request` events
 - normalized Hermes session menu titles instead of raw generated session ids
 - macOS activation fix for `swift run AIWorkspace`, so the launched window becomes the key app for keyboard input
@@ -122,6 +123,9 @@ events are grouped into a single collapsible activity row for the current user
 turn. `message.complete`, `turn.complete`, and related completion events close
 the current activity group so late events do not create extra rows after the
 answer.
+
+User messages are right-aligned and assistant messages remain left-aligned, so
+chat turns are visually easier to scan.
 
 ## Chat Context Scopes
 

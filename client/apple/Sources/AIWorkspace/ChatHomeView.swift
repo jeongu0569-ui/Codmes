@@ -8,7 +8,7 @@ struct ChatHomeView: View {
         VStack(spacing: 0) {
             HeaderView(title: "Hermes Chat", subtitle: store.workspace?.hermes.serverUrl ?? "No Hermes server loaded")
             ScrollView {
-                VStack(alignment: .leading, spacing: 14) {
+                VStack(spacing: 14) {
                     ForEach(store.chatLines) { line in
                         MessageBubble(line: line) { approved in
                             Task { await store.respondToApproval(lineId: line.id, approved: approved) }
@@ -128,22 +128,58 @@ struct MessageBubble: View {
     @State private var activityExpanded = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(line.role.uppercased())
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-            if line.role == "activity" {
-                activityView
-            } else {
-                Text(line.text)
-                    .textSelection(.enabled)
+        HStack {
+            if line.role == "user" {
+                Spacer(minLength: 52)
             }
-            if line.role == "approval", let state = line.approvalState {
-                approvalControls(state)
+
+            VStack(alignment: bubbleAlignment, spacing: 6) {
+                Text(roleLabel)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                if line.role == "activity" {
+                    activityView
+                } else {
+                    Text(line.text)
+                        .textSelection(.enabled)
+                        .multilineTextAlignment(line.role == "user" ? .trailing : .leading)
+                }
+                if line.role == "approval", let state = line.approvalState {
+                    approvalControls(state)
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: 720, alignment: frameAlignment)
+            .background(bubbleBackground, in: RoundedRectangle(cornerRadius: 10))
+
+            if line.role != "user" {
+                Spacer(minLength: 52)
             }
         }
-        .padding(12)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+        .frame(maxWidth: .infinity, alignment: frameAlignment)
+    }
+
+    private var roleLabel: String {
+        switch line.role {
+        case "user": "YOU"
+        case "assistant": "AI"
+        default: line.role.uppercased()
+        }
+    }
+
+    private var bubbleAlignment: HorizontalAlignment {
+        line.role == "user" ? .trailing : .leading
+    }
+
+    private var frameAlignment: Alignment {
+        line.role == "user" ? .trailing : .leading
+    }
+
+    private var bubbleBackground: AnyShapeStyle {
+        if line.role == "user" {
+            return AnyShapeStyle(.tint.opacity(0.18))
+        }
+        return AnyShapeStyle(.quaternary.opacity(0.35))
     }
 
     private var activityView: some View {

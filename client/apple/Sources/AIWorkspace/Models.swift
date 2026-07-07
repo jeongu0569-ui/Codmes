@@ -135,7 +135,7 @@ struct ChatLine: Identifiable {
 struct ChatActivity: Identifiable {
     let id = UUID()
     let type: String
-    let text: String
+    var text: String
 }
 
 enum ApprovalState: String {

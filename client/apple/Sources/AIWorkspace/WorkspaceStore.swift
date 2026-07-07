@@ -343,7 +343,7 @@ final class WorkspaceStore: ObservableObject {
         }
 
         if type.contains("thinking") || type.contains("reasoning") {
-            if isChatTurnOpen && !text.isEmpty {
+            if isChatTurnOpen && isMeaningfulActivityText(text) {
                 appendActivity(type: type, text: text)
             }
             return
@@ -399,10 +399,18 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func appendActivity(type: String, text: String) {
-        let item = ChatActivity(type: type, text: text.isEmpty ? type : text)
+        let group = activityGroup(for: type)
+        let item = ChatActivity(type: group, text: text.isEmpty ? group : text)
         if let activeActivityLineId,
            let index = chatLines.firstIndex(where: { $0.id == activeActivityLineId }) {
-            chatLines[index].activityItems.append(item)
+            if let itemIndex = chatLines[index].activityItems.firstIndex(where: { $0.type == group }) {
+                chatLines[index].activityItems[itemIndex].text = mergeActivityText(
+                    chatLines[index].activityItems[itemIndex].text,
+                    text
+                )
+            } else {
+                chatLines[index].activityItems.append(item)
+            }
             chatLines[index].text = activitySummary(chatLines[index].activityItems)
         } else {
             let line = ChatLine(role: "activity", text: activitySummary([item]), activityItems: [item])
@@ -412,13 +420,47 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private func activitySummary(_ items: [ChatActivity]) -> String {
-        let toolCount = items.filter { $0.type.contains("tool") }.count
-        let thoughtCount = items.count - toolCount
+        let toolCount = items.filter { $0.type == "Tool" }.count
+        let thoughtCount = items.filter { $0.type == "Thinking" || $0.type == "Reasoning" }.count
         let parts = [
-            thoughtCount > 0 ? "\(thoughtCount) thoughts" : nil,
+            thoughtCount > 0 ? "thinking" : nil,
             toolCount > 0 ? "\(toolCount) tools" : nil
         ].compactMap { $0 }
         return parts.isEmpty ? "Activity" : "Activity · " + parts.joined(separator: " · ")
+    }
+
+    private func activityGroup(for type: String) -> String {
+        if type.contains("tool") {
+            return "Tool"
+        }
+        if type.contains("reasoning") {
+            return "Reasoning"
+        }
+        return "Thinking"
+    }
+
+    private func isMeaningfulActivityText(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty { return false }
+        if trimmed == #"{"text":""}"# || trimmed == #"{"text": ""}"# {
+            return false
+        }
+        return true
+    }
+
+    private func mergeActivityText(_ current: String, _ incoming: String) -> String {
+        guard !incoming.isEmpty else { return current }
+        guard !current.isEmpty else { return incoming }
+        if current.last?.isWhitespace == true || incoming.first?.isWhitespace == true {
+            return current + incoming
+        }
+        if incoming.first?.isPunctuation == true {
+            return current + incoming
+        }
+        if current.last?.isASCIIAlphaNumeric == true && incoming.first?.isASCIIAlphaNumeric == true {
+            return current + " " + incoming
+        }
+        return current + incoming
     }
 
     private func isAssistantDelta(_ type: String) -> Bool {
@@ -467,5 +509,16 @@ final class WorkspaceStore: ObservableObject {
     private func parentPath(_ path: String) -> String {
         guard let slashIndex = path.lastIndex(of: "/") else { return "" }
         return String(path[..<slashIndex])
+    }
+}
+
+private extension Character {
+    var isASCIIAlphaNumeric: Bool {
+        guard let scalar = unicodeScalars.first, unicodeScalars.count == 1 else {
+            return false
+        }
+        return (65...90).contains(Int(scalar.value))
+            || (97...122).contains(Int(scalar.value))
+            || (48...57).contains(Int(scalar.value))
     }
 }
