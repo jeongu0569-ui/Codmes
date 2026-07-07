@@ -112,6 +112,7 @@ to the client.
 - [MVP roadmap](docs/05-mvp-roadmap.md)
 - [Hermes integration notes](docs/06-hermes-integration.md)
 - [Apple client](docs/07-apple-client.md)
+- [Run commands](docs/08-run-commands.md)
 
 ## Run The macOS Client Shell
 
