@@ -57,18 +57,16 @@ Status: in progress.
   - Chat
   - Notes
   - Code
-- Notes file tree. Initial root listing done.
+- Notes file tree. Recursive Notes and Code folder navigation done in the macOS client.
 - Markdown editor.
 - PDF viewer through server raw file endpoint.
-- Hermes chat view. Placeholder done; live `/api/live` wiring remains.
+- Hermes chat view. Live `/api/live` wiring, context scope picker, and approval controls done in the macOS client.
 - Search view. Done with `POST /api/search`.
 
 Remaining:
 
-- Recursive folder navigation.
 - Markdown editing and save.
 - PDF/raw file viewer.
-- `/api/live` chat client wiring.
 - iOS target/project packaging.
 
 ## Phase 4: Notes Context Router

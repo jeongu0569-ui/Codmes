@@ -39,6 +39,7 @@ Implemented:
 - workspace status loading
 - Notes root listing
 - Code root listing
+- recursive Notes and Code folder navigation
 - text/markdown file preview
 - workspace search UI
 - Hermes live chat connection through the Workspace Server
@@ -51,7 +52,6 @@ Implemented:
 
 Not yet implemented:
 
-- recursive folder navigation
 - markdown editing and save
 - PDF rendering
 - model/session picker UI

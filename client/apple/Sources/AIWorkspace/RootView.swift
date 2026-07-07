@@ -20,9 +20,9 @@ struct RootView: View {
             case .chat:
                 ChatHomeView()
             case .notes:
-                FileSectionView(title: "Notes", root: "notes", items: store.notes)
+                FileSectionView(title: "Notes", root: "notes")
             case .code:
-                FileSectionView(title: "Code", root: "code", items: store.code)
+                FileSectionView(title: "Code", root: "code")
             case .search:
                 SearchView()
             }
@@ -61,4 +61,3 @@ struct ServerStatusView: View {
         }
     }
 }
-

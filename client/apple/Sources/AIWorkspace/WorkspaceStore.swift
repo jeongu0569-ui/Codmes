@@ -6,6 +6,8 @@ final class WorkspaceStore: ObservableObject {
     @Published var workspace: WorkspaceInfo?
     @Published var notes: [WorkspaceItem] = []
     @Published var code: [WorkspaceItem] = []
+    @Published var notesPath = ""
+    @Published var codePath = ""
     @Published var selectedFile: FileResponse?
     @Published var searchResponse: SearchResponse?
     @Published var chatLines: [ChatLine] = [
@@ -36,12 +38,44 @@ final class WorkspaceStore: ObservableObject {
         defer { isLoading = false }
         do {
             workspace = try await api.workspace()
-            notes = try await api.tree(root: "notes").children
-            code = try await api.tree(root: "code").children
+            let notesTree = try await api.tree(root: "notes", path: notesPath)
+            let codeTree = try await api.tree(root: "code", path: codePath)
+            notes = notesTree.children
+            code = codeTree.children
             statusMessage = "Connected"
         } catch {
             statusMessage = error.localizedDescription
         }
+    }
+
+    func items(for root: String) -> [WorkspaceItem] {
+        root == "code" ? code : notes
+    }
+
+    func currentPath(for root: String) -> String {
+        root == "code" ? codePath : notesPath
+    }
+
+    func sectionSubtitle(root: String) -> String {
+        let path = currentPath(for: root)
+        let rootName = root == "code" ? "Code" : "Notes"
+        return path.isEmpty ? rootName : "\(rootName)/\(path)"
+    }
+
+    func openFolder(root: String, item: WorkspaceItem) async {
+        guard item.isDirectory else { return }
+        await loadTree(root: root, path: nestedPath(root: root, workspacePath: item.path))
+    }
+
+    func goToRoot(root: String) async {
+        await loadTree(root: root, path: "")
+    }
+
+    func goToParent(root: String) async {
+        let path = currentPath(for: root)
+        guard !path.isEmpty else { return }
+        let parent = parentPath(path)
+        await loadTree(root: root, path: parent)
     }
 
     func loadFile(_ item: WorkspaceItem) async {
@@ -51,6 +85,25 @@ final class WorkspaceStore: ObservableObject {
         do {
             selectedFile = try await api.file(path: item.path)
             statusMessage = "Opened \(item.name)"
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    private func loadTree(root: String, path: String) async {
+        guard let api else { return }
+        isLoading = true
+        defer { isLoading = false }
+        do {
+            let tree = try await api.tree(root: root, path: path)
+            if root == "code" {
+                codePath = path
+                code = tree.children
+            } else {
+                notesPath = path
+                notes = tree.children
+            }
+            statusMessage = tree.path.isEmpty ? "Opened workspace root" : "Opened \(tree.path)"
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -201,6 +254,19 @@ final class WorkspaceStore: ObservableObject {
 
     private var selectedFolderPath: String {
         guard let path = selectedFile?.path else { return "" }
+        guard let slashIndex = path.lastIndex(of: "/") else { return "" }
+        return String(path[..<slashIndex])
+    }
+
+    private func nestedPath(root: String, workspacePath: String) -> String {
+        let rootName = root == "code" ? "Code" : "Notes"
+        if workspacePath == rootName { return "" }
+        let prefix = rootName + "/"
+        guard workspacePath.hasPrefix(prefix) else { return workspacePath }
+        return String(workspacePath.dropFirst(prefix.count))
+    }
+
+    private func parentPath(_ path: String) -> String {
         guard let slashIndex = path.lastIndex(of: "/") else { return "" }
         return String(path[..<slashIndex])
     }

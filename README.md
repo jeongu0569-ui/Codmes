@@ -127,7 +127,7 @@ Current client shell:
 - sidebar with Chat, Notes, Code, Search
 - server URL setting
 - workspace status
-- Notes and Code root listing
+- recursive Notes and Code folder navigation
 - text/markdown file preview
 - search form backed by `POST /api/search`
 - Chat view backed by `WS /api/live`

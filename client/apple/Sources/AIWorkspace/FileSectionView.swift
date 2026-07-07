@@ -4,15 +4,50 @@ struct FileSectionView: View {
     @EnvironmentObject private var store: WorkspaceStore
     let title: String
     let root: String
-    let items: [WorkspaceItem]
 
     var body: some View {
         HSplitView {
             VStack(spacing: 0) {
-                HeaderView(title: title, subtitle: root)
-                List(items) { item in
+                HeaderView(title: title, subtitle: store.sectionSubtitle(root: root))
+                HStack(spacing: 12) {
                     Button {
-                        Task { await store.loadFile(item) }
+                        Task { await store.goToParent(root: root) }
+                    } label: {
+                        Image(systemName: "chevron.up")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(store.currentPath(for: root).isEmpty)
+                    .help("Go to parent folder")
+
+                    Button {
+                        Task { await store.goToRoot(root: root) }
+                    } label: {
+                        Image(systemName: "house")
+                    }
+                    .buttonStyle(.borderless)
+                    .disabled(store.currentPath(for: root).isEmpty)
+                    .help("Go to root folder")
+
+                    Text(store.currentPath(for: root).isEmpty ? "/" : store.currentPath(for: root))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+
+                    Spacer()
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 8)
+
+                List(store.items(for: root)) { item in
+                    Button {
+                        Task {
+                            if item.isDirectory {
+                                await store.openFolder(root: root, item: item)
+                            } else {
+                                await store.loadFile(item)
+                            }
+                        }
                     } label: {
                         HStack {
                             Image(systemName: icon(for: item))
@@ -24,6 +59,11 @@ struct FileSectionView: View {
                                     .foregroundStyle(.secondary)
                             }
                             Spacer()
+                            if item.isDirectory {
+                                Image(systemName: "chevron.right")
+                                    .font(.caption)
+                                    .foregroundStyle(.tertiary)
+                            }
                         }
                     }
                     .buttonStyle(.plain)
@@ -68,4 +108,3 @@ struct FilePreviewView: View {
         }
     }
 }
-
