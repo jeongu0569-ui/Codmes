@@ -9,9 +9,8 @@ struct ChatHomeView: View {
             HeaderView(title: "Hermes Chat", subtitle: store.workspace?.hermes.serverUrl ?? "No Hermes server loaded")
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    MessageBubble(role: "system", text: "Hermes live chat will use WS /api/live. The server bridge is already implemented; this client shell is ready for the next wiring step.")
-                    if let workspace = store.workspace {
-                        MessageBubble(role: "workspace", text: "Workspace root: \(workspace.rootName)\nSearch: \(workspace.search?.provider ?? "unknown")")
+                    ForEach(store.chatLines) { line in
+                        MessageBubble(role: line.role, text: line.text)
                     }
                 }
                 .padding(24)
@@ -19,13 +18,23 @@ struct ChatHomeView: View {
             }
             Divider()
             HStack(spacing: 12) {
+                Button {
+                    Task { await store.connectLiveChat() }
+                } label: {
+                    Image(systemName: "bolt.horizontal")
+                }
+                .buttonStyle(.borderless)
+                .help("Connect live Hermes session")
+
                 TextField("Message Hermes...", text: $draft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .lineLimit(1...5)
                     .padding(10)
                     .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 8))
                 Button {
+                    let message = draft
                     draft = ""
+                    Task { await store.sendChatMessage(message) }
                 } label: {
                     Image(systemName: "paperplane.fill")
                 }
@@ -54,4 +63,3 @@ struct MessageBubble: View {
         .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
     }
 }
-

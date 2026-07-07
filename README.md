@@ -43,6 +43,7 @@ This repository currently contains the first server-side scaffold:
 - live Hermes WebSocket bridge at `WS /api/live`
 - workspace context router for note/folder/PDF/workspace scopes
 - fallback workspace text search API
+- macOS SwiftUI client shell with live Hermes chat wiring
 - architecture, API, data model, and roadmap docs
 
 The first macOS SwiftUI client shell lives in `client/apple`.
@@ -129,4 +130,6 @@ Current client shell:
 - Notes and Code root listing
 - text/markdown file preview
 - search form backed by `POST /api/search`
-- Chat placeholder ready for `/api/live` wiring
+- Chat view backed by `WS /api/live`
+- live Hermes session creation and message submit
+- basic assistant/thinking/tool/approval event rendering

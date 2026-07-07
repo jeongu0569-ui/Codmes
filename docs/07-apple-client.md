@@ -41,13 +41,19 @@ Implemented:
 - Code root listing
 - text/markdown file preview
 - workspace search UI
+- Hermes live chat connection through the Workspace Server
+- live session creation
+- message submit
+- basic live event rendering for assistant, thinking, tool, approval, and system events
 
 Not yet implemented:
 
 - recursive folder navigation
 - markdown editing and save
 - PDF rendering
-- Hermes live chat via `/api/live`
+- model/session picker UI
+- approval action buttons
+- rich thinking/tool grouping
 - iOS target packaging
 
 ## Client API Boundary
@@ -64,3 +70,28 @@ WS   /api/live
 
 It should not directly access filesystem paths or Hermes dashboard cookies.
 
+## Live Chat Flow
+
+The SwiftUI client does not connect to Hermes directly. It opens:
+
+```text
+WS /api/live
+```
+
+on the Workspace Server. The server is responsible for Hermes dashboard login,
+WebSocket ticket creation, Hermes live session routing, and approval forwarding.
+
+The current client flow is:
+
+```text
+Connect button or first message
+  -> WS /api/live
+  -> connect
+  -> session.create
+  -> prompt.submit
+  -> render hermes.event messages
+```
+
+The first implementation intentionally keeps the UI plain. It renders live
+events as chat rows so the transport can be tested before adding richer Codex-
+style grouped thinking and tool panels.

@@ -89,3 +89,8 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
     }
 }
 
+struct ChatLine: Identifiable {
+    let id = UUID()
+    let role: String
+    var text: String
+}
