@@ -69,6 +69,11 @@ struct AccessModeParams: Encodable {
     let accessMode: String
 }
 
+struct ReasoningModeParams: Encodable {
+    let sessionId: String
+    let reasoningEffort: String
+}
+
 struct ContextRequest: Encodable {
     let scopeType: String
     let scopePath: String?
@@ -139,6 +144,13 @@ actor LiveChatClient {
         _ = try await send(
             command: "config.accessMode",
             params: AccessModeParams(sessionId: sessionId, accessMode: accessMode)
+        )
+    }
+
+    func setReasoningMode(sessionId: String, reasoningEffort: String) async throws {
+        _ = try await send(
+            command: "config.reasoning",
+            params: ReasoningModeParams(sessionId: sessionId, reasoningEffort: reasoningEffort)
         )
     }
 

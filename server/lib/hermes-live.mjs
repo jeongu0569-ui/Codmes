@@ -123,7 +123,17 @@ export class HermesLiveClient extends EventEmitter {
     await this.request("config.set", {
       session_id: sessionId,
       key: "yolo",
-      value: accessMode === "full" ? "on" : "off",
+      value: accessMode === "full" ? "1" : "0",
+      scope: "session"
+    });
+  }
+
+  async setReasoning(sessionId, effort) {
+    if (!sessionId || !effort) return;
+    await this.request("config.set", {
+      session_id: sessionId,
+      key: "reasoning",
+      value: effort,
       scope: "session"
     });
   }

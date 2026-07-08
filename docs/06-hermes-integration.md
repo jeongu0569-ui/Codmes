@@ -48,6 +48,7 @@ session.resume
 prompt.submit
 approval.respond
 config.accessMode
+config.reasoning
 ```
 
 The server logs in to the Hermes dashboard with the configured username and
@@ -56,6 +57,26 @@ Hermes events back to the app as `hermes.event` messages.
 
 The bridge keeps the client app from needing to know Hermes dashboard cookies or
 WebSocket tickets.
+
+`config.accessMode` maps the client composer modes to Hermes session config:
+
+```text
+Safe -> config.set key=yolo value=0
+Full -> config.set key=yolo value=1
+```
+
+`config.reasoning` maps the client composer reasoning menu to Hermes'
+`config.set key=reasoning` RPC:
+
+```text
+Fast -> low
+Med  -> medium
+Deep -> high
+```
+
+This was verified against Hermes live WebSocket on 2026-07-08 with
+`session.create`, `config.accessMode`, and `config.reasoning` returning
+`{ ok: true }` through the Workspace bridge.
 
 ## Why Workspace Server Should Bridge Hermes
 
@@ -141,6 +162,35 @@ Example:
   "maxInlineFiles": 3
 }
 ```
+
+Current Hermes live RPC compatibility note:
+
+```text
+prompt.submit { session_id, text }
+```
+
+The Hermes live endpoint currently follows the same shape used by the Hermes
+TUI: the submitted payload is a single `text` field. There is not yet a
+separate public live-RPC field for hidden prompt context versus visible user
+message text. Because of that, Workspace context is still rendered into the
+submitted text for the model.
+
+To keep the Apple UI clean when a session is reloaded, the client strips the
+stored `[Workspace context] ... [User message]` wrapper from user history rows
+and displays only the actual user message. A cleaner long-term improvement is a
+Hermes live RPC extension such as:
+
+```json
+{
+  "session_id": "...",
+  "display_text": "사용자가 실제로 입력한 문장",
+  "text": "모델에 전달할 전체 프롬프트",
+  "metadata": { "workspaceContext": "..." }
+}
+```
+
+That change belongs in Hermes core or the live API layer, not just the Apple
+client.
 
 ## RAG Principle
 

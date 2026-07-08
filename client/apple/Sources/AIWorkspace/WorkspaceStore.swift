@@ -19,6 +19,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var liveSessionId: String?
     @Published var hermesModels: [HermesModelOption] = []
     @Published var hermesSessions: [HermesSessionSummary] = []
+    @Published var activeHermesSessionTitle = "No session"
     @Published var selectedHermesModelId = ""
     @Published var chatAccessMode: ChatAccessMode = .confirm
     @Published var chatReasoningMode: ChatReasoningMode = .balanced
@@ -68,6 +69,7 @@ final class WorkspaceStore: ObservableObject {
             if selectedHermesModelId.isEmpty {
                 selectedHermesModelId = hermesModels.first?.id ?? ""
             }
+            updateActiveSessionTitle()
         } catch {
             statusMessage = "Hermes metadata: \(error.localizedDescription)"
         }
@@ -199,6 +201,7 @@ final class WorkspaceStore: ObservableObject {
 
     func prepareNewChat() {
         liveSessionId = nil
+        activeHermesSessionTitle = "No session"
         activeActivityLineId = nil
         isChatTurnOpen = false
         chatLines = [ChatLine(role: "system", text: "New chat ready. Send a message to create a Hermes session.")]
@@ -226,6 +229,7 @@ final class WorkspaceStore: ObservableObject {
                 accessMode: chatAccessMode.rawValue
             )
             liveSessionId = sessionId
+            activeHermesSessionTitle = "New session"
             activeActivityLineId = nil
             isChatTurnOpen = false
             if chatLines.allSatisfy({ $0.role == "system" }) {
@@ -233,6 +237,7 @@ final class WorkspaceStore: ObservableObject {
             }
             statusMessage = "New live session connected"
             await refreshHermesMetadata()
+            updateActiveSessionTitle()
         } catch {
             statusMessage = error.localizedDescription
             chatLines.append(ChatLine(role: "system", text: error.localizedDescription))
@@ -266,6 +271,7 @@ final class WorkspaceStore: ObservableObject {
             }
             try await liveClient.resumeSession(sessionId: session.id)
             liveSessionId = session.id
+            activeHermesSessionTitle = session.title
             statusMessage = "Resumed \(session.title)"
         } catch {
             statusMessage = error.localizedDescription
@@ -314,6 +320,16 @@ final class WorkspaceStore: ObservableObject {
         do {
             try await liveClient.setAccessMode(sessionId: liveSessionId, accessMode: chatAccessMode.rawValue)
             statusMessage = "\(chatAccessMode.label) mode applied"
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func applyReasoningModeToLiveSession() async {
+        guard let liveSessionId else { return }
+        do {
+            try await liveClient.setReasoningMode(sessionId: liveSessionId, reasoningEffort: chatReasoningMode.effort)
+            statusMessage = "\(chatReasoningMode.label) reasoning applied"
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -402,6 +418,10 @@ final class WorkspaceStore: ObservableObject {
             isChatTurnOpen = false
             finishActiveActivity()
             activeActivityLineId = nil
+            Task {
+                await refreshHermesMetadata()
+                updateActiveSessionTitle()
+            }
             return
         }
 
@@ -440,12 +460,25 @@ final class WorkspaceStore: ObservableObject {
                     ChatActivity(type: "Reasoning", text: reasoning)
                 ]))
             }
-            lines.append(ChatLine(role: role, text: message.content))
+            let content = role == "user" ? displayedUserMessage(from: message.content) : message.content
+            lines.append(ChatLine(role: role, text: content))
         }
         if !lines.isEmpty {
             return lines
         }
         return [ChatLine(role: "system", text: "No saved messages for \(fallbackTitle).")]
+    }
+
+    private func updateActiveSessionTitle() {
+        guard let liveSessionId else {
+            activeHermesSessionTitle = "No session"
+            return
+        }
+        if let session = hermesSessions.first(where: { $0.id == liveSessionId }) {
+            activeHermesSessionTitle = session.title
+        } else if activeHermesSessionTitle == "No session" {
+            activeHermesSessionTitle = "Current session"
+        }
     }
 
     private func normalizedHistoryRole(_ role: String) -> String? {
@@ -461,6 +494,15 @@ final class WorkspaceStore: ObservableObject {
         default:
             return nil
         }
+    }
+
+    private func displayedUserMessage(from content: String) -> String {
+        let marker = "[User message]"
+        guard let range = content.range(of: marker) else {
+            return content
+        }
+        return String(content[range.upperBound...])
+            .trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func updateApprovalLine(_ id: UUID, state: ApprovalState) {

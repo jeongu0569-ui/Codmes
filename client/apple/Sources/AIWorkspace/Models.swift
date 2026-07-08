@@ -92,6 +92,21 @@ struct HermesSessionSummary: Identifiable, Hashable {
     let updatedAt: String?
 }
 
+struct MarkdownTable: Identifiable {
+    let id = UUID()
+    let rows: [[String]]
+}
+
+enum MarkdownBlock: Identifiable {
+    case heading(level: Int, text: String)
+    case paragraph(String)
+    case bullet(String)
+    case code(String)
+    case table(MarkdownTable)
+
+    var id: UUID { UUID() }
+}
+
 struct HermesSessionMessagesResponse: Codable {
     let sessionId: String?
     let messages: [HermesSessionMessage]

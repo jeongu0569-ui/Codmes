@@ -74,8 +74,9 @@ Implemented:
 - streaming thinking/reasoning deltas coalesced into smooth activity blocks instead of one row per token
 - active activity shimmer while Hermes is still streaming; finished rows show
   `Done` and stop animating
-- Markdown rendering for assistant answers through Swift `AttributedString(markdown:)`
-  with a plain-text fallback
+- Markdown rendering for assistant answers with a SwiftUI block renderer ported
+  from the Obsidian/Hermes approach: headings, bullets, fenced code blocks, and
+  Markdown tables are rendered as distinct UI blocks instead of one flat line
 - approval and denial buttons for `approval.request` events
 - normalized Hermes session menu titles instead of raw generated session ids
 - zero-message Hermes sessions are hidden from the client session list
@@ -159,15 +160,21 @@ answer.
 User messages are right-aligned and assistant messages remain left-aligned, so
 chat turns are visually easier to scan.
 
-Assistant answers are rendered as Markdown where SwiftUI supports it. This keeps
-headings, lists, code spans, and emphasis readable instead of showing the raw
-Markdown source as a flat paragraph.
+Assistant answers are rendered by a small SwiftUI Markdown block renderer. The
+renderer follows the same broad approach as the Obsidian plugin and Hermes TUI:
+split the text into blocks first, then render headings, bullets, fenced code
+blocks, and table rows with dedicated views. Inline emphasis/code is still
+handled through Swift `AttributedString(markdown:)` inside each text cell.
 
 While an activity block is streaming, its collapsed state shows a three-line
 preview of the latest reasoning/tool text and a subtle shimmer. When streaming
 finishes, the shimmer stops and the collapsed row returns to the summary-only
 state. Saved Hermes reasoning is also restored as an activity row when loading
 session history.
+
+Activity rows are not full chat bubbles. They are compact left-aligned progress
+rows so the reasoning/tool stream reads like a process log between the user
+message and the final assistant answer.
 
 The chat composer follows the same compact control model used in the Obsidian
 Hermes plugin:
@@ -179,6 +186,14 @@ Hermes plugin:
 `Safe` maps to Hermes `yolo=false`, so dangerous actions still rely on Hermes'
 approval gate. `Full` maps to `yolo=true`, allowing Hermes to proceed without
 that extra approval step where Hermes supports it.
+
+The reasoning menu maps to Hermes `config.set key=reasoning`:
+
+```text
+Fast -> low
+Med  -> medium
+Deep -> high
+```
 
 ## Chat Context Scopes
 
@@ -195,6 +210,12 @@ The client only sends a compact `contextRequest`. The Workspace Server resolves
 the path, decides inline versus RAG/search metadata, and forwards the rendered
 context to Hermes. This keeps filesystem and indexing policy centralized on the
 server instead of duplicating it in each Apple client.
+
+Hermes live RPC currently stores the submitted prompt as one text field. Since
+Workspace context must be included in that text for the model, saved user rows
+can contain both context and the visible user message. When loading history, the
+Apple client extracts the text after `[User message]` and displays only that
+actual user message in the chat UI.
 
 ## Xcode Project
 

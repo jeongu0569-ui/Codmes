@@ -76,6 +76,27 @@ npm start
 [workspace] hermes http://127.0.0.1:9119
 ```
 
+기본 bind host는 보안을 위해 `127.0.0.1`이다. iPhone/iPad 또는 Tailscale
+테스트처럼 다른 기기에서 Workspace Server에 붙어야 할 때만 아래처럼 연다.
+
+```bash
+cd /Users/user/Desktop/AI-Workspace-on-hermes
+
+WORKSPACE_HOST=0.0.0.0 \
+PORT=8787 \
+HERMES_WORKSPACE_ROOT="$HOME/HermesWorkspace" \
+HERMES_SERVER_URL="http://127.0.0.1:9119" \
+HERMES_DASHBOARD_USERNAME="admin" \
+HERMES_DASHBOARD_PASSWORD="admin" \
+npm start
+```
+
+이 경우 로그는 실제 bind host와 port를 출력한다.
+
+```text
+[workspace] listening on http://0.0.0.0:8787
+```
+
 서버 상태 확인:
 
 ```bash
@@ -159,7 +180,16 @@ http://127.0.0.1:8787
 ```
 
 `Safe`는 Hermes의 위험 작업 승인 게이트를 사용하는 모드이고, `Full`은
-Hermes가 지원하는 범위에서 추가 승인 없이 진행하는 모드다.
+Hermes가 지원하는 범위에서 추가 승인 없이 진행하는 모드다. 내부적으로는
+Hermes live RPC의 `config.set key=yolo`를 사용한다.
+
+추론 모드는 다음처럼 Hermes reasoning 설정으로 전달된다.
+
+```text
+Fast -> low
+Med  -> medium
+Deep -> high
+```
 
 ## 4. iPhone/iPad 앱 빌드
 

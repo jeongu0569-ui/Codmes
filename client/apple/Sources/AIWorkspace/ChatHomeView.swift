@@ -8,6 +8,18 @@ struct ChatHomeView: View {
     var body: some View {
         VStack(spacing: 0) {
             HeaderView(title: "Hermes Chat", subtitle: store.workspace?.hermes.serverUrl ?? "No Hermes server loaded")
+            HStack(spacing: 8) {
+                Image(systemName: "bubble.left.and.bubble.right")
+                    .foregroundStyle(.secondary)
+                Text(store.activeHermesSessionTitle)
+                    .font(.subheadline.weight(.medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 8)
+            .background(.quaternary.opacity(0.18))
             ScrollView {
                 VStack(spacing: 14) {
                     ForEach(store.chatLines) { line in
@@ -40,7 +52,8 @@ struct ChatHomeView: View {
                             }
                         }
                     } label: {
-                        Label("Sessions", systemImage: "clock.arrow.circlepath")
+                        Label(store.activeHermesSessionTitle == "No session" ? "Sessions" : store.activeHermesSessionTitle, systemImage: "clock.arrow.circlepath")
+                            .lineLimit(1)
                     }
                     .menuStyle(.borderlessButton)
                     .simultaneousGesture(TapGesture().onEnded {
@@ -125,6 +138,9 @@ struct ChatHomeView: View {
                         .pickerStyle(.menu)
                         .labelsHidden()
                         .frame(maxWidth: 82)
+                        .onChange(of: store.chatReasoningMode) {
+                            Task { await store.applyReasoningModeToLiveSession() }
+                        }
 
                         Spacer()
 
@@ -262,18 +278,26 @@ struct MessageBubble: View {
     @State private var activityExpanded = false
 
     var body: some View {
+        if line.role == "activity" {
+            activityRow
+        } else {
+            messageRow
+        }
+    }
+
+    private var messageRow: some View {
         HStack {
             if line.role == "user" {
                 Spacer(minLength: 52)
             }
 
             VStack(alignment: bubbleAlignment, spacing: 6) {
-                Text(roleLabel)
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                if line.role == "activity" {
-                    activityView
-                } else if line.role == "assistant" {
+                if line.role != "assistant" {
+                    Text(roleLabel)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+                if line.role == "assistant" {
                     MarkdownText(markdown: line.text)
                         .textSelection(.enabled)
                 } else {
@@ -289,10 +313,22 @@ struct MessageBubble: View {
             .background(bubbleBackground, in: RoundedRectangle(cornerRadius: 10))
 
             if line.role != "user" {
-                Spacer(minLength: line.role == "activity" ? 120 : 52)
+                Spacer(minLength: 52)
             }
         }
-        .frame(maxWidth: line.role == "activity" ? 640 : .infinity, alignment: frameAlignment)
+        .frame(maxWidth: .infinity, alignment: frameAlignment)
+    }
+
+    private var activityRow: some View {
+        HStack(alignment: .top) {
+            activityView
+                .padding(.vertical, 6)
+                .padding(.horizontal, 9)
+                .frame(maxWidth: 520, alignment: .leading)
+                .background(.quaternary.opacity(0.16), in: RoundedRectangle(cornerRadius: 8))
+            Spacer(minLength: 80)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var roleLabel: String {
@@ -348,17 +384,11 @@ struct MessageBubble: View {
         } label: {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 8) {
-                    Image(systemName: line.isStreamingActivity ? "sparkles" : "waveform.path")
+                    Image(systemName: line.isStreamingActivity ? "sparkles" : "checkmark.circle")
                         .foregroundStyle(.secondary)
-                    Text(line.text)
+                    Text(activityLabel)
                         .font(.caption2)
                         .foregroundStyle(.secondary)
-                    Text(line.isStreamingActivity ? "Running" : "Done")
-                        .font(.caption2)
-                        .foregroundStyle(line.isStreamingActivity ? .primary : .secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.quaternary.opacity(0.4), in: Capsule())
                     Spacer()
                 }
                 .shimmering(active: line.isStreamingActivity)
@@ -377,6 +407,14 @@ struct MessageBubble: View {
 
     private var activityPreview: String {
         line.activityItems.last?.text.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    }
+
+    private var activityLabel: String {
+        let status = line.isStreamingActivity ? "Running" : "Done"
+        let text = line.text
+            .replacingOccurrences(of: "Activity · ", with: "")
+            .replacingOccurrences(of: "Activity", with: "thinking")
+        return "\(text) · \(status)"
     }
 
     @ViewBuilder
@@ -413,12 +451,101 @@ private struct MarkdownText: View {
     let markdown: String
 
     var body: some View {
-        Text(attributed)
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(Array(markdownBlocks.enumerated()), id: \.offset) { _, block in
+                blockView(block)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var attributed: AttributedString {
-        (try? AttributedString(markdown: markdown))
-            ?? AttributedString(markdown)
+    private var markdownBlocks: [MarkdownBlock] {
+        parseMarkdownBlocks(markdown)
+    }
+
+    @ViewBuilder
+    private func blockView(_ block: MarkdownBlock) -> some View {
+        switch block {
+        case let .heading(level, text):
+            Text(text)
+                .font(headingFont(level))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        case let .paragraph(text):
+            Text(attributed(text))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        case let .bullet(text):
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
+                Text("•")
+                    .foregroundStyle(.secondary)
+                Text(attributed(text))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        case let .code(text):
+            ScrollView(.horizontal) {
+                Text(text)
+                    .font(.system(.caption, design: .monospaced))
+                    .textSelection(.enabled)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .background(.black.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+        case let .table(table):
+            markdownTable(table)
+        }
+    }
+
+    private func markdownTable(_ table: MarkdownTable) -> some View {
+        ScrollView(.horizontal) {
+            Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+                ForEach(Array(table.rows.enumerated()), id: \.offset) { rowIndex, row in
+                    GridRow {
+                        ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
+                            MarkdownTableCell(text: attributed(cell), isHeader: rowIndex == 0)
+                        }
+                    }
+                }
+            }
+        }
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private func headingFont(_ level: Int) -> Font {
+        switch level {
+        case 1: .title3.weight(.semibold)
+        case 2: .headline
+        default: .subheadline.weight(.semibold)
+        }
+    }
+
+    private func attributed(_ text: String) -> AttributedString {
+        (try? AttributedString(markdown: text, options: AttributedString.MarkdownParsingOptions(interpretedSyntax: .inlineOnlyPreservingWhitespace)))
+            ?? AttributedString(text)
+    }
+}
+
+private struct MarkdownTableCell: View {
+    let text: AttributedString
+    let isHeader: Bool
+
+    var body: some View {
+        Text(text)
+            .font(isHeader ? .caption.weight(.semibold) : .caption)
+            .textSelection(.enabled)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .frame(minWidth: 90, alignment: .leading)
+            .background(cellBackground)
+            .overlay(Rectangle().stroke(.quaternary.opacity(0.5), lineWidth: 0.5))
+    }
+
+    private var cellBackground: AnyShapeStyle {
+        if isHeader {
+            return AnyShapeStyle(.quaternary.opacity(0.35))
+        }
+        return AnyShapeStyle(.quaternary.opacity(0.16))
     }
 }
 
@@ -445,5 +572,132 @@ private struct ShimmerModifier: ViewModifier {
 private extension View {
     func shimmering(active: Bool) -> some View {
         modifier(ShimmerModifier(active: active))
+    }
+}
+
+private func parseMarkdownBlocks(_ markdown: String) -> [MarkdownBlock] {
+    let lines = markdown.replacingOccurrences(of: "\r\n", with: "\n").components(separatedBy: "\n")
+    var blocks: [MarkdownBlock] = []
+    var paragraph: [String] = []
+    var index = 0
+
+    func flushParagraph() {
+        let text = paragraph.joined(separator: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
+        if !text.isEmpty {
+            blocks.append(.paragraph(text))
+        }
+        paragraph.removeAll()
+    }
+
+    while index < lines.count {
+        let line = lines[index]
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+
+        if trimmed.isEmpty {
+            flushParagraph()
+            index += 1
+            continue
+        }
+
+        if trimmed.hasPrefix("```") {
+            flushParagraph()
+            index += 1
+            var code: [String] = []
+            while index < lines.count {
+                let codeLine = lines[index]
+                if codeLine.trimmingCharacters(in: .whitespaces).hasPrefix("```") {
+                    index += 1
+                    break
+                }
+                code.append(codeLine)
+                index += 1
+            }
+            blocks.append(.code(code.joined(separator: "\n")))
+            continue
+        }
+
+        if let table = parseMarkdownTable(lines: lines, start: index) {
+            flushParagraph()
+            blocks.append(.table(table.table))
+            index = table.nextIndex
+            continue
+        }
+
+        if let heading = parseHeading(trimmed) {
+            flushParagraph()
+            blocks.append(.heading(level: heading.level, text: heading.text))
+            index += 1
+            continue
+        }
+
+        if let bullet = parseBullet(trimmed) {
+            flushParagraph()
+            blocks.append(.bullet(bullet))
+            index += 1
+            continue
+        }
+
+        paragraph.append(line)
+        index += 1
+    }
+
+    flushParagraph()
+    return blocks.isEmpty ? [.paragraph(markdown)] : blocks
+}
+
+private func parseHeading(_ line: String) -> (level: Int, text: String)? {
+    let hashes = line.prefix { $0 == "#" }.count
+    guard hashes > 0, hashes <= 6 else { return nil }
+    let rest = line.dropFirst(hashes)
+    guard rest.first == " " else { return nil }
+    return (hashes, String(rest.dropFirst()).trimmingCharacters(in: .whitespaces))
+}
+
+private func parseBullet(_ line: String) -> String? {
+    for prefix in ["- ", "* ", "+ "] where line.hasPrefix(prefix) {
+        return String(line.dropFirst(prefix.count)).trimmingCharacters(in: .whitespaces)
+    }
+    return nil
+}
+
+private func parseMarkdownTable(lines: [String], start: Int) -> (table: MarkdownTable, nextIndex: Int)? {
+    guard start + 1 < lines.count else { return nil }
+    let header = lines[start].trimmingCharacters(in: .whitespaces)
+    let separator = lines[start + 1].trimmingCharacters(in: .whitespaces)
+    guard header.contains("|"), isTableSeparator(separator) else { return nil }
+
+    var rows = [splitTableRow(header)]
+    var index = start + 2
+    while index < lines.count {
+        let line = lines[index].trimmingCharacters(in: .whitespaces)
+        guard line.contains("|"), !line.isEmpty else { break }
+        rows.append(splitTableRow(line))
+        index += 1
+    }
+
+    let maxColumns = rows.map(\.count).max() ?? 0
+    guard maxColumns > 1 else { return nil }
+    rows = rows.map { row in
+        row + Array(repeating: "", count: max(0, maxColumns - row.count))
+    }
+    return (MarkdownTable(rows: rows), index)
+}
+
+private func splitTableRow(_ line: String) -> [String] {
+    var text = line
+    if text.hasPrefix("|") { text.removeFirst() }
+    if text.hasSuffix("|") { text.removeLast() }
+    return text
+        .components(separatedBy: "|")
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+}
+
+private func isTableSeparator(_ line: String) -> Bool {
+    guard line.contains("|") else { return false }
+    let cells = splitTableRow(line)
+    guard !cells.isEmpty else { return false }
+    return cells.allSatisfy { cell in
+        let stripped = cell.replacingOccurrences(of: ":", with: "")
+        return stripped.count >= 3 && stripped.allSatisfy { $0 == "-" }
     }
 }

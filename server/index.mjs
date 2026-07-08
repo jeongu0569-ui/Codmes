@@ -20,6 +20,7 @@ import { buildWorkspaceContext } from "./lib/context-router.mjs";
 import { searchStatus, searchWorkspace } from "./lib/search-service.mjs";
 
 const DEFAULT_PORT = Number.parseInt(process.env.PORT || "8787", 10);
+const WORKSPACE_HOST = process.env.WORKSPACE_HOST || process.env.HOST || "127.0.0.1";
 const DEFAULT_WORKSPACE_ROOT = path.join(process.env.HOME || process.cwd(), "HermesWorkspace");
 const WORKSPACE_ROOT = path.resolve(process.env.HERMES_WORKSPACE_ROOT || DEFAULT_WORKSPACE_ROOT);
 const HERMES_SERVER_URL = trimTrailingSlash(process.env.HERMES_SERVER_URL || "http://127.0.0.1:9119");
@@ -33,8 +34,8 @@ async function main() {
   await ensureWorkspace();
   const server = http.createServer(handleRequest);
   server.on("upgrade", handleUpgrade);
-  server.listen(DEFAULT_PORT, "127.0.0.1", () => {
-    console.log(`[workspace] listening on http://127.0.0.1:${DEFAULT_PORT}`);
+  server.listen(DEFAULT_PORT, WORKSPACE_HOST, () => {
+    console.log(`[workspace] listening on http://${WORKSPACE_HOST}:${DEFAULT_PORT}`);
     console.log(`[workspace] root ${WORKSPACE_ROOT}`);
     console.log(`[workspace] hermes ${HERMES_SERVER_URL}`);
   });
@@ -127,6 +128,10 @@ async function handleLiveCommand(hermes, message) {
   }
   if (command === "config.accessMode") {
     await hermes.setAccessMode(String(params.sessionId || ""), params.accessMode);
+    return { ok: true };
+  }
+  if (command === "config.reasoning") {
+    await hermes.setReasoning(String(params.sessionId || ""), params.reasoningEffort);
     return { ok: true };
   }
   throw Object.assign(new Error(`Unknown live command: ${command}`), { status: 400 });
