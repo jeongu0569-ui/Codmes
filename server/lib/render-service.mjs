@@ -30,6 +30,12 @@ export async function renderMarkdownDocument(markdown, options = {}) {
   return htmlDocument(body);
 }
 
+export async function renderCodeDocument(code, options = {}) {
+  const language = normalizeLanguage(options.language);
+  const body = await highlightedCodeBlock(String(code ?? ""), language, options);
+  return htmlDocument(body, { kind: "code" });
+}
+
 export async function renderMarkdownBody(markdown, options = {}) {
   const tokens = marked.lexer(String(markdown ?? ""), {
     gfm: true,
@@ -94,7 +100,8 @@ function safeRenderer() {
   return renderer;
 }
 
-function htmlDocument(body) {
+function htmlDocument(body, options = {}) {
+  const bodyClass = options.kind === "code" ? "markdown-body code-document" : "markdown-body";
   return `<!doctype html>
 <html>
 <head>
@@ -126,6 +133,9 @@ body {
   box-sizing: border-box;
   width: 100%;
   padding: 0;
+}
+.code-document pre {
+  margin-bottom: 0;
 }
 p, ul, ol, blockquote, pre, table {
   margin-top: 0;
@@ -201,7 +211,7 @@ hr {
 }
 </style>
 </head>
-<body><main class="markdown-body">${body}</main></body>
+<body><main class="${bodyClass}">${body}</main></body>
 </html>`;
 }
 

@@ -17,7 +17,7 @@ import {
   encodeWebSocketFrame
 } from "./lib/hermes-live.mjs";
 import { buildWorkspaceContext } from "./lib/context-router.mjs";
-import { renderMarkdownDocument } from "./lib/render-service.mjs";
+import { renderCodeDocument, renderMarkdownDocument } from "./lib/render-service.mjs";
 import { searchStatus, searchWorkspace } from "./lib/search-service.mjs";
 
 const DEFAULT_PORT = Number.parseInt(process.env.PORT || "8787", 10);
@@ -213,6 +213,9 @@ async function handleRequest(req, res) {
     if (req.method === "POST" && url.pathname === "/api/render/markdown") {
       return sendJson(res, await renderMarkdown(req));
     }
+    if (req.method === "POST" && url.pathname === "/api/render/code") {
+      return sendJson(res, await renderCode(req));
+    }
     if (url.pathname.startsWith("/api/hermes/")) {
       return handleHermesProxy(req, res, url);
     }
@@ -369,6 +372,15 @@ async function runSearch(req) {
 async function renderMarkdown(req) {
   const body = await readJsonBody(req);
   const html = await renderMarkdownDocument(body.markdown || body.content || "", {
+    theme: body.theme || "github-dark"
+  });
+  return { html };
+}
+
+async function renderCode(req) {
+  const body = await readJsonBody(req);
+  const html = await renderCodeDocument(body.code || body.content || "", {
+    language: body.language || "",
     theme: body.theme || "github-dark"
   });
   return { html };

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { renderMarkdownBody, renderMarkdownDocument } from "./render-service.mjs";
+import { renderCodeDocument, renderMarkdownBody, renderMarkdownDocument } from "./render-service.mjs";
 
 test("renders fenced code with shiki markup", async () => {
   const html = await renderMarkdownBody("```python\nprint('hi')\n```");
@@ -24,4 +24,11 @@ test("returns complete html document", async () => {
   const html = await renderMarkdownDocument("# Title");
   assert.match(html, /<!doctype html>/);
   assert.match(html, /<h1>Title<\/h1>/);
+});
+
+test("renders standalone code documents with shiki", async () => {
+  const html = await renderCodeDocument("func greet() { print(\"hi\") }", { language: "swift" });
+  assert.match(html, /class="markdown-body code-document"/);
+  assert.match(html, /class="shiki/);
+  assert.match(html, /print/);
 });

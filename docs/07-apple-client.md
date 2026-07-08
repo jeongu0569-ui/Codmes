@@ -89,6 +89,10 @@ Implemented:
   The server uses `marked` for Markdown and `shiki` for code highlighting, then
   the Apple client displays the result through `WKWebView`. If the server render
   request fails, the existing native SwiftUI renderer remains as fallback.
+- standalone Code file previews now use `POST /api/render/code`, so source
+  files get the same Shiki highlighting path as fenced code blocks. If the
+  server render request fails, the existing native SwiftUI code card remains as
+  fallback.
 - Notes and Code file browsers can create a new file or folder in the current
   server-managed folder. New Notes files default to `.md`; new Code files
   default to `.swift` unless the user enters an extension.
@@ -188,15 +192,17 @@ Inline emphasis/code is still handled through Swift
 `AttributedString(markdown:)` inside each text cell.
 
 Fenced code blocks preserve the language tag from Markdown fences such as
-```` ```python ```` and render a compact `Code · Python` header. Code previews
-infer the language from the file extension and use the same code card. The code
-body uses a lightweight local highlighter for comments, strings, numbers,
-literals, and language-specific keyword sets. The current built-in profiles
-cover Python, C/C++, Java/Kotlin/C#, JavaScript/TypeScript, Swift, Rust, Go,
+```` ```python ```` and render through server-side Shiki when the Workspace
+Server is available. Code previews infer the language from the file extension
+and use the same server-side Shiki path through `POST /api/render/code`.
+
+The native fallback still has a compact `Code · Python` card with a copy button
+and a lightweight local highlighter for comments, strings, numbers, literals,
+and language-specific keyword sets. The fallback profiles cover Python, C/C++,
+Java/Kotlin/C#, JavaScript/TypeScript, Swift, Rust, Go,
 shell/Dockerfile/Makefile, SQL, JSON/YAML, HTML/XML, CSS, Ruby, PHP, Markdown,
-and fallback code. The code card also includes an inline copy button, mirroring
-the Hermes Desktop code-card pattern. Markdown tables render in a bordered,
-horizontally scrollable table view with styled header cells.
+and fallback code. Markdown tables render in a bordered, horizontally scrollable
+table view with styled header cells when the native Markdown fallback is used.
 
 Hermes Desktop/Web uses a web rendering stack with Markdown components and
 Shiki/Streamdown dependencies available in the Hermes source tree. The Hermes
@@ -219,7 +225,7 @@ Notes and Code previews use the same rendering layer:
 
 ```text
 Markdown file -> RichMarkdownView
-Code file     -> CodeBlockView(language from extension)
+Code file     -> CodeFileRenderedView(language from extension)
 Other text    -> plain monospaced text
 ```
 
@@ -230,6 +236,11 @@ RichMarkdownView
   -> POST /api/render/markdown
   -> WKWebView rendered HTML
   -> fallback to native SwiftUI Markdown blocks if unavailable
+
+CodeFileRenderedView
+  -> POST /api/render/code
+  -> WKWebView rendered Shiki HTML
+  -> fallback to native SwiftUI CodeBlockView if unavailable
 ```
 
 The server-rendered path gives Markdown tables and fenced code blocks a much

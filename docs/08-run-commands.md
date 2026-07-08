@@ -248,6 +248,11 @@ xcrun devicectl device install app \
 iPhone에서 `설정 > 일반 > VPN 및 기기 관리`로 이동해 Apple Development
 프로파일을 신뢰한 다음 다시 실행한다.
 
+iPhone에서 앱 화면이 정사각형 호환 모드처럼 보이면 iOS target의 Launch Screen
+설정이 빠진 상태일 가능성이 높다. 현재 앱은 `App/iOS-Info.plist`에
+`UILaunchScreen`과 iPhone/iPad 방향 지원 값을 포함해 전체 화면 앱으로 실행되게
+설정되어 있다.
+
 iPhone/iPad 앱에서 Workspace Server URL에는 Mac의 주소를 넣어야 한다.
 `http://127.0.0.1:8787`은 iPhone/iPad 자기 자신을 가리키므로 Mac 서버에
 연결되지 않는다. Tailscale을 쓰는 경우 예시는 다음과 같다.

@@ -402,7 +402,7 @@ struct FilePreviewView: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .padding(20)
                         } else if file.kind == "code" {
-                            CodeBlockView(language: languageForPath(file.path), code: file.content)
+                            CodeFileRenderedView(language: languageForPath(file.path), code: file.content)
                                 .padding(20)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                         } else {
@@ -417,6 +417,50 @@ struct FilePreviewView: View {
             } else {
                 ContentUnavailableView("Select a file", systemImage: "doc.text.magnifyingglass", description: Text("Open a markdown or text file from the tree."))
             }
+        }
+    }
+}
+
+struct CodeFileRenderedView: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    let language: String?
+    let code: String
+    @State private var renderedHTML: String?
+    @State private var webHeight: CGFloat = 120
+    @State private var renderFailed = false
+
+    var body: some View {
+        Group {
+            if let renderedHTML, !renderFailed {
+                RenderedMarkdownWebView(html: renderedHTML, height: $webHeight)
+                    .frame(minHeight: webHeight, maxHeight: webHeight)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                CodeBlockView(language: language, code: code)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .task(id: "\(language ?? ""):\(code.hashValue)") {
+            await loadServerRenderedHTML()
+        }
+    }
+
+    private func loadServerRenderedHTML() async {
+        guard let api = store.api else {
+            renderFailed = true
+            renderedHTML = nil
+            return
+        }
+        do {
+            try await Task.sleep(nanoseconds: 150_000_000)
+            let html = try await api.renderCode(code: code, language: language)
+            guard !Task.isCancelled else { return }
+            renderedHTML = html
+            renderFailed = false
+        } catch {
+            guard !Task.isCancelled else { return }
+            renderedHTML = nil
+            renderFailed = true
         }
     }
 }

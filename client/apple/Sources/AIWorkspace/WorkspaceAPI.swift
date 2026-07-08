@@ -109,6 +109,15 @@ struct WorkspaceAPI {
         return response.html
     }
 
+    func renderCode(code: String, language: String?) async throws -> String {
+        var body = ["code": code]
+        if let language, !language.isEmpty {
+            body["language"] = language
+        }
+        let response: RenderedMarkdownResponse = try await post("/api/render/code", body: body)
+        return response.html
+    }
+
     func search(query: String, scopePath: String) async throws -> SearchResponse {
         let body = [
             "query": query,
