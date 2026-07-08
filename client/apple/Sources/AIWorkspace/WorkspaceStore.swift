@@ -159,6 +159,10 @@ final class WorkspaceStore: ObservableObject {
         await loadTree(root: root, path: parent)
     }
 
+    func refreshTree(root: String) async {
+        await loadTree(root: root, path: currentPath(for: root), showStatus: false)
+    }
+
     func createFolder(root: String, name: String) async {
         guard let api else { return }
         let cleaned = cleanNewItemName(name)
@@ -360,10 +364,16 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    private func loadTree(root: String, path: String) async {
+    private func loadTree(root: String, path: String, showStatus: Bool = true) async {
         guard let api else { return }
-        isLoading = true
-        defer { isLoading = false }
+        if showStatus {
+            isLoading = true
+        }
+        defer {
+            if showStatus {
+                isLoading = false
+            }
+        }
         do {
             let tree = try await api.tree(root: root, path: path)
             if root == "code" {
@@ -373,9 +383,14 @@ final class WorkspaceStore: ObservableObject {
                 notesPath = path
                 notes = tree.children
             }
-            statusMessage = tree.path.isEmpty ? "Opened workspace root" : "Opened \(tree.path)"
+            clearSelectionIfMissingFromCurrentTree(root: root, treePath: path, children: tree.children)
+            if showStatus {
+                statusMessage = tree.path.isEmpty ? "Opened workspace root" : "Opened \(tree.path)"
+            }
         } catch {
-            statusMessage = error.localizedDescription
+            if showStatus {
+                statusMessage = error.localizedDescription
+            }
         }
     }
 
@@ -440,6 +455,20 @@ final class WorkspaceStore: ObservableObject {
     private func clearSelectionIfNeeded(paths: [String]) {
         guard let selectedPath = selectedResourcePath else { return }
         if paths.contains(where: { selectedPath == $0 || selectedPath.hasPrefix($0 + "/") }) {
+            selectedFile = nil
+            selectedRawFile = nil
+            editorText = ""
+            isEditingFile = false
+        }
+    }
+
+    private func clearSelectionIfMissingFromCurrentTree(root: String, treePath: String, children: [WorkspaceItem]) {
+        guard let selectedPath = selectedResourcePath else { return }
+        let rootName = workspaceRootFolderName(for: root)
+        let currentFolder = treePath.isEmpty ? rootName : "\(rootName)/\(treePath)"
+        guard selectedPath.hasPrefix(currentFolder + "/") else { return }
+        guard parentPath(selectedPath) == currentFolder else { return }
+        if !children.contains(where: { $0.path == selectedPath }) {
             selectedFile = nil
             selectedRawFile = nil
             editorText = ""

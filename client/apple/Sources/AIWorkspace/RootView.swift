@@ -37,6 +37,9 @@ struct RootView: View {
                     #endif
                 }
         }
+        .task(id: selectedSection) {
+            await autoRefreshVisibleFileTree()
+        }
         #else
         iOSRootView
         #endif
@@ -99,6 +102,9 @@ struct RootView: View {
         .sheet(isPresented: $showingSettings) {
             WorkspaceSettingsView(isPresented: $showingSettings)
                 .environmentObject(store)
+        }
+        .task(id: selectedSection) {
+            await autoRefreshVisibleFileTree()
         }
     }
 
@@ -448,6 +454,21 @@ struct RootView: View {
             }
     }
     #endif
+
+    private func autoRefreshVisibleFileTree() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard !Task.isCancelled else { return }
+            switch selectedSection {
+            case .notes:
+                await store.refreshTree(root: "notes")
+            case .code:
+                await store.refreshTree(root: "code")
+            case .chat, .search:
+                return
+            }
+        }
+    }
 
     @ViewBuilder
     private var primaryDetailView: some View {

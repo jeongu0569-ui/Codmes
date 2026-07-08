@@ -140,6 +140,10 @@ Implemented:
 - the iOS left drawer now uses a compact custom section dropdown above Settings
   instead of a full repeated menu list. The rest of the drawer is reserved for
   Notes/Code file navigation when one of those sections is selected.
+- Notes and Code trees are quietly refreshed every few seconds while that
+  section is visible. This keeps externally-created or externally-deleted server
+  files in sync without requiring the user to reconnect or manually reload the
+  whole workspace.
 - the Apple client now uses a neutral app tint and neutral file/chat colors to
   avoid bright default blue controls in dark mode.
 - connection diagnostics now call `/api/health` before loading workspace data
