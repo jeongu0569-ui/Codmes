@@ -248,6 +248,26 @@ xcrun devicectl device install app \
 iPhone에서 `설정 > 일반 > VPN 및 기기 관리`로 이동해 Apple Development
 프로파일을 신뢰한 다음 다시 실행한다.
 
+iPhone/iPad 앱에서 Workspace Server URL에는 Mac의 주소를 넣어야 한다.
+`http://127.0.0.1:8787`은 iPhone/iPad 자기 자신을 가리키므로 Mac 서버에
+연결되지 않는다. Tailscale을 쓰는 경우 예시는 다음과 같다.
+
+```text
+http://100.x.x.x:8787
+```
+
+같은 LAN에서 테스트할 때는 Mac의 LAN IP를 사용할 수 있다.
+
+```bash
+ipconfig getifaddr en0
+```
+
+그리고 앱에는 다음처럼 입력한다.
+
+```text
+http://<MAC_LAN_IP>:8787
+```
+
 ## 5. 백그라운드로 Workspace Server 실행
 
 매번 터미널을 열어두기 싫으면 Workspace Server를 백그라운드로 실행할 수 있다.

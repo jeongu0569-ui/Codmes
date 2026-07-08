@@ -37,6 +37,24 @@ final class WorkspaceStore: ObservableObject {
         return WorkspaceAPI(baseURL: url)
     }
 
+    var serverURLUsesLocalhost: Bool {
+        guard let host = URL(string: serverURLText)?.host(percentEncoded: false)?.lowercased() else {
+            return false
+        }
+        return host == "127.0.0.1" || host == "localhost" || host == "::1"
+    }
+
+    var serverConnectionHint: String {
+        if serverURLUsesLocalhost {
+            #if os(iOS)
+            return "On iPhone/iPad, 127.0.0.1 means this device. Use the Mac/Tailscale address, for example http://100.x.x.x:8787."
+            #else
+            return "127.0.0.1 works only on this Mac. Other devices need this Mac's LAN or Tailscale address."
+            #endif
+        }
+        return "Use the Workspace Server URL, for example http://100.x.x.x:8787 over Tailscale."
+    }
+
     func saveServerURL() {
         UserDefaults.standard.set(serverURLText, forKey: "workspace.serverURL")
     }

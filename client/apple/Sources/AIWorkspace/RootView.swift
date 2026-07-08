@@ -37,10 +37,18 @@ struct ServerStatusView: View {
         VStack(alignment: .leading, spacing: 8) {
             TextField("Workspace Server", text: $store.serverURLText)
                 .textFieldStyle(.roundedBorder)
+                #if os(iOS)
+                .textInputAutocapitalization(.never)
+                .keyboardType(.URL)
+                #endif
                 .onSubmit {
                     store.saveServerURL()
                     Task { await store.refreshWorkspace() }
                 }
+            Text(store.serverConnectionHint)
+                .font(.caption2)
+                .foregroundStyle(store.serverURLUsesLocalhost ? .orange : .secondary)
+                .fixedSize(horizontal: false, vertical: true)
             HStack {
                 Circle()
                     .fill(store.statusMessage == "Connected" ? .green : .orange)
