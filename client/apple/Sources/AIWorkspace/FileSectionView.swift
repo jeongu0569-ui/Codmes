@@ -188,17 +188,61 @@ struct FilePreviewView: View {
                         .padding(16)
                 } else {
                     ScrollView {
-                        Text(file.content)
-                            .font(.system(.body, design: .monospaced))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(20)
+                        if file.kind == "markdown" {
+                            RichMarkdownView(markdown: file.content)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(20)
+                        } else if file.kind == "code" {
+                            CodeBlockView(language: languageForPath(file.path), code: file.content)
+                                .padding(20)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        } else {
+                            Text(file.content)
+                                .font(.system(.body, design: .monospaced))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(20)
+                        }
                     }
                 }
             } else {
                 ContentUnavailableView("Select a file", systemImage: "doc.text.magnifyingglass", description: Text("Open a markdown or text file from the tree."))
             }
         }
+    }
+}
+
+private func languageForPath(_ path: String) -> String? {
+    let lower = path.lowercased()
+    let name = URL(fileURLWithPath: lower).lastPathComponent
+    if name == "dockerfile" { return "dockerfile" }
+    if name == "makefile" { return "makefile" }
+
+    switch URL(fileURLWithPath: lower).pathExtension {
+    case "py", "pyw": return "python"
+    case "js", "mjs", "cjs": return "javascript"
+    case "ts", "tsx": return "typescript"
+    case "jsx": return "jsx"
+    case "swift": return "swift"
+    case "java": return "java"
+    case "c", "h": return "c"
+    case "cc", "cpp", "cxx", "hpp", "hh", "hxx": return "cpp"
+    case "cs": return "csharp"
+    case "kt", "kts": return "kotlin"
+    case "rs": return "rust"
+    case "go": return "go"
+    case "rb": return "ruby"
+    case "php": return "php"
+    case "sh", "bash", "zsh": return "bash"
+    case "sql": return "sql"
+    case "json": return "json"
+    case "yml", "yaml": return "yaml"
+    case "html", "htm": return "html"
+    case "css": return "css"
+    case "md", "markdown": return "markdown"
+    case "xml": return "xml"
+    default: return nil
     }
 }
 

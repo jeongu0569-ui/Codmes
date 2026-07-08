@@ -77,6 +77,8 @@ Implemented:
 - Markdown rendering for assistant answers with a SwiftUI block renderer ported
   from the Obsidian/Hermes approach: headings, bullets, fenced code blocks, and
   Markdown tables are rendered as distinct UI blocks instead of one flat line
+- the same Markdown/code renderer is now used by Notes and Code file previews,
+  so chat answers, markdown notes, and source files share one rendering surface
 - approval and denial buttons for `approval.request` events
 - normalized Hermes session menu titles instead of raw generated session ids
 - zero-message Hermes sessions are hidden from the client session list
@@ -168,11 +170,26 @@ handled through Swift `AttributedString(markdown:)` inside each text cell.
 
 Fenced code blocks preserve the language tag from Markdown fences such as
 ```` ```python ```` and render a compact `Code · python` header. The code body
-uses a lightweight local highlighter for comments, strings, numbers, and common
-keywords so it reads closer to a code editor than plain text. The code card also
-includes an inline copy button, mirroring the Hermes Desktop code-card pattern.
-Markdown tables render in a bordered, horizontally scrollable table view with
-styled header cells.
+uses a lightweight local highlighter for comments, strings, numbers, literals,
+and language-specific keyword sets. The current built-in profiles cover Python,
+C/C++, Java/Kotlin, JavaScript/TypeScript, Swift, Rust, Go, shell, SQL, JSON,
+YAML, and a generic fallback. The code card also includes an inline copy button,
+mirroring the Hermes Desktop code-card pattern. Markdown tables render in a
+bordered, horizontally scrollable table view with styled header cells.
+
+Hermes Desktop uses React Streamdown plus Shiki for full syntax highlighting.
+The Apple app does not yet embed Shiki or Tree-sitter. The renderer is structured
+so a future `CodeEditSourceEditor`, Tree-sitter, or Swift syntax-highlighting
+package can replace the built-in highlighter without changing chat, Notes, and
+Code preview call sites.
+
+Notes and Code previews use the same rendering layer:
+
+```text
+Markdown file -> RichMarkdownView
+Code file     -> CodeBlockView(language from extension)
+Other text    -> plain monospaced text
+```
 
 While an activity block is streaming, its collapsed state shows a three-line
 preview of the latest reasoning/tool text and a subtle shimmer. When streaming

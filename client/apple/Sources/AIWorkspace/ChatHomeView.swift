@@ -318,7 +318,7 @@ struct MessageBubble: View {
                         .foregroundStyle(.secondary)
                 }
                 if line.role == "assistant" {
-                    MarkdownText(markdown: line.text)
+                    RichMarkdownView(markdown: line.text)
                         .textSelection(.enabled)
                 } else {
                     Text(line.text)
@@ -467,7 +467,7 @@ struct MessageBubble: View {
     }
 }
 
-private struct MarkdownText: View {
+struct RichMarkdownView: View {
     let markdown: String
 
     var body: some View {
@@ -504,7 +504,7 @@ private struct MarkdownText: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         case let .code(language, text):
-            MarkdownCodeBlock(language: language, code: text)
+            CodeBlockView(language: language, code: text)
         case let .table(table):
             markdownTable(table)
         }
@@ -544,7 +544,7 @@ private struct MarkdownText: View {
     }
 }
 
-private struct MarkdownCodeBlock: View {
+struct CodeBlockView: View {
     let language: String?
     let code: String
 
@@ -652,7 +652,7 @@ private extension View {
 
 private func highlightedCode(_ code: String, language: String?) -> AttributedString {
     var result = AttributedString()
-    let keywordSet = codeKeywords(for: language)
+    let profile = codeHighlightProfile(for: language)
     let scalars = Array(code)
     var index = 0
 
@@ -667,9 +667,23 @@ private func highlightedCode(_ code: String, language: String?) -> AttributedStr
     while index < scalars.count {
         let char = scalars[index]
 
-        if char == "#" {
+        if startsLineComment(at: index, in: scalars, prefixes: profile.lineCommentPrefixes) {
             let start = index
             while index < scalars.count, scalars[index] != "\n" {
+                index += 1
+            }
+            append(String(scalars[start..<index]), color: .secondary)
+            continue
+        }
+
+        if startsBlockComment(at: index, in: scalars), profile.supportsBlockComments {
+            let start = index
+            index += 2
+            while index + 1 < scalars.count {
+                if scalars[index] == "*", scalars[index + 1] == "/" {
+                    index += 2
+                    break
+                }
                 index += 1
             }
             append(String(scalars[start..<index]), color: .secondary)
@@ -711,11 +725,17 @@ private func highlightedCode(_ code: String, language: String?) -> AttributedStr
 
         if char.isLetter || char == "_" {
             let start = index
-            while index < scalars.count, scalars[index].isLetter || scalars[index].isNumber || scalars[index] == "_" {
+            while index < scalars.count, scalars[index].isLetter || scalars[index].isNumber || scalars[index] == "_" || scalars[index] == "-" {
                 index += 1
             }
             let token = String(scalars[start..<index])
-            append(token, color: keywordSet.contains(token) ? .purple : nil)
+            if profile.keywords.contains(token) || profile.keywords.contains(token.uppercased()) {
+                append(token, color: .purple)
+            } else if profile.literals.contains(token) || profile.literals.contains(token.lowercased()) {
+                append(token, color: .blue)
+            } else {
+                append(token)
+            }
             continue
         }
 
@@ -726,24 +746,122 @@ private func highlightedCode(_ code: String, language: String?) -> AttributedStr
     return result
 }
 
-private func codeKeywords(for language: String?) -> Set<String> {
+private struct CodeHighlightProfile {
+    let keywords: Set<String>
+    let literals: Set<String>
+    let lineCommentPrefixes: [String]
+    let supportsBlockComments: Bool
+}
+
+private func codeHighlightProfile(for language: String?) -> CodeHighlightProfile {
     let normalized = language?.lowercased() ?? ""
-    if ["python", "py"].contains(normalized) {
-        return [
+    let commonLiterals: Set<String> = ["true", "false", "null", "nil", "none", "True", "False", "None"]
+
+    switch normalized {
+    case "python", "py":
+        return CodeHighlightProfile(keywords: [
             "and", "as", "assert", "async", "await", "break", "class", "continue",
             "def", "del", "elif", "else", "except", "False", "finally", "for",
             "from", "global", "if", "import", "in", "is", "lambda", "None",
             "nonlocal", "not", "or", "pass", "raise", "return", "True", "try",
             "while", "with", "yield"
-        ]
+        ], literals: commonLiterals, lineCommentPrefixes: ["#"], supportsBlockComments: false)
+    case "c", "cpp", "c++", "cc", "cxx", "objc", "objective-c":
+        return CodeHighlightProfile(keywords: [
+            "auto", "bool", "break", "case", "char", "class", "const", "constexpr",
+            "continue", "default", "delete", "do", "double", "else", "enum",
+            "extern", "float", "for", "friend", "goto", "if", "inline", "int",
+            "long", "namespace", "new", "operator", "private", "protected", "public",
+            "return", "short", "signed", "sizeof", "static", "struct", "switch",
+            "template", "this", "throw", "try", "typedef", "typename", "union",
+            "unsigned", "using", "virtual", "void", "volatile", "while"
+        ], literals: commonLiterals, lineCommentPrefixes: ["//", "#"], supportsBlockComments: true)
+    case "java", "kotlin":
+        return CodeHighlightProfile(keywords: [
+            "abstract", "break", "case", "catch", "class", "const", "continue",
+            "default", "do", "else", "enum", "extends", "final", "finally", "for",
+            "fun", "if", "implements", "import", "interface", "new", "object",
+            "override", "package", "private", "protected", "public", "return",
+            "static", "super", "switch", "this", "throw", "throws", "try", "val",
+            "var", "void", "when", "while"
+        ], literals: commonLiterals, lineCommentPrefixes: ["//"], supportsBlockComments: true)
+    case "javascript", "typescript", "js", "ts", "jsx", "tsx":
+        return CodeHighlightProfile(keywords: [
+            "async", "await", "break", "case", "catch", "class", "const", "continue",
+            "debugger", "default", "delete", "do", "else", "export", "extends",
+            "finally", "for", "from", "function", "if", "import", "in", "instanceof",
+            "interface", "let", "new", "of", "private", "protected", "public",
+            "return", "static", "super", "switch", "this", "throw", "try", "type",
+            "typeof", "var", "void", "while", "yield"
+        ], literals: commonLiterals, lineCommentPrefixes: ["//"], supportsBlockComments: true)
+    case "swift":
+        return CodeHighlightProfile(keywords: [
+            "actor", "as", "associatedtype", "async", "await", "break", "case",
+            "catch", "class", "continue", "defer", "do", "else", "enum", "extension",
+            "fallthrough", "false", "fileprivate", "for", "func", "guard", "if",
+            "import", "in", "init", "internal", "is", "let", "nil", "open",
+            "operator", "private", "protocol", "public", "repeat", "return",
+            "self", "static", "struct", "subscript", "super", "switch", "throw",
+            "throws", "true", "try", "typealias", "var", "where", "while"
+        ], literals: commonLiterals, lineCommentPrefixes: ["//"], supportsBlockComments: true)
+    case "rust", "rs":
+        return CodeHighlightProfile(keywords: [
+            "as", "async", "await", "break", "const", "continue", "crate", "dyn",
+            "else", "enum", "extern", "fn", "for", "if", "impl", "in", "let",
+            "loop", "match", "mod", "move", "mut", "pub", "ref", "return",
+            "self", "Self", "static", "struct", "super", "trait", "type", "unsafe",
+            "use", "where", "while"
+        ], literals: commonLiterals, lineCommentPrefixes: ["//"], supportsBlockComments: true)
+    case "go":
+        return CodeHighlightProfile(keywords: [
+            "break", "case", "chan", "const", "continue", "default", "defer",
+            "else", "fallthrough", "for", "func", "go", "goto", "if", "import",
+            "interface", "map", "package", "range", "return", "select", "struct",
+            "switch", "type", "var"
+        ], literals: commonLiterals, lineCommentPrefixes: ["//"], supportsBlockComments: true)
+    case "bash", "sh", "zsh", "shell":
+        return CodeHighlightProfile(keywords: [
+            "case", "do", "done", "elif", "else", "esac", "fi", "for", "function",
+            "if", "in", "select", "then", "until", "while", "export", "local",
+            "readonly", "return", "source"
+        ], literals: commonLiterals, lineCommentPrefixes: ["#"], supportsBlockComments: false)
+    case "sql":
+        return CodeHighlightProfile(keywords: [
+            "ADD", "ALTER", "AND", "AS", "ASC", "BETWEEN", "BY", "CREATE", "DELETE",
+            "DESC", "DISTINCT", "DROP", "FROM", "GROUP", "HAVING", "IN", "INSERT",
+            "INTO", "JOIN", "LEFT", "LIKE", "LIMIT", "NOT", "NULL", "ON", "OR",
+            "ORDER", "RIGHT", "SELECT", "SET", "TABLE", "UPDATE", "VALUES", "WHERE"
+        ], literals: commonLiterals, lineCommentPrefixes: ["--"], supportsBlockComments: true)
+    case "json", "yaml", "yml":
+        return CodeHighlightProfile(keywords: [], literals: commonLiterals, lineCommentPrefixes: ["#"], supportsBlockComments: false)
+    default:
+        return CodeHighlightProfile(keywords: [
+            "async", "await", "break", "case", "catch", "class", "const", "continue",
+            "default", "else", "enum", "export", "extends", "false", "for", "func",
+            "function", "guard", "if", "import", "in", "let", "nil", "null", "private",
+            "public", "return", "static", "struct", "switch", "throw", "true", "try",
+            "var", "while"
+        ], literals: commonLiterals, lineCommentPrefixes: ["//", "#"], supportsBlockComments: true)
     }
-    return [
-        "async", "await", "break", "case", "catch", "class", "const", "continue",
-        "default", "else", "enum", "export", "extends", "false", "for", "func",
-        "function", "guard", "if", "import", "in", "let", "nil", "null", "private",
-        "public", "return", "static", "struct", "switch", "throw", "true", "try",
-        "var", "while"
-    ]
+}
+
+private func startsLineComment(at index: Int, in chars: [Character], prefixes: [String]) -> Bool {
+    prefixes.contains { prefix in
+        startsWith(prefix, at: index, in: chars)
+    }
+}
+
+private func startsBlockComment(at index: Int, in chars: [Character]) -> Bool {
+    startsWith("/*", at: index, in: chars)
+}
+
+private func startsWith(_ prefix: String, at index: Int, in chars: [Character]) -> Bool {
+    let prefixChars = Array(prefix)
+    guard index + prefixChars.count <= chars.count else { return false }
+    for offset in 0..<prefixChars.count where chars[index + offset] != prefixChars[offset] {
+        return false
+    }
+    return true
 }
 
 private func parseMarkdownBlocks(_ markdown: String) -> [MarkdownBlock] {

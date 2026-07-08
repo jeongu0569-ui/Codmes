@@ -60,6 +60,7 @@ Status: in progress.
   - Code
 - Notes file tree. Recursive Notes and Code folder navigation done in the macOS client.
 - Markdown editor. Basic text/markdown/code editing and save done in the macOS client.
+- Markdown/code read mode. Chat, Notes markdown previews, and Code file previews now share the same SwiftUI rendering layer. Markdown renders headings, bullets, tables, and fenced code cards. Code previews infer language from the file extension and use language-specific keyword profiles.
 - PDF viewer through server raw file endpoint. Basic macOS PDFKit rendering and image raw preview done.
 - Hermes chat view. Live `/api/live` wiring, model picker, session resume menu, context scope picker, and approval controls done in the macOS client.
 - Search view. Done with `POST /api/search`.
@@ -68,6 +69,11 @@ Status: in progress.
 Remaining:
 
 - Full Xcode iOS app target, signing, and device packaging.
+- Replace the built-in lightweight code highlighter with a real Swift syntax stack. Candidate directions: `CodeEditSourceEditor` for Code editing, Tree-sitter-backed highlighting, or a Swift package that can produce attributed code spans.
+- Notes should default to read mode and only show raw Markdown in edit mode. The current implementation has this basic split, but still needs richer Markdown features such as links, images, checkboxes, backlinks, and embedded attachments.
+- PDF should evolve from basic PDFKit viewing to a GoodNotes-like surface: read mode, annotation mode, PencilKit drawing, per-page annotation persistence, thumbnails, search, and fullscreen reading/writing modes.
+- Code should evolve from source preview to VS Code-like project work: editor tabs, file create/move/delete, terminal panel, and Hermes tool/activity side panel.
+- Add a global right AI panel for Notes and Code views. The full Chat tab remains the primary chat surface, but non-chat sections should be able to open a compact Hermes panel with current file/folder context.
 
 ## Phase 4: Notes Context Router
 
