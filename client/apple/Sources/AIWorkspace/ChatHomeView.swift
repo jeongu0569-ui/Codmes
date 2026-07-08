@@ -13,13 +13,16 @@ import UIKit
 struct ChatHomeView: View {
     @EnvironmentObject private var store: WorkspaceStore
     var compact = false
+    var showsHeader = true
     @State private var draft = ""
     @State private var showingSessionManager = false
     @FocusState private var isDraftFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
-            chatHeader
+            if showsHeader {
+                chatHeader
+            }
             ScrollView {
                 VStack(spacing: 14) {
                     ForEach(store.chatLines) { line in

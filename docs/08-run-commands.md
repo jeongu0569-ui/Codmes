@@ -376,20 +376,79 @@ cd /Users/user/Desktop/AI-Workspace-on-hermes/client/apple
 swift run AIWorkspace
 ```
 
-## 7. 현재 원격 접속 주의점
+## 7. 원격 접속 주의점
 
-현재 Workspace Server는 코드상 `127.0.0.1:8787`로 실행된다.
+Apple 앱이 직접 붙는 대상은 Hermes가 아니라 Workspace Server다.
+따라서 iPhone/iPad에서 쓰려면 두 서버의 역할을 구분해야 한다.
 
-즉 현재 상태에서는 macOS 앱을 같은 Mac에서 실행하는 로컬 개발 흐름이 기준이다.
-iPad, iPhone, 다른 Mac에서 Workspace Server에 직접 접속하려면 이후 작업에서
-Workspace Server의 bind host를 `0.0.0.0` 또는 설정값으로 바꾸는 기능을 추가해야 한다.
-
-Hermes serve 자체는 아래처럼 실행하면 외부 접속을 받을 수 있다.
+Hermes serve는 Workspace Server가 붙는 백엔드다. 보통 같은 Mac 안에서만
+Workspace Server가 Hermes에 접근하므로 `HERMES_SERVER_URL`은 아래처럼 로컬
+주소를 유지해도 된다.
 
 ```bash
 hermes serve --host 0.0.0.0 --port 9119
 ```
 
-하지만 Apple 앱이 붙는 대상은 Hermes가 아니라 Workspace Server다.
-따라서 모바일/원격 클라이언트 지원은 Workspace Server의 외부 바인딩까지 구현한 뒤
-테스트해야 한다.
+```bash
+HERMES_SERVER_URL="http://127.0.0.1:9119"
+```
+
+반대로 iPhone/iPad 앱은 Workspace Server에 접속해야 한다. 그래서 모바일 테스트
+때는 Workspace Server를 외부 바인딩으로 열어야 한다.
+
+```bash
+WORKSPACE_HOST=0.0.0.0 \
+PORT=8787 \
+HERMES_WORKSPACE_ROOT="$HOME/HermesWorkspace" \
+HERMES_SERVER_URL="http://127.0.0.1:9119" \
+HERMES_DASHBOARD_USERNAME="admin" \
+HERMES_DASHBOARD_PASSWORD="admin" \
+npm start
+```
+
+그 다음 iPhone/iPad 앱의 Settings에는 Mac의 Tailscale 주소나 LAN 주소를 넣는다.
+
+```text
+http://100.x.x.x:8787
+http://<MAC_LAN_IP>:8787
+```
+
+연결 상태가 실제로 정상인지 확인할 때는 Mac에서 먼저 아래 명령을 확인한다.
+
+```bash
+curl http://127.0.0.1:8787/api/health
+curl http://100.x.x.x:8787/api/health
+```
+
+첫 번째만 성공하고 두 번째가 실패하면 Workspace Server가 `127.0.0.1`에만
+묶여 있거나, Tailscale/LAN 방화벽 경로가 막힌 것이다.
+
+앱 상단의 Connected/Disconnected 표시는 전용 연결 상태값을 기준으로 한다.
+파일 열기, 세션 동기화, 모델 목록 불러오기 같은 일시 작업 메시지가 바뀌어도
+연결이 살아 있으면 Connected로 유지된다.
+
+## 8. Notes/Code 파일 관리
+
+Notes와 Code는 서버의 workspace root 아래 폴더를 조작한다.
+
+```text
+Notes -> <workspace root>/Notes
+Code  -> <workspace root>/Code
+```
+
+지원되는 작업:
+
+- 새 파일 만들기
+- 새 폴더 만들기
+- 이름 바꾸기
+- 삭제
+- 다른 폴더로 이동
+- 다른 폴더로 복사
+
+macOS에서는 Notes/Code 화면의 왼쪽 파일 브라우저에서 파일과 폴더를 관리한다.
+iOS에서는 왼쪽 사이드 drawer가 파일 브라우저 역할을 한다. Notes 또는 Code를
+선택한 뒤 왼쪽 drawer를 열면 폴더 트리가 보이고, 파일을 누르면 drawer가 닫히며
+메인 화면에는 파일 내용만 크게 표시된다.
+
+터치 환경에서 이동/복사/삭제/이름 변경은 파일 또는 폴더 행을 길게 눌러 여는
+context menu에서 실행한다.

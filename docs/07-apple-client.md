@@ -96,6 +96,9 @@ Implemented:
 - Notes and Code file browsers can create a new file or folder in the current
   server-managed folder. New Notes files default to `.md`; new Code files
   default to `.swift` unless the user enters an extension.
+- Notes and Code file browsers also expose rename, delete, move, and copy from
+  the row context menu. On touch devices, long-press a file or folder row to
+  open the same management actions.
 - approval and denial buttons for `approval.request` events
 - normalized Hermes session menu titles instead of raw generated session ids
 - zero-message Hermes sessions are hidden from the client session list
@@ -124,12 +127,24 @@ Implemented:
 - the iOS drawer hit target and spring thresholds were tuned so the left
   workspace menu opens more reliably from the edge and menu rows respond across
   the full row.
+- on iOS, the invisible left-edge swipe target no longer covers the top bar
+  sidebar button. When the drawer is open, a left swipe on the dimmed area
+  outside the drawer also closes it.
+- on iOS, Notes and Code use an Obsidian-style layout: the folder tree lives in
+  the left drawer, and the main screen shows only the selected file preview or
+  editor content.
 - the Apple client now uses a neutral app tint and neutral file/chat colors to
   avoid bright default blue controls in dark mode.
 - connection diagnostics now call `/api/health` before loading workspace data
   and show the exact URL/error in the sidebar status area.
+- the top connection pill uses a dedicated `isWorkspaceConnected` state instead
+  of comparing the transient status text. This prevents successful connections
+  from flickering to `Disconnected` when the app reports normal work statuses
+  such as opening files or syncing sessions.
 - macOS windows get a default app-sized frame and are clamped back inside the
   visible screen if a restored window opens too large or clipped.
+- macOS windows explicitly keep the `.resizable` style mask and a small minimum
+  size, so the window can be resized vertically as well as horizontally.
 
 Not yet implemented:
 
@@ -180,6 +195,12 @@ On iOS, the app shell is intentionally chat-first. The left workspace menu is a
 custom drawer opened from the top-left sidebar icon or by swiping from the left
 edge. Server URL and connection diagnostics are managed from the Settings sheet,
 not from the drawer itself.
+
+When Notes or Code is selected on iOS, the drawer becomes the file navigator.
+Opening a folder expands/navigates inside the drawer. Opening a file closes the
+drawer and shows that file in the main content area. The main content area does
+not repeat the Notes/Code header because the top app bar already names the
+current section.
 
 The left workspace drawer and the right global chat drawer are mutually
 exclusive. Opening one closes the other, and the opposite edge gesture is

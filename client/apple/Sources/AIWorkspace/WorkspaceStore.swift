@@ -25,6 +25,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var chatReasoningMode: ChatReasoningMode = .balanced
     @Published var chatContextScope: ChatContextScope = .currentFile
     @Published var statusMessage = "Not connected"
+    @Published var isWorkspaceConnected = false
     @Published var connectionDetail = "Enter the Workspace Server URL and connect."
     @Published var connectionStep = "Idle"
     @Published var isLoading = false
@@ -80,6 +81,7 @@ final class WorkspaceStore: ObservableObject {
         saveServerURL()
         guard let api else {
             statusMessage = "Invalid server URL"
+            isWorkspaceConnected = false
             connectionDetail = "Could not parse \(serverURLText)"
             connectionStep = "URL parse"
             persistConnectionDiagnostics()
@@ -102,10 +104,12 @@ final class WorkspaceStore: ObservableObject {
             connectionStep = "Loading Hermes metadata"
             await refreshHermesMetadata()
             statusMessage = "Connected"
+            isWorkspaceConnected = true
             connectionStep = "Ready"
             persistConnectionDiagnostics()
         } catch {
             statusMessage = "Connection failed"
+            isWorkspaceConnected = false
             connectionDetail = "\(connectionStep) failed for \(serverURLText): \(describeConnectionError(error))"
             persistConnectionDiagnostics()
         }
@@ -894,6 +898,7 @@ final class WorkspaceStore: ObservableObject {
 
     private func persistConnectionDiagnostics() {
         UserDefaults.standard.set(statusMessage, forKey: "workspace.lastStatusMessage")
+        UserDefaults.standard.set(isWorkspaceConnected, forKey: "workspace.lastConnected")
         UserDefaults.standard.set(connectionStep, forKey: "workspace.lastConnectionStep")
         UserDefaults.standard.set(connectionDetail, forKey: "workspace.lastConnectionDetail")
         UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "workspace.lastConnectionCheck")

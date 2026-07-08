@@ -42,6 +42,9 @@ private func activateMacAppWindow() {
     NSApp.setActivationPolicy(.regular)
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
         if let window = NSApp.windows.first {
+            window.styleMask.insert(.resizable)
+            window.minSize = NSSize(width: 640, height: 420)
+            window.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
             fitWindowToVisibleScreen(window)
             window.makeKeyAndOrderFront(nil)
         }

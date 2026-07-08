@@ -63,7 +63,9 @@ struct RootView: View {
         if selectedSection == .chat {
             primaryDetailView
         } else {
-            iOSSwipeChatContainer
+            iOSSwipeChatContainer {
+                primaryDetailView
+            }
         }
         #endif
     }
@@ -79,6 +81,8 @@ struct RootView: View {
                 if isSidebarVisible {
                     Color.black.opacity(0.25)
                         .ignoresSafeArea()
+                        .contentShape(Rectangle())
+                        .gesture(sidebarGesture(width: sidebarWidth))
                         .onTapGesture {
                             closeSidebar()
                         }
@@ -91,6 +95,7 @@ struct RootView: View {
                 if !isSidebarVisible && !isChatPanelVisible {
                     Color.clear
                         .frame(width: 52)
+                        .padding(.top, 58)
                         .contentShape(Rectangle())
                         .gesture(sidebarGesture(width: sidebarWidth))
                 }
@@ -107,10 +112,17 @@ struct RootView: View {
         VStack(spacing: 0) {
             iOSTopBar
             Divider()
-            if selectedSection == .chat {
-                primaryDetailView
-            } else {
-                iOSSwipeChatContainer
+            switch selectedSection {
+            case .chat:
+                ChatHomeView(showsHeader: false)
+            case .notes, .code:
+                iOSSwipeChatContainer {
+                    FilePreviewView()
+                }
+            case .search:
+                iOSSwipeChatContainer {
+                    SearchView()
+                }
             }
         }
         .background(.background)
@@ -133,9 +145,9 @@ struct RootView: View {
                     .font(.headline.weight(.semibold))
                 HStack(spacing: 6) {
                     Circle()
-                        .fill(store.statusMessage == "Connected" ? .green : .orange)
+                        .fill(store.isWorkspaceConnected ? .green : .orange)
                         .frame(width: 7, height: 7)
-                    Text(store.statusMessage == "Connected" ? "Connected" : "Disconnected")
+                    Text(store.isWorkspaceConnected ? "Connected" : "Disconnected")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -197,6 +209,20 @@ struct RootView: View {
                 }
             }
             .padding(.horizontal, 10)
+
+            if selectedSection == .notes {
+                Divider()
+                    .padding(.vertical, 4)
+                FileBrowserPane(title: "Notes", root: "notes", showsHeader: false) {
+                    closeSidebar()
+                }
+            } else if selectedSection == .code {
+                Divider()
+                    .padding(.vertical, 4)
+                FileBrowserPane(title: "Code", root: "code", showsHeader: false) {
+                    closeSidebar()
+                }
+            }
 
             Spacer()
 
@@ -281,11 +307,11 @@ struct RootView: View {
             }
     }
 
-    private var iOSSwipeChatContainer: some View {
+    private func iOSSwipeChatContainer<Content: View>(@ViewBuilder content: @escaping () -> Content) -> some View {
         GeometryReader { proxy in
             let panelWidth = min(max(proxy.size.width * 0.88, 300), 430)
             ZStack(alignment: .trailing) {
-                primaryDetailView
+                content()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                 if isChatPanelVisible {
@@ -423,7 +449,7 @@ struct ServerStatusView: View {
             #endif
             HStack {
                 Circle()
-                    .fill(store.statusMessage == "Connected" ? .green : .orange)
+                    .fill(store.isWorkspaceConnected ? .green : .orange)
                     .frame(width: 8, height: 8)
                 Text(store.statusMessage)
                     .font(.caption)

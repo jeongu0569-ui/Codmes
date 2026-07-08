@@ -33,6 +33,8 @@ struct FileBrowserPane: View {
     @EnvironmentObject private var store: WorkspaceStore
     let title: String
     let root: String
+    var showsHeader = true
+    var onOpenFile: (() -> Void)?
     @State private var newItemKind: NewWorkspaceItemKind?
     @State private var newItemName = ""
     @State private var itemToRename: WorkspaceItem?
@@ -43,7 +45,9 @@ struct FileBrowserPane: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HeaderView(title: title, subtitle: store.sectionSubtitle(root: root))
+            if showsHeader {
+                HeaderView(title: title, subtitle: store.sectionSubtitle(root: root))
+            }
             HStack(spacing: 12) {
                 Menu {
                     Button {
@@ -107,6 +111,7 @@ struct FileBrowserPane: View {
                             await store.openFolder(root: root, item: item)
                         } else {
                             await store.loadFile(item)
+                            onOpenFile?()
                         }
                     }
                 } label: {
