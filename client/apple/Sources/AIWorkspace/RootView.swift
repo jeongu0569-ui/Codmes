@@ -90,7 +90,7 @@ struct RootView: View {
 
                 if !isSidebarVisible && !isChatPanelVisible {
                     Color.clear
-                        .frame(width: 32)
+                        .frame(width: 52)
                         .contentShape(Rectangle())
                         .gesture(sidebarGesture(width: sidebarWidth))
                 }
@@ -123,7 +123,10 @@ struct RootView: View {
             } label: {
                 Image(systemName: "sidebar.left")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .frame(width: 34, height: 34)
+            .contentShape(Rectangle())
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(selectedSection.rawValue)
@@ -145,7 +148,10 @@ struct RootView: View {
             } label: {
                 Image(systemName: "gearshape")
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
+            .frame(width: 34, height: 34)
+            .contentShape(Rectangle())
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 11)
@@ -168,8 +174,7 @@ struct RootView: View {
             VStack(spacing: 4) {
                 ForEach(WorkspaceSection.allCases) { section in
                     Button {
-                        selection = section
-                        closeSidebar()
+                        selectSectionFromSidebar(section)
                     } label: {
                         HStack(spacing: 12) {
                             Image(systemName: section.systemImage)
@@ -180,6 +185,9 @@ struct RootView: View {
                         .font(.headline)
                         .padding(.horizontal, 14)
                         .padding(.vertical, 12)
+                        .foregroundStyle(selectedSection == section ? .primary : .secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
                         .background(
                             selectedSection == section ? Color.secondary.opacity(0.14) : Color.clear,
                             in: RoundedRectangle(cornerRadius: 8)
@@ -198,6 +206,8 @@ struct RootView: View {
             } label: {
                 Label("Settings", systemImage: "gearshape")
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .foregroundStyle(.secondary)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .padding(18)
@@ -223,10 +233,15 @@ struct RootView: View {
     }
 
     private func closeSidebar() {
-        withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
+        withAnimation(.spring(response: 0.24, dampingFraction: 0.92)) {
             isSidebarVisible = false
             sidebarDragX = 0
         }
+    }
+
+    private func selectSectionFromSidebar(_ section: WorkspaceSection) {
+        selection = section
+        closeSidebar()
     }
 
     private func sidebarOffset(width: CGFloat) -> CGFloat {
@@ -251,10 +266,11 @@ struct RootView: View {
                     sidebarDragX = 0
                     return
                 }
+                let predicted = value.predictedEndTranslation.width
                 let shouldOpen = isSidebarVisible
-                    ? value.translation.width > -width * 0.35
-                    : value.translation.width > 48
-                withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
+                    ? value.translation.width > -width * 0.28 && predicted > -width * 0.44
+                    : value.translation.width > 34 || predicted > 72
+                withAnimation(.spring(response: 0.26, dampingFraction: 0.9)) {
                     isSidebarVisible = shouldOpen
                     if shouldOpen {
                         isChatPanelVisible = false

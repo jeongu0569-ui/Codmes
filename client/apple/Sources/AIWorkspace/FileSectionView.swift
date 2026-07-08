@@ -110,26 +110,7 @@ struct FileBrowserPane: View {
                         }
                     }
                 } label: {
-                    HStack {
-                        Image(systemName: icon(for: item))
-                            .foregroundStyle(item.isDirectory ? .blue : .secondary)
-                        VStack(alignment: .leading) {
-                            Text(item.name)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            Text(item.path)
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                        }
-                        Spacer()
-                        if item.isDirectory {
-                            Image(systemName: "chevron.right")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
-                        }
-                    }
+                    fileRowLabel(item)
                 }
                 .buttonStyle(.plain)
                 .contextMenu {
@@ -172,7 +153,7 @@ struct FileBrowserPane: View {
                     } label: {
                         Label("Rename", systemImage: "pencil")
                     }
-                    .tint(.blue)
+                    .tint(.secondary)
                 }
             }
         }
@@ -294,6 +275,29 @@ struct FileBrowserPane: View {
         case "image": return "photo"
         case "code": return "curlybraces"
         default: return "doc"
+        }
+    }
+
+    private func fileRowLabel(_ item: WorkspaceItem) -> some View {
+        HStack {
+            Image(systemName: icon(for: item))
+                .foregroundStyle(item.isDirectory ? Color.primary.opacity(0.82) : Color.secondary)
+            VStack(alignment: .leading) {
+                Text(item.name)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Text(item.path)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+            Spacer()
+            if item.isDirectory {
+                Image(systemName: "chevron.right")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+            }
         }
     }
 }

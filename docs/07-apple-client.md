@@ -121,6 +121,11 @@ Implemented:
   reasoning/send controls stay compact in the composer.
 - tapping outside the chat input or scrolling the transcript dismisses the iOS
   keyboard.
+- the iOS drawer hit target and spring thresholds were tuned so the left
+  workspace menu opens more reliably from the edge and menu rows respond across
+  the full row.
+- the Apple client now uses a neutral app tint and neutral file/chat colors to
+  avoid bright default blue controls in dark mode.
 - connection diagnostics now call `/api/health` before loading workspace data
   and show the exact URL/error in the sidebar status area.
 - macOS windows get a default app-sized frame and are clamped back inside the

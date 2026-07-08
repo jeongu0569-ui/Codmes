@@ -131,8 +131,9 @@ struct ChatHomeView: View {
                         } label: {
                             Image(systemName: "paperplane.fill")
                         }
-                        .buttonStyle(.borderless)
+                        .buttonStyle(.plain)
                         .font(.title3)
+                        .foregroundStyle(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .tertiary : .primary)
                         .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 }
@@ -456,7 +457,7 @@ struct MessageBubble: View {
             return AnyShapeStyle(.quaternary.opacity(0.22))
         }
         if line.role == "user" {
-            return AnyShapeStyle(.tint.opacity(0.18))
+            return AnyShapeStyle(.secondary.opacity(0.22))
         }
         return AnyShapeStyle(.quaternary.opacity(0.35))
     }

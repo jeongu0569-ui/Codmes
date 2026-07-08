@@ -24,6 +24,7 @@ struct AIWorkspaceApp: App {
     private var rootView: some View {
         RootView()
             .environmentObject(store)
+            .tint(.secondary)
             #if os(macOS)
             .onAppear {
                 activateMacAppWindow()
