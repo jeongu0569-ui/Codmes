@@ -109,14 +109,24 @@ function htmlDocument(body, options = {}) {
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
 :root {
-  color-scheme: dark;
+  color-scheme: light dark;
   --bg: transparent;
-  --fg: #e7e7e7;
-  --muted: #9a9a9a;
-  --border: rgba(255,255,255,0.16);
-  --panel: rgba(255,255,255,0.055);
-  --panel-strong: rgba(255,255,255,0.095);
-  --link: #7db7ff;
+  --fg: #1c1c1e;
+  --muted: #8e8e93;
+  --border: rgba(0,0,0,0.15);
+  --panel: rgba(0,0,0,0.04);
+  --panel-strong: rgba(0,0,0,0.08);
+  --link: #007aff;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fg: #e7e7e7;
+    --muted: #9a9a9a;
+    --border: rgba(255,255,255,0.16);
+    --panel: rgba(255,255,255,0.055);
+    --panel-strong: rgba(255,255,255,0.095);
+    --link: #7db7ff;
+  }
 }
 html, body {
   margin: 0;
@@ -173,6 +183,7 @@ pre.shiki,
 pre.fallback-code {
   padding: 12px;
   background: #0d1117 !important;
+  color: #e7e7e7 !important;
 }
 pre code {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
