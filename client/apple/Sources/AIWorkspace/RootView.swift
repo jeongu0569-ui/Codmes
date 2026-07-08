@@ -88,7 +88,7 @@ struct RootView: View {
                     .offset(x: sidebarOffset(width: sidebarWidth))
                     .gesture(sidebarGesture(width: sidebarWidth))
 
-                if !isSidebarVisible {
+                if !isSidebarVisible && !isChatPanelVisible {
                     Color.clear
                         .frame(width: 32)
                         .contentShape(Rectangle())
@@ -216,7 +216,9 @@ struct RootView: View {
     private func openSidebar() {
         withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
             isSidebarVisible = true
+            isChatPanelVisible = false
             sidebarDragX = 0
+            chatPanelDragX = 0
         }
     }
 
@@ -237,6 +239,7 @@ struct RootView: View {
     private func sidebarGesture(width: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 12)
             .onChanged { value in
+                guard !isChatPanelVisible else { return }
                 if isSidebarVisible {
                     sidebarDragX = min(0, value.translation.width)
                 } else {
@@ -244,11 +247,19 @@ struct RootView: View {
                 }
             }
             .onEnded { value in
+                guard !isChatPanelVisible else {
+                    sidebarDragX = 0
+                    return
+                }
                 let shouldOpen = isSidebarVisible
                     ? value.translation.width > -width * 0.35
                     : value.translation.width > 48
                 withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
                     isSidebarVisible = shouldOpen
+                    if shouldOpen {
+                        isChatPanelVisible = false
+                        chatPanelDragX = 0
+                    }
                     sidebarDragX = 0
                 }
             }
@@ -290,7 +301,7 @@ struct RootView: View {
                 .offset(x: chatPanelOffset(panelWidth: panelWidth))
                 .gesture(chatPanelGesture(panelWidth: panelWidth))
 
-                if !isChatPanelVisible {
+                if !isChatPanelVisible && !isSidebarVisible {
                     Color.clear
                         .frame(width: 28)
                         .contentShape(Rectangle())
@@ -312,6 +323,7 @@ struct RootView: View {
     private func chatPanelGesture(panelWidth: CGFloat) -> some Gesture {
         DragGesture(minimumDistance: 12)
             .onChanged { value in
+                guard !isSidebarVisible else { return }
                 if isChatPanelVisible {
                     chatPanelDragX = max(0, value.translation.width)
                 } else {
@@ -319,11 +331,19 @@ struct RootView: View {
                 }
             }
             .onEnded { value in
+                guard !isSidebarVisible else {
+                    chatPanelDragX = 0
+                    return
+                }
                 let shouldOpen = isChatPanelVisible
                     ? value.translation.width < panelWidth * 0.36
                     : value.translation.width < -48
                 withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
                     isChatPanelVisible = shouldOpen
+                    if shouldOpen {
+                        isSidebarVisible = false
+                        sidebarDragX = 0
+                    }
                     chatPanelDragX = 0
                 }
             }

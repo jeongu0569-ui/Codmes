@@ -116,6 +116,9 @@ Implemented:
   server connection settings live in a Settings sheet.
 - compact iOS chat controls use short visible labels for access/model/reasoning
   so long provider model names do not expand vertically and fill the screen.
+- the chat composer mirrors the Obsidian Hermes Connection layout more closely:
+  new chat and history live in the chat header, while context/access/model/
+  reasoning/send controls stay compact in the composer.
 - tapping outside the chat input or scrolling the transcript dismisses the iOS
   keyboard.
 - connection diagnostics now call `/api/health` before loading workspace data
@@ -172,6 +175,11 @@ On iOS, the app shell is intentionally chat-first. The left workspace menu is a
 custom drawer opened from the top-left sidebar icon or by swiping from the left
 edge. Server URL and connection diagnostics are managed from the Settings sheet,
 not from the drawer itself.
+
+The left workspace drawer and the right global chat drawer are mutually
+exclusive. Opening one closes the other, and the opposite edge gesture is
+disabled while a drawer is open so a right-swipe close does not accidentally open
+the left menu.
 
 The global panel uses the same `WorkspaceStore`, live session, model picker,
 access mode, reasoning mode, session manager, approval controls, and message

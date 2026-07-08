@@ -65,25 +65,24 @@ struct ChatHomeView: View {
                         .onSubmit(sendDraft)
 
                     HStack(spacing: 12) {
-                        Button {
-                            store.prepareNewChat()
+                        Menu {
+                            ForEach(ChatContextScope.allCases) { scope in
+                                Button(scope.label) {
+                                    store.chatContextScope = scope
+                                }
+                            }
                         } label: {
-                            Image(systemName: "plus")
+                            Text("@")
+                                .font(.headline.weight(.semibold))
                         }
-                        .buttonStyle(.borderless)
-                        .help("New chat")
+                        .buttonStyle(.plain)
+                        .foregroundStyle(.secondary)
 
-                        Button {
-                            showingSessionManager = true
-                        } label: {
-                            Image(systemName: "clock.arrow.circlepath")
-                        }
-                        .buttonStyle(.borderless)
-                        .help("Search and manage sessions")
+                        Spacer(minLength: 8)
 
                         chatControlMenu(
                             title: store.chatAccessMode.label,
-                            width: 56,
+                            width: 48,
                             options: ChatAccessMode.allCases.map { ($0.label, $0) }
                         ) { mode in
                             store.chatAccessMode = mode
@@ -110,7 +109,9 @@ struct ChatHomeView: View {
                                 Image(systemName: "chevron.down")
                                     .font(.caption2)
                             }
-                            .frame(width: compact ? 90 : 128, alignment: .leading)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.secondary)
+                            .frame(width: compact ? 82 : 108, alignment: .leading)
                             .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -118,14 +119,12 @@ struct ChatHomeView: View {
 
                         chatControlMenu(
                             title: store.chatReasoningMode.label,
-                            width: 50,
+                            width: 44,
                             options: ChatReasoningMode.allCases.map { ($0.label, $0) }
                         ) { mode in
                             store.chatReasoningMode = mode
                             Task { await store.applyReasoningModeToLiveSession() }
                         }
-
-                        Spacer()
 
                         Button {
                             sendDraft()
@@ -171,8 +170,29 @@ struct ChatHomeView: View {
 
             Spacer(minLength: 10)
 
+            HStack(spacing: 14) {
+                Button {
+                    store.prepareNewChat()
+                } label: {
+                    Image(systemName: "plus")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("New chat")
+
+                Button {
+                    showingSessionManager = true
+                } label: {
+                    Image(systemName: "clock.arrow.circlepath")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Search and manage sessions")
+            }
+            .font(compact ? .title3 : .title2)
+
             sessionMenu
-                .frame(maxWidth: 260, alignment: .trailing)
+                .frame(maxWidth: compact ? 160 : 260, alignment: .trailing)
         }
         .padding(.horizontal, compact ? 14 : 20)
         .padding(.vertical, compact ? 10 : 14)
@@ -239,7 +259,8 @@ struct ChatHomeView: View {
                 Image(systemName: "chevron.down")
                     .font(.caption2)
             }
-            .font(.subheadline.weight(.medium))
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.secondary)
             .frame(width: width, alignment: .leading)
             .contentShape(Rectangle())
         }
