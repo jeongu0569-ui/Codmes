@@ -179,7 +179,9 @@ not from the drawer itself.
 The left workspace drawer and the right global chat drawer are mutually
 exclusive. Opening one closes the other, and the opposite edge gesture is
 disabled while a drawer is open so a right-swipe close does not accidentally open
-the left menu.
+the left menu. The right chat drawer uses a full-height drag handle and
+high-priority swipe handling so it can be closed with a right swipe from the
+panel itself, similar to the left drawer.
 
 The global panel uses the same `WorkspaceStore`, live session, model picker,
 access mode, reasoning mode, session manager, approval controls, and message

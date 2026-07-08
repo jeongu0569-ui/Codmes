@@ -284,11 +284,16 @@ struct RootView: View {
                 }
 
                 HStack(spacing: 0) {
-                    RoundedRectangle(cornerRadius: 2)
-                        .fill(.secondary.opacity(0.55))
-                        .frame(width: 3, height: 44)
-                        .padding(.leading, 7)
-                        .padding(.trailing, 5)
+                    ZStack {
+                        Color.clear
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(.secondary.opacity(0.55))
+                            .frame(width: 3, height: 48)
+                    }
+                    .frame(width: 20)
+                    .frame(maxHeight: .infinity)
+                    .contentShape(Rectangle())
+                    .highPriorityGesture(chatPanelGesture(panelWidth: panelWidth))
 
                     ChatHomeView(compact: true)
                         .frame(width: panelWidth)
@@ -299,7 +304,7 @@ struct RootView: View {
                 .frame(width: panelWidth + 15)
                 .frame(maxHeight: .infinity)
                 .offset(x: chatPanelOffset(panelWidth: panelWidth))
-                .gesture(chatPanelGesture(panelWidth: panelWidth))
+                .highPriorityGesture(chatPanelGesture(panelWidth: panelWidth))
 
                 if !isChatPanelVisible && !isSidebarVisible {
                     Color.clear
@@ -325,9 +330,9 @@ struct RootView: View {
             .onChanged { value in
                 guard !isSidebarVisible else { return }
                 if isChatPanelVisible {
-                    chatPanelDragX = max(0, value.translation.width)
+                    chatPanelDragX = min(panelWidth + 15, max(0, value.translation.width))
                 } else {
-                    chatPanelDragX = min(0, value.translation.width)
+                    chatPanelDragX = max(-(panelWidth + 15), min(0, value.translation.width))
                 }
             }
             .onEnded { value in
@@ -335,10 +340,11 @@ struct RootView: View {
                     chatPanelDragX = 0
                     return
                 }
+                let predicted = value.predictedEndTranslation.width
                 let shouldOpen = isChatPanelVisible
-                    ? value.translation.width < panelWidth * 0.36
-                    : value.translation.width < -48
-                withAnimation(.spring(response: 0.28, dampingFraction: 0.9)) {
+                    ? value.translation.width < panelWidth * 0.28 && predicted < panelWidth * 0.45
+                    : value.translation.width < -44 || predicted < -80
+                withAnimation(.spring(response: 0.28, dampingFraction: 0.88)) {
                     isChatPanelVisible = shouldOpen
                     if shouldOpen {
                         isSidebarVisible = false
