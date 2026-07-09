@@ -181,6 +181,10 @@ export class WorkspaceAgentEngine extends EventEmitter {
     return await this.codeRuntime.applyPatch(taskId, params);
   }
 
+  async rejectCodeTaskPatch(taskId, params = {}) {
+    return await this.codeRuntime.rejectPatch(taskId, params);
+  }
+
   async listTasks(params = {}) {
     return await this.state.listTasks(params);
   }

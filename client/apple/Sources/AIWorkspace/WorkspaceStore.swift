@@ -396,6 +396,20 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    func rejectCodePatch(_ proposal: CodePatchProposal) async {
+        guard let api, let selectedCodeTask else { return }
+        isLoadingCodeTask = true
+        defer { isLoadingCodeTask = false }
+        do {
+            _ = try await api.rejectCodePatch(taskId: selectedCodeTask.id, proposalId: proposal.id)
+            self.selectedCodeTask = try await api.agentTask(id: selectedCodeTask.id)
+            await loadSelectedCodeTaskDiff()
+            statusMessage = "Patch rejected"
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
     func runSelectedCodeTaskChecks() async {
         guard let api, let selectedCodeTask else { return }
         isLoadingCodeTask = true

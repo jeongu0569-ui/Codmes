@@ -27,6 +27,7 @@ status. It also reports the active workspace agent engine capabilities:
     "taskEndpoint": "/api/agent/tasks",
     "codeTaskEndpoint": "/api/agent/code-task",
     "codePatchEndpoint": "/api/agent/code-task/:id/patches",
+    "codePatchRejectEndpoint": "/api/agent/code-task/:id/patches/:proposalId/reject",
     "codeChecksEndpoint": "/api/agent/code-task/:id/checks"
   }
 }
@@ -449,6 +450,53 @@ Response:
 If the file changed after proposal creation, the endpoint returns a conflict and
 does not write the patch. This avoids applying stale edits over user changes.
 
+### `POST /api/agent/code-task/:id/patches/:proposalId/reject`
+
+Rejects a proposed patch without modifying files. This records the user's
+decision and leaves the task ready for a revised proposal.
+
+Safety rules:
+
+```text
+the proposal must still be in status=proposed
+no workspace files are written
+```
+
+Request:
+
+```json
+{
+  "reason": "This changes the wrong file."
+}
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "engine": "workspace-agent",
+  "runtime": "code-agent",
+  "taskId": "task-...",
+  "status": "patch_rejected",
+  "proposalId": "patch-...",
+  "taskMemory": {
+    "nextSteps": [
+      "Revise the patch proposal.",
+      "Create a safer or more targeted patch before applying changes."
+    ]
+  }
+}
+```
+
+Side effects are limited to Workspace Agent state:
+
+```text
+.ai-workspace/tasks/task-....json
+.ai-workspace/tool-logs/tool-events.jsonl
+.ai-workspace/decisions/events.jsonl
+```
+
 ### `POST /api/agent/code-task/:id/checks`
 
 Runs verification commands for an existing code task and appends the results to
@@ -719,7 +767,8 @@ Patch and check commands mirror the REST endpoints:
 ```json
 { "id": "6", "command": "code.patch.propose", "params": { "taskId": "task-...", "changes": [] } }
 { "id": "7", "command": "code.patch.apply", "params": { "taskId": "task-...", "proposalId": "patch-...", "approved": true } }
-{ "id": "8", "command": "code.checks.run", "params": { "taskId": "task-...", "approved": true } }
+{ "id": "8", "command": "code.patch.reject", "params": { "taskId": "task-...", "proposalId": "patch-...", "reason": "Needs a narrower patch." } }
+{ "id": "9", "command": "code.checks.run", "params": { "taskId": "task-...", "approved": true } }
 ```
 
 Server responses use:

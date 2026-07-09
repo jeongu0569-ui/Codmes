@@ -152,6 +152,9 @@ async function handleLiveCommand(engine, message) {
   if (command === "code.patch.apply") {
     return await engine.applyCodeTaskPatch(String(params.taskId || ""), params);
   }
+  if (command === "code.patch.reject") {
+    return await engine.rejectCodeTaskPatch(String(params.taskId || ""), params);
+  }
   throw Object.assign(new Error(`Unknown live command: ${command}`), { status: 400 });
 }
 
@@ -265,6 +268,10 @@ async function handleRequest(req, res) {
     if (codePatchApplyMatch && req.method === "POST") {
       return sendJson(res, await applyCodeTaskPatch(codePatchApplyMatch[1], codePatchApplyMatch[2], req));
     }
+    const codePatchRejectMatch = url.pathname.match(/^\/api\/agent\/code-task\/([^/]+)\/patches\/([^/]+)\/reject$/);
+    if (codePatchRejectMatch && req.method === "POST") {
+      return sendJson(res, await rejectCodeTaskPatch(codePatchRejectMatch[1], codePatchRejectMatch[2], req));
+    }
     if (req.method === "POST" && url.pathname === "/api/render/markdown") {
       return sendJson(res, await renderMarkdown(req));
     }
@@ -302,6 +309,7 @@ async function workspaceInfo() {
       taskEndpoint: "/api/agent/tasks",
       codeTaskEndpoint: "/api/agent/code-task",
       codePatchEndpoint: "/api/agent/code-task/:id/patches",
+      codePatchRejectEndpoint: "/api/agent/code-task/:id/patches/:proposalId/reject",
       codeChecksEndpoint: "/api/agent/code-task/:id/checks"
     },
     search: searchStatus(WORKSPACE_ROOT)
@@ -579,6 +587,19 @@ async function applyCodeTaskPatch(taskId, proposalId, req) {
   const engine = createAgentEngine();
   try {
     return await engine.applyCodeTaskPatch(decodeURIComponent(taskId), {
+      ...body,
+      proposalId: decodeURIComponent(proposalId)
+    });
+  } finally {
+    engine.close();
+  }
+}
+
+async function rejectCodeTaskPatch(taskId, proposalId, req) {
+  const body = await readJsonBody(req);
+  const engine = createAgentEngine();
+  try {
+    return await engine.rejectCodeTaskPatch(decodeURIComponent(taskId), {
       ...body,
       proposalId: decodeURIComponent(proposalId)
     });

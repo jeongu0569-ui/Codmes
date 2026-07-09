@@ -119,6 +119,46 @@ test("code agent runtime inspects a Code project and records artifacts", async (
   assert.ok(checkedTask.taskMemory.nextSteps.some((step) => step.includes("Review git diff")));
 });
 
+test("code agent runtime rejects a proposed patch without changing files", async () => {
+  const root = await fixtureCodeWorkspace();
+  const state = new WorkspaceAgentStateStore(root);
+  const runtime = new CodeAgentRuntime({ workspaceRoot: root, stateStore: state });
+
+  const result = await runtime.inspectTask({
+    scopePath: "Code/demo-app",
+    instruction: "Change the greeting renderer",
+    maxFiles: 20
+  });
+  const patch = await runtime.proposePatch(result.taskId, {
+    changes: [{
+      path: "src/index.js",
+      find: "return 'hello';",
+      replace: "return 'rejected';"
+    }]
+  });
+  const rejected = await runtime.rejectPatch(result.taskId, {
+    proposalId: patch.proposal.id,
+    reason: "Wrong direction."
+  });
+  assert.equal(rejected.status, "patch_rejected");
+  assert.ok(rejected.taskMemory.nextSteps.some((step) => step.includes("Revise")));
+  assert.equal(
+    await fs.readFile(path.join(root, "Code", "demo-app", "src", "index.js"), "utf8"),
+    "export function greeting() {\n  return 'hello';\n}\n"
+  );
+  await assert.rejects(
+    () => runtime.applyPatch(result.taskId, { proposalId: patch.proposal.id, approved: true }),
+    /already rejected/
+  );
+
+  const rejectedTask = JSON.parse(await fs.readFile(
+    path.join(root, ".ai-workspace", "tasks", `${result.taskId}.json`),
+    "utf8"
+  ));
+  assert.equal(rejectedTask.patchProposals[0].status, "rejected");
+  assert.equal(rejectedTask.patchProposals[0].rejectionReason, "Wrong direction.");
+});
+
 test("code agent runtime rejects non-Code scopes", async () => {
   const root = await fixtureCodeWorkspace();
   const state = new WorkspaceAgentStateStore(root);

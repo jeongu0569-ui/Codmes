@@ -189,6 +189,12 @@ struct WorkspaceAPI {
         return try await request(components, method: "POST", body: ApprovedBody(approved: true))
     }
 
+    func rejectCodePatch(taskId: String, proposalId: String, reason: String = "Rejected in Apple client.") async throws -> CodePatchRejectResponse {
+        var components = try components("/api/agent/code-task/\(taskId)/patches/\(proposalId)/reject")
+        components.percentEncodedPath = "/api/agent/code-task/\(taskId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? taskId)/patches/\(proposalId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? proposalId)/reject"
+        return try await request(components, method: "POST", body: RejectPatchBody(reason: reason))
+    }
+
     func runCodeChecks(taskId: String) async throws -> CodeChecksResponse {
         var components = try components("/api/agent/code-task/\(taskId)/checks")
         components.percentEncodedPath = "/api/agent/code-task/\(taskId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? taskId)/checks"
@@ -288,6 +294,10 @@ private struct CodeTaskCreateBody: Encodable {
 
 private struct ApprovedBody: Encodable {
     let approved: Bool
+}
+
+private struct RejectPatchBody: Encodable {
+    let reason: String
 }
 
 struct AnyEncodable: Encodable {

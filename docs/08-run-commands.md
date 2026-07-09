@@ -185,6 +185,19 @@ curl -X POST "http://127.0.0.1:8787/api/agent/code-task/$TASK_ID/patches/$PROPOS
 `approved: true`가 없으면 서버는 `428`로 거절하고 파일을 수정하지 않는다. 적용
 시점에 대상 파일 내용이 제안 당시의 hash와 다르면 충돌로 처리한다.
 
+Patch 거절:
+
+```bash
+curl -X POST "http://127.0.0.1:8787/api/agent/code-task/$TASK_ID/patches/$PROPOSAL_ID/reject" \
+  -H 'content-type: application/json' \
+  --data '{
+    "reason": "원하는 변경 방향이 아님"
+  }'
+```
+
+거절은 파일을 수정하지 않는다. task JSON에는 해당 proposal의 `status`가
+`rejected`로 남고, decision/tool log에도 거절 이벤트가 기록된다.
+
 Check 실행:
 
 ```bash
@@ -602,7 +615,7 @@ Code 화면의 파일 브라우저에는 `Code Agent` 패널이 있다.
 → Create code task
 → 최근 task 목록에서 task 선택
 → taskMemory / diff 확인
-→ patch proposal이 있으면 Approve로 적용
+→ patch proposal이 있으면 Approve로 적용하거나 Deny로 거절
 → Run checks로 서버-side 검증 실행
 ```
 
@@ -611,5 +624,6 @@ Code 화면의 파일 브라우저에는 `Code Agent` 패널이 있다.
 - iOS/macOS 앱은 shell을 직접 실행하지 않는다.
 - 파일 수정과 명령 실행은 모두 Workspace Server가 `Code/` scope 안에서 수행한다.
 - patch 적용과 check 실행은 서버 API에서 `approved: true`를 요구한다.
+- patch 거절은 파일을 수정하지 않고 task/decision/tool log에 기록된다.
 - 앱의 diff 표시는 현재 compact text diff다. side-by-side diff, 파일별 hunk
   접기, 승인 inbox는 이후 UI 개선 단계로 남아 있다.

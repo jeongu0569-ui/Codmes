@@ -614,8 +614,8 @@ private struct CodePatchProposalView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
-                Image(systemName: proposal.status == "applied" ? "checkmark.circle" : "exclamationmark.shield")
-                    .foregroundStyle(proposal.status == "applied" ? .green : .orange)
+                Image(systemName: statusIcon)
+                    .foregroundStyle(statusColor)
                 Text(proposal.summary ?? proposal.id)
                     .font(.caption)
                     .lineLimit(2)
@@ -629,6 +629,18 @@ private struct CodePatchProposalView: View {
                     .font(.caption.weight(.semibold))
                     .buttonStyle(.borderless)
                     .disabled(store.isLoadingCodeTask)
+                    Button {
+                        Task { await store.rejectCodePatch(proposal) }
+                    } label: {
+                        Text("Deny")
+                    }
+                    .font(.caption.weight(.semibold))
+                    .buttonStyle(.borderless)
+                    .disabled(store.isLoadingCodeTask)
+                } else if proposal.status == "rejected" {
+                    Text("Denied")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(.orange)
                 }
             }
             ForEach((proposal.changes ?? []).prefix(3)) { change in
@@ -641,6 +653,28 @@ private struct CodePatchProposalView: View {
         }
         .padding(8)
         .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+    }
+
+    private var statusIcon: String {
+        switch proposal.status {
+        case "applied":
+            return "checkmark.circle"
+        case "rejected":
+            return "xmark.circle"
+        default:
+            return "exclamationmark.shield"
+        }
+    }
+
+    private var statusColor: Color {
+        switch proposal.status {
+        case "applied":
+            return .green
+        case "rejected":
+            return .orange
+        default:
+            return .orange
+        }
     }
 }
 

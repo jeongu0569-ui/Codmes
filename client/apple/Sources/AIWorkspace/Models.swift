@@ -262,6 +262,8 @@ struct CodePatchProposal: Codable, Hashable, Identifiable {
     let approved: Bool?
     let createdAt: String?
     let appliedAt: String?
+    let rejectedAt: String?
+    let rejectionReason: String?
     let scopePath: String?
     let summary: String?
     let diffRef: String?
@@ -292,6 +294,17 @@ struct CodePatchApplyResponse: Codable {
     let proposalId: String?
     let filesChanged: [String]?
     let git: CodeTaskRecord.GitInfo?
+    let taskMemory: CodeTaskMemory?
+}
+
+struct CodePatchRejectResponse: Codable {
+    let ok: Bool
+    let engine: String?
+    let runtime: String?
+    let taskId: String
+    let status: String?
+    let scopePath: String?
+    let proposalId: String?
     let taskMemory: CodeTaskMemory?
 }
 

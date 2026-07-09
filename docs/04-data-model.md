@@ -230,10 +230,12 @@ When a code patch is proposed, the task also stores:
 ```text
 patch_proposals[]
 - id
-- status: proposed | applied
+- status: proposed | applied | rejected
 - approved
 - created_at
 - applied_at
+- rejected_at
+- rejection_reason
 - scope_path
 - summary
 - diff_ref
@@ -262,6 +264,10 @@ approved proposal later without trusting the client to resend the same patch.
 The client-facing response omits `content` and only returns metadata plus the
 diff artifact reference.
 
+When a proposed patch is rejected, the proposal stores `rejected_at` and
+`rejection_reason`, the task records a `code.patch.rejected` decision, and no
+workspace file is modified.
+
 When an approved patch is applied, the task stores:
 
 ```text
@@ -271,6 +277,6 @@ git.diff_stat
 git.diff_ref
 ```
 
-The task status becomes `patch_proposed` after a proposal and `patched` after
-the approved proposal is applied. Check execution can then move it to `checked`
-or `check_failed`.
+The task status becomes `patch_proposed` after a proposal, `patch_rejected`
+after a denied proposal, and `patched` after the approved proposal is applied.
+Check execution can then move it to `checked` or `check_failed`.

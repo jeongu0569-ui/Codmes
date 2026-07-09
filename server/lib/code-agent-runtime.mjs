@@ -394,6 +394,63 @@ export class CodeAgentRuntime {
     };
   }
 
+  async rejectPatch(taskId, params = {}) {
+    const task = await this.state.readTask(requireTaskId(taskId));
+    if (task.type !== "code") {
+      throw Object.assign(new Error("Only code tasks can reject patches."), { status: 400 });
+    }
+    const proposals = Array.isArray(task.patchProposals) ? task.patchProposals : [];
+    const proposal = findPatchProposal(proposals, params.proposalId);
+    if (!proposal) {
+      throw Object.assign(new Error("Patch proposal was not found."), { status: 404 });
+    }
+    if (proposal.status !== "proposed") {
+      throw Object.assign(new Error(`Patch proposal is already ${proposal.status}.`), { status: 409 });
+    }
+    const reason = stringValue(params.reason) || "Rejected by user.";
+    const rejectedAt = new Date().toISOString();
+    const patchedProposals = proposals.map((item) => item.id === proposal.id
+      ? {
+          ...item,
+          status: "rejected",
+          approved: false,
+          rejectedAt,
+          rejectionReason: reason
+        }
+      : item);
+    const taskMemory = updateTaskMemoryForRejectedPatch(task.taskMemory, proposal, reason);
+    const updated = await this.state.finishTask(task.id, {
+      status: "patch_rejected",
+      patchProposals: patchedProposals,
+      taskMemory
+    });
+    await this.state.recordDecision({
+      type: "code.patch.rejected",
+      taskId: task.id,
+      proposalId: proposal.id,
+      scopePath: proposal.scopePath || task.scopePath,
+      summary: reason,
+      diffRef: proposal.diffRef
+    });
+    await this.state.recordToolLog({
+      type: "code.patch.reject",
+      taskId: task.id,
+      proposalId: proposal.id,
+      scopePath: proposal.scopePath || task.scopePath,
+      reason
+    });
+    return {
+      ok: true,
+      engine: "workspace-agent",
+      runtime: "code-agent",
+      taskId: task.id,
+      status: updated.status,
+      scopePath: proposal.scopePath || task.scopePath,
+      proposalId: proposal.id,
+      taskMemory: updated.taskMemory
+    };
+  }
+
   resolveCodeScope(scopePath) {
     const relativePath = scopePath ? joinWorkspacePath(scopePath) : "Code";
     const scope = resolveWorkspacePath(this.workspaceRoot, relativePath);
@@ -714,6 +771,17 @@ function updateTaskMemoryForAppliedPatch(memory, filesChanged, proposal) {
       "Review git diff before finalizing the code task."
     ],
     notes: appendBounded(memory?.notes, `Applied patch ${proposal.id} to ${filesChanged.length} file(s).`)
+  });
+}
+
+function updateTaskMemoryForRejectedPatch(memory, proposal, reason) {
+  return normalizeTaskMemory({
+    ...memory,
+    nextSteps: [
+      "Revise the patch proposal.",
+      "Create a safer or more targeted patch before applying changes."
+    ],
+    notes: appendBounded(memory?.notes, `Rejected patch ${proposal.id}: ${reason}`)
   });
 }
 

@@ -169,6 +169,8 @@ Status: in progress.
   - `POST /api/agent/code-task/:id/patches/:proposalId/apply` requires
     `approved: true`, verifies that file hashes still match the proposal, then
     writes files and refreshes git diff/status.
+  - `POST /api/agent/code-task/:id/patches/:proposalId/reject` records a
+    rejected proposal and reason without modifying files.
 - Approved check execution. Done with
   `POST /api/agent/code-task/:id/checks`; the server refuses to run shell
   commands unless the request includes `approved: true`.
@@ -180,7 +182,8 @@ Status: in progress.
 - Apple client Code Agent panel. First pass done: the Code browser can create
   inspect tasks for the current Code folder, list/load recent code tasks, show
   task memory, show the latest proposed/git diff artifact, approve/apply an
-  existing patch proposal, and run approved checks through the Workspace Server.
+  existing patch proposal, deny an unsafe proposal, and run approved checks
+  through the Workspace Server.
 
 Remaining:
 
@@ -188,8 +191,8 @@ Remaining:
   Code Agent panel, but side-by-side hunks, file grouping, and stronger review
   ergonomics are still pending.
 - Full approval UI for code task patch/check execution. The first apply/check
-  buttons exist, but a dedicated approval inbox and richer safety copy are still
-  pending.
+  and deny buttons exist, but a dedicated approval inbox and richer safety copy
+  are still pending.
 - Codex-style work loop:
   - inspect files. Initial server pass done.
   - plan
