@@ -82,6 +82,35 @@ export AIW_OLLAMA_BASE_URL="http://127.0.0.1:11434"
 export AIW_LMSTUDIO_BASE_URL="http://127.0.0.1:1234/v1"
 ```
 
+
+### First Model Execution Backend
+
+AI Workspace owns a first OpenAI-compatible execution backend. Configure a
+provider/model pair, then `WS /api/live` can stream `message.delta` events
+without starting a separate AI runtime server.
+
+OpenAI API example:
+
+```bash
+aiw model set-default openai-api gpt-5.4-mini
+aiw auth set openai-api OPENAI_API_KEY sk-...
+```
+
+LM Studio example:
+
+```bash
+aiw model set-default lmstudio local-model
+aiw auth set lmstudio LM_BASE_URL http://127.0.0.1:1234/v1
+```
+
+Custom OpenAI-compatible endpoint example:
+
+```bash
+aiw model set-default custom my-model
+aiw auth set custom AIW_CUSTOM_BASE_URL http://127.0.0.1:1234/v1
+aiw auth set custom AIW_CUSTOM_API_KEY local-dev-key
+```
+
 ## Workspace APIs
 
 ```bash

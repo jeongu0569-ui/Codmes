@@ -139,3 +139,11 @@ The local reference implementation remains useful for provider catalog,
 credential, streaming, tool, approval, MCP, and sandbox ideas. Those ideas
 should be ported into AI Workspace-owned modules instead of being kept behind an
 external server dependency.
+
+## Current Runtime Backend
+
+The first owned runtime backend is an OpenAI-compatible adapter under
+`server/lib/runtime/openai-compatible-adapter.mjs`. It resolves the selected
+provider/model from `.ai-workspace/config`, streams chat completions into
+AI Workspace live events, and lets the session runtime persist only the visible
+user/assistant messages.

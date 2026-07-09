@@ -8,9 +8,13 @@ import { ChatRuntime } from "./chat-runtime.mjs";
 import { ModelRuntime } from "./model-runtime.mjs";
 import { SessionRuntime } from "./session-runtime.mjs";
 import { LLMRuntime } from "./llm-runtime.mjs";
+import { OpenAICompatibleRuntimeAdapter } from "./runtime/openai-compatible-adapter.mjs";
 
 export function createWorkspaceAgentEngine(config) {
-  return new WorkspaceAgentEngine(config, config.runtimeAdapter || null);
+  const runtimeAdapter = config.runtimeAdapter === undefined
+    ? new OpenAICompatibleRuntimeAdapter({ workspaceRoot: config.workspaceRoot })
+    : config.runtimeAdapter;
+  return new WorkspaceAgentEngine(config, runtimeAdapter || null);
 }
 
 export async function ensureAgentWorkspaceState(workspaceRoot) {
@@ -140,9 +144,12 @@ export class WorkspaceAgentEngine extends EventEmitter {
       reasoningEffort: params.reasoningEffort
     });
     try {
+      const priorSession = params.sessionId ? await this.state.readSession(params.sessionId) : null;
+      const history = Array.isArray(priorSession?.messages) ? priorSession.messages : [];
       const result = await this.chatRuntime.submitPrompt({
         ...params,
         context,
+        history,
         taskId: task.id
       }).catch((error) => {
         if (this.chatRuntime.isAvailable()) throw error;

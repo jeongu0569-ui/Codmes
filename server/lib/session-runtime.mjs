@@ -16,7 +16,7 @@ export class SessionRuntime {
     }
 
     let adapterSessions = [];
-    if (this.adapter) {
+    if (typeof this.adapter?.fetchJson === "function") {
       try {
         const result = await this.adapter.fetchJson(`/api/sessions?limit=${limit}`);
         const list = Array.isArray(result?.sessions) ? result.sessions
@@ -84,7 +84,7 @@ export class SessionRuntime {
         }
       } catch {}
     }
-    if (this.adapter) {
+    if (typeof this.adapter?.fetchJson === "function") {
       try {
         const result = await this.adapter.fetchJson(`/api/sessions/${encodeURIComponent(sessionId)}/messages`);
         return result;
@@ -100,7 +100,7 @@ export class SessionRuntime {
         await fs.unlink(filePath).catch(() => {});
       } catch {}
     }
-    if (this.adapter) {
+    if (typeof this.adapter?.fetchJson === "function") {
       try {
         return await this.adapter.fetchJson(`/api/sessions/${encodeURIComponent(sessionId)}`, {
           method: "DELETE"

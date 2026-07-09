@@ -37,6 +37,7 @@ This repository currently contains the first server-centered scaffold:
 - markdown/text file read and write API
 - file/folder create, move, copy, upload, and delete API
 - AI Workspace model/provider/auth config store under `.ai-workspace/config`
+- first OpenAI-compatible model execution backend owned by AI Workspace
 - AI Workspace session store under `.ai-workspace/sessions`
 - live WebSocket endpoint at `WS /api/live`
 - workspace context router for note/folder/PDF/workspace scopes
@@ -93,6 +94,8 @@ aiw model list
 aiw model set-default openai-api gpt-5.4-mini
 aiw auth list
 aiw auth set openai-api OPENAI_API_KEY sk-...
+aiw auth set custom AIW_CUSTOM_BASE_URL http://127.0.0.1:1234/v1
+aiw auth set custom AIW_CUSTOM_API_KEY local-dev-key
 aiw tasks list
 aiw code create Code/demo-app "change the greeting"
 aiw approvals list

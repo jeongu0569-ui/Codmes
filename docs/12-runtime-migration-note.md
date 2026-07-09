@@ -50,6 +50,9 @@ The first migration step is already underway:
 - Runtime/session state lives under `.ai-workspace/`.
 - Public client APIs are moving to `/api/models`, `/api/sessions`, and
   `/api/live`.
+- A first AI Workspace-owned OpenAI-compatible chat backend can execute
+  configured models and stream `message.delta` events without a separate
+  external runtime server.
 
 ## Next Step
 
@@ -68,7 +71,6 @@ server/lib/runtime/
   sandbox.mjs
 ```
 
-The first execution backend should be small and explicit: resolve a configured
-OpenAI-compatible provider, stream output through AI Workspace events, persist
-messages to `.ai-workspace/sessions`, and route dangerous operations through
-the approval inbox.
+Next, broaden execution ownership: add provider-specific auth flows, tool
+calling, approval-gated mutating tools, MCP search orchestration, and richer
+model capability metadata on top of the first OpenAI-compatible backend.
