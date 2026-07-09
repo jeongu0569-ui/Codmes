@@ -345,6 +345,27 @@ struct HermesModelOption: Identifiable, Hashable {
     }
 }
 
+struct WorkspaceApprovalsResponse: Codable {
+    let approvals: [WorkspaceApproval]
+}
+
+struct WorkspaceApproval: Codable, Identifiable, Hashable {
+    let id: String
+    let type: String?
+    let status: String?
+    let category: String?
+    let createdAt: String?
+    let updatedAt: String?
+    let respondedAt: String?
+    let taskId: String?
+    let proposalId: String?
+    let scopePath: String?
+    let summary: String?
+    let diffRef: String?
+    let commands: [String]?
+    let reason: String?
+}
+
 struct HermesSessionSummary: Identifiable, Hashable {
     let id: String
     let title: String
@@ -398,6 +419,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
     case notes = "Notes"
     case code = "Code"
     case search = "Search"
+    case approvals = "Approvals"
 
     var id: String { rawValue }
 
@@ -407,6 +429,7 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .notes: "doc.text"
         case .code: "chevron.left.forwardslash.chevron.right"
         case .search: "magnifyingglass"
+        case .approvals: "checkmark.seal"
         }
     }
 }

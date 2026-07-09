@@ -12,6 +12,8 @@
 		182914B2EEE94CCEB66C0433 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C7EC532D8964FC2B78C9C43 /* Models.swift */; };
 		366FEBDCA8B64981A2D1586B /* FileSectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F506A7A90DC499192582AC9 /* FileSectionView.swift */; };
 		3E8DC8B1723C4A2FA10A1594 /* WorkspaceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29CB2E54F6EF47EEA71CC126 /* WorkspaceStore.swift */; };
+		99A0E6B3E90E492CBD0DD601 /* ApprovalsInboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99A0E6B3E90E492CBD0DD600 /* ApprovalsInboxView.swift */; };
+
 		43FBD23C9D0E4947AA3E9A42 /* LiveChatClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73779B0EDE9A4F3B9DFC6517 /* LiveChatClient.swift */; };
 		48FB524AFD6743849FBE6AFC /* WorkspaceAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14787F32F0304A32B7916672 /* WorkspaceAPI.swift */; };
 		767D4168CD28417085839C03 /* AIWorkspaceApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B976F60DF13B494FABD55609 /* AIWorkspaceApp.swift */; };
@@ -25,6 +27,8 @@
 		ED59859B6FF64593824B30A9 /* AIWorkspaceApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B976F60DF13B494FABD55609 /* AIWorkspaceApp.swift */; };
 		EE28A7064EBA4B50AFDDD034 /* ChatHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8708198D47F24EFCA25FA2FF /* ChatHomeView.swift */; };
 		F29F27586DE64EA98831454D /* WorkspaceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29CB2E54F6EF47EEA71CC126 /* WorkspaceStore.swift */; };
+		99A0E6B3E90E492CBD0DD602 /* ApprovalsInboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99A0E6B3E90E492CBD0DD600 /* ApprovalsInboxView.swift */; };
+
 		F31DF70215D54266A71EBB1F /* WorkspaceAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14787F32F0304A32B7916672 /* WorkspaceAPI.swift */; };
 		F488F3C3652B4841B7979628 /* SearchView.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEC5F343050B4BFFA665B914 /* SearchView.swift */; };
 /* End PBXBuildFile section */
@@ -33,6 +37,8 @@
 		14787F32F0304A32B7916672 /* WorkspaceAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceAPI.swift; sourceTree = "<group>"; };
 		21FD49723DF6427A8FAD2A1B /* iOS-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "iOS-Info.plist"; sourceTree = "<group>"; };
 		29CB2E54F6EF47EEA71CC126 /* WorkspaceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceStore.swift; sourceTree = "<group>"; };
+		99A0E6B3E90E492CBD0DD600 /* ApprovalsInboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalsInboxView.swift; sourceTree = "<group>"; };
+
 		2C7EC532D8964FC2B78C9C43 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		4F506A7A90DC499192582AC9 /* FileSectionView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileSectionView.swift; sourceTree = "<group>"; };
 		5241C0E1854D4E939201DB3F /* HeaderView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HeaderView.swift; sourceTree = "<group>"; };
@@ -68,6 +74,7 @@
 			isa = PBXGroup;
 			children = (
 				B976F60DF13B494FABD55609 /* AIWorkspaceApp.swift */,
+				99A0E6B3E90E492CBD0DD600 /* ApprovalsInboxView.swift */,
 				8708198D47F24EFCA25FA2FF /* ChatHomeView.swift */,
 				4F506A7A90DC499192582AC9 /* FileSectionView.swift */,
 				5241C0E1854D4E939201DB3F /* HeaderView.swift */,
@@ -196,6 +203,7 @@
 				F488F3C3652B4841B7979628 /* SearchView.swift in Sources */,
 				48FB524AFD6743849FBE6AFC /* WorkspaceAPI.swift in Sources */,
 				3E8DC8B1723C4A2FA10A1594 /* WorkspaceStore.swift in Sources */,
+				99A0E6B3E90E492CBD0DD601 /* ApprovalsInboxView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -213,6 +221,7 @@
 				1400B54060904EF097CD05EB /* SearchView.swift in Sources */,
 				F31DF70215D54266A71EBB1F /* WorkspaceAPI.swift in Sources */,
 				F29F27586DE64EA98831454D /* WorkspaceStore.swift in Sources */,
+				99A0E6B3E90E492CBD0DD602 /* ApprovalsInboxView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

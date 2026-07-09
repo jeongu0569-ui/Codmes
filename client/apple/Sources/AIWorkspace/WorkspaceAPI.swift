@@ -174,6 +174,35 @@ struct WorkspaceAPI {
         return try await request(components)
     }
 
+    func approvals(status: String = "pending", limit: Int = 50) async throws -> [WorkspaceApproval] {
+        var components = try components("/api/agent/approvals")
+        components.queryItems = [
+            URLQueryItem(name: "status", value: status),
+            URLQueryItem(name: "limit", value: String(limit))
+        ]
+        let response: WorkspaceApprovalsResponse = try await request(components)
+        return response.approvals
+    }
+
+    func respondToApproval(id: String, approved: Bool, runChecksAfterApply: Bool = false, checksApproved: Bool = false, reason: String? = nil) async throws -> WorkspaceApproval {
+        var components = try components("/api/agent/approvals/\(id)/respond")
+        components.percentEncodedPath = "/api/agent/approvals/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)/respond"
+        
+        struct RespondBody: Encodable {
+            let approved: Bool
+            let runChecksAfterApply: Bool
+            let checksApproved: Bool
+            let reason: String?
+        }
+        
+        return try await request(components, method: "POST", body: RespondBody(
+            approved: approved,
+            runChecksAfterApply: runChecksAfterApply,
+            checksApproved: checksApproved,
+            reason: reason
+        ))
+    }
+
     func createCodeTask(scopePath: String, instruction: String) async throws -> CodeTaskResponse {
         try await post("/api/agent/code-task", body: CodeTaskCreateBody(
             scopePath: scopePath,

@@ -123,6 +123,10 @@ struct RootView: View {
                 iOSSwipeChatContainer {
                     SearchView()
                 }
+            case .approvals:
+                iOSSwipeChatContainer {
+                    ApprovalsInboxView()
+                }
             }
         }
         .background(.background)
@@ -303,7 +307,7 @@ struct RootView: View {
         withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
             sidebarMenuExpanded = false
         }
-        if section == .chat || section == .search {
+        if section == .chat || section == .search || section == .approvals {
             closeSidebar()
         }
     }
@@ -464,6 +468,8 @@ struct RootView: View {
                 await store.refreshTree(root: "notes")
             case .code:
                 await store.refreshTree(root: "code")
+            case .approvals:
+                await store.refreshApprovals()
             case .chat, .search:
                 return
             }
@@ -481,6 +487,8 @@ struct RootView: View {
             FileSectionView(title: "Code", root: "code")
         case .search:
             SearchView()
+        case .approvals:
+            ApprovalsInboxView()
         }
     }
 }

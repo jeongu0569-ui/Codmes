@@ -37,6 +37,9 @@ final class WorkspaceStore: ObservableObject {
     @Published var selectedCodeTaskDiff = ""
     @Published var codeTaskInstruction = ""
     @Published var isLoadingCodeTask = false
+    @Published var approvals: [WorkspaceApproval] = []
+    @Published var isLoadingApprovals = false
+    @Published var selectedApprovalDiffText = ""
 
     private let liveClient = LiveChatClient()
     private var activeActivityLineId: UUID?
@@ -112,6 +115,8 @@ final class WorkspaceStore: ObservableObject {
             code = codeTree.children
             connectionStep = "Loading Hermes metadata"
             await refreshHermesMetadata()
+            connectionStep = "Loading pending approvals"
+            await refreshApprovals()
             statusMessage = "Connected"
             isWorkspaceConnected = true
             connectionStep = "Ready"
@@ -324,6 +329,49 @@ final class WorkspaceStore: ObservableObject {
 
     var currentCodeScopePath: String {
         codePath.isEmpty ? "Code" : "Code/\(codePath)"
+    }
+
+    func refreshApprovals() async {
+        guard let api else { return }
+        isLoadingApprovals = true
+        defer { isLoadingApprovals = false }
+        do {
+            approvals = try await api.approvals(status: "pending", limit: 60)
+        } catch {
+            statusMessage = "Approvals error: \(error.localizedDescription)"
+        }
+    }
+
+    func respondToWorkspaceApproval(id: String, approved: Bool, runChecksAfterApply: Bool = false, reason: String? = nil) async {
+        guard let api else { return }
+        isLoadingApprovals = true
+        defer { isLoadingApprovals = false }
+        do {
+            _ = try await api.respondToApproval(
+                id: id,
+                approved: approved,
+                runChecksAfterApply: runChecksAfterApply,
+                checksApproved: runChecksAfterApply,
+                reason: reason
+            )
+            statusMessage = approved ? "Approval submitted" : "Rejection submitted"
+            await refreshApprovals()
+            await refreshCodeTasks()
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func loadApprovalDiff(diffRef: String) async {
+        guard let api, !diffRef.isEmpty else {
+            selectedApprovalDiffText = ""
+            return
+        }
+        do {
+            selectedApprovalDiffText = try await api.file(path: diffRef).content
+        } catch {
+            selectedApprovalDiffText = "Failed to load diff content: \(error.localizedDescription)"
+        }
     }
 
     func refreshCodeTasks(selectLatest: Bool = false) async {
