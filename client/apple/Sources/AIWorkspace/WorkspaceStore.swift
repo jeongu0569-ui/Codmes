@@ -31,10 +31,13 @@ final class WorkspaceStore: ObservableObject {
     @Published var isLoading = false
     @Published var sessionManagerSearch = ""
     @Published var selectedHermesProjectId = "__all__"
+    @Published var uploadItems: [UploadItem] = []
 
     private let liveClient = LiveChatClient()
     private var activeActivityLineId: UUID?
     private var isChatTurnOpen = false
+    private let chunkedUploadThresholdBytes: Int64 = 8 * 1024 * 1024
+    private let uploadChunkSize = 1024 * 1024
 
     var api: WorkspaceAPI? {
         guard let url = URL(string: serverURLText) else { return nil }
@@ -272,20 +275,128 @@ final class WorkspaceStore: ObservableObject {
                 fileURL.stopAccessingSecurityScopedResource()
             }
         }
-        isLoading = true
-        defer { isLoading = false }
+        let destination = workspacePathForNewItem(root: root, name: fileURL.lastPathComponent)
+        let uploadId = UUID()
+        addUploadItem(id: uploadId, root: root, fileURL: fileURL, destination: destination)
         do {
-            let data = try Data(contentsOf: fileURL)
-            let destination = workspacePathForNewItem(root: root, name: fileURL.lastPathComponent)
-            try await api.uploadFile(path: destination, data: data)
+            updateUploadItem(uploadId, status: .reading, progress: 0, message: "Preparing file")
+            let totalBytes = try localFileSize(fileURL)
+            updateUploadItem(uploadId, totalBytes: totalBytes)
+            if totalBytes >= chunkedUploadThresholdBytes {
+                try await uploadChunked(api: api, uploadItemId: uploadId, sourceURL: fileURL, destination: destination, totalBytes: totalBytes)
+            } else {
+                let data = try Data(contentsOf: fileURL)
+                updateUploadItem(uploadId, status: .uploading, progress: 0.15, bytesSent: 0, message: "Uploading")
+                try await api.uploadFile(path: destination, data: data)
+                updateUploadItem(uploadId, status: .completed, progress: 1, bytesSent: totalBytes, message: "Uploaded")
+            }
             await loadTree(root: root, path: currentPath(for: root))
             if let item = items(for: root).first(where: { $0.path == destination }) {
                 await loadFile(item)
             }
             statusMessage = "Attached \(fileURL.lastPathComponent)"
         } catch {
+            updateUploadItem(uploadId, status: .failed, message: uploadErrorMessage(error))
             statusMessage = error.localizedDescription
         }
+    }
+
+    func uploadLocalFiles(root: String, fileURLs: [URL]) async {
+        for fileURL in fileURLs {
+            await uploadLocalFile(root: root, fileURL: fileURL)
+        }
+    }
+
+    func clearFinishedUploads(root: String? = nil) {
+        uploadItems.removeAll {
+            (root == nil || $0.root == root) && !$0.isActive
+        }
+    }
+
+    func uploads(for root: String) -> [UploadItem] {
+        uploadItems.filter { $0.root == root }
+    }
+
+    private func addUploadItem(id: UUID, root: String, fileURL: URL, destination: String) {
+        uploadItems.insert(UploadItem(
+            id: id,
+            root: root,
+            fileName: fileURL.lastPathComponent,
+            destinationPath: destination,
+            status: .reading,
+            progress: 0,
+            bytesSent: 0,
+            totalBytes: 0,
+            message: "Queued"
+        ), at: 0)
+        uploadItems = Array(uploadItems.prefix(12))
+    }
+
+    private func updateUploadItem(
+        _ id: UUID,
+        status: UploadStatus? = nil,
+        progress: Double? = nil,
+        bytesSent: Int64? = nil,
+        totalBytes: Int64? = nil,
+        message: String? = nil
+    ) {
+        guard let index = uploadItems.firstIndex(where: { $0.id == id }) else { return }
+        if let status { uploadItems[index].status = status }
+        if let progress { uploadItems[index].progress = min(max(progress, 0), 1) }
+        if let bytesSent { uploadItems[index].bytesSent = bytesSent }
+        if let totalBytes { uploadItems[index].totalBytes = totalBytes }
+        if let message { uploadItems[index].message = message }
+    }
+
+    private func uploadChunked(api: WorkspaceAPI, uploadItemId: UUID, sourceURL: URL, destination: String, totalBytes: Int64) async throws {
+        updateUploadItem(uploadItemId, status: .uploading, progress: 0, bytesSent: 0, totalBytes: totalBytes, message: "Starting large upload")
+        let start = try await api.startChunkedUpload(path: destination, size: totalBytes)
+        var shouldCancelRemoteUpload = true
+        do {
+            let handle = try FileHandle(forReadingFrom: sourceURL)
+            defer {
+                try? handle.close()
+            }
+            var offset: Int64 = 0
+            while offset < totalBytes {
+                try Task.checkCancellation()
+                guard let chunk = try handle.read(upToCount: uploadChunkSize), !chunk.isEmpty else {
+                    break
+                }
+                let response = try await api.uploadChunk(uploadId: start.uploadId, offset: offset, data: chunk)
+                offset = response.received
+                let progress = totalBytes > 0 ? Double(offset) / Double(totalBytes) : 1
+                updateUploadItem(uploadItemId, status: .uploading, progress: progress, bytesSent: offset, message: "Uploading \(formatBytes(offset)) of \(formatBytes(totalBytes))")
+            }
+            try await api.completeChunkedUpload(uploadId: start.uploadId)
+            shouldCancelRemoteUpload = false
+            updateUploadItem(uploadItemId, status: .completed, progress: 1, bytesSent: totalBytes, message: "Uploaded")
+        } catch {
+            if shouldCancelRemoteUpload {
+                try? await api.cancelChunkedUpload(uploadId: start.uploadId)
+            }
+            throw error
+        }
+    }
+
+    private func localFileSize(_ url: URL) throws -> Int64 {
+        let values = try url.resourceValues(forKeys: [.fileSizeKey])
+        if let fileSize = values.fileSize {
+            return Int64(fileSize)
+        }
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        return (attributes[.size] as? NSNumber)?.int64Value ?? 0
+    }
+
+    private func uploadErrorMessage(_ error: Error) -> String {
+        if case let WorkspaceAPIError.badStatus(status, _) = error, status == 409 {
+            return "A file with this name already exists."
+        }
+        return error.localizedDescription
+    }
+
+    private func formatBytes(_ value: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: value, countStyle: .file)
     }
 
     func deleteItem(root: String, item: WorkspaceItem) async {

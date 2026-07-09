@@ -60,6 +60,64 @@ struct RawFilePreview: Identifiable {
     let url: URL
 }
 
+enum UploadStatus: String, Codable {
+    case reading
+    case uploading
+    case completed
+    case failed
+    case cancelled
+
+    var label: String {
+        switch self {
+        case .reading: "Reading"
+        case .uploading: "Uploading"
+        case .completed: "Done"
+        case .failed: "Failed"
+        case .cancelled: "Cancelled"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .reading: "doc"
+        case .uploading: "arrow.up.circle"
+        case .completed: "checkmark.circle"
+        case .failed: "exclamationmark.triangle"
+        case .cancelled: "xmark.circle"
+        }
+    }
+}
+
+struct UploadItem: Identifiable, Hashable {
+    let id: UUID
+    let root: String
+    let fileName: String
+    let destinationPath: String
+    var status: UploadStatus
+    var progress: Double
+    var bytesSent: Int64
+    var totalBytes: Int64
+    var message: String
+
+    var isActive: Bool {
+        status == .reading || status == .uploading
+    }
+}
+
+struct UploadStartResponse: Codable {
+    let ok: Bool
+    let uploadId: String
+    let path: String
+    let received: Int64
+}
+
+struct UploadChunkResponse: Codable {
+    let ok: Bool
+    let uploadId: String
+    let received: Int64
+    let size: Int64
+}
+
 struct SearchResponse: Codable {
     struct Result: Codable, Identifiable {
         var id: String { path }

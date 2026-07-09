@@ -130,6 +130,43 @@ Hermes 모델 목록 확인:
 curl http://127.0.0.1:8787/api/hermes/models
 ```
 
+작은 파일 업로드 확인:
+
+```bash
+node - <<'NODE'
+const body = {
+  path: "Notes/upload-smoke.txt",
+  dataBase64: Buffer.from("hello upload\n").toString("base64")
+};
+const res = await fetch("http://127.0.0.1:8787/api/file/upload", {
+  method: "POST",
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify(body)
+});
+console.log(res.status, await res.text());
+NODE
+```
+
+큰 파일 업로드는 앱에서 자동으로 chunked upload를 사용한다. 서버 API 흐름은
+다음과 같다.
+
+```text
+POST /api/file/upload/start
+POST /api/file/upload/chunk
+POST /api/file/upload/chunk
+...
+POST /api/file/upload/complete
+```
+
+중간 실패나 취소가 발생하면 가능한 경우 임시 업로드 파일을 정리한다.
+
+```text
+POST /api/file/upload/cancel
+```
+
+중복 파일명은 `409 Conflict`로 응답한다. 앱은 이 값을 업로드 상태 카드에서
+`Failed`로 표시한다.
+
 ## 3. Apple macOS 앱 실행
 
 실제 앱 개발은 Xcode 프로젝트를 기준으로 진행한다.
@@ -172,6 +209,9 @@ http://127.0.0.1:8787
 3. 새 대화를 시작하려면 `+` 버튼을 누른다. 이때는 로컬 채팅창만 비워지고,
    실제 Hermes 세션은 첫 메시지를 보낼 때 생성된다.
 4. 메시지를 입력하고 전송 아이콘을 누른다.
+5. Notes/Code에서 파일을 서버 폴더로 가져오려면 paperclip 버튼을 누른다.
+   작은 파일은 단일 업로드로, 큰 파일은 chunked upload로 자동 전환된다.
+   진행 상태는 파일 브라우저 상단의 Uploads 카드에서 확인한다.
 
 채팅 입력창 하단 컨트롤은 현재 다음 구조다.
 

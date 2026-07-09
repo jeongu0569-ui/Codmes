@@ -110,6 +110,26 @@ struct WorkspaceAPI {
         let _: EmptyResponse = try await post("/api/file/upload", body: body)
     }
 
+    func startChunkedUpload(path: String, size: Int64) async throws -> UploadStartResponse {
+        try await post("/api/file/upload/start", body: ChunkedUploadStartBody(path: path, size: size))
+    }
+
+    func uploadChunk(uploadId: String, offset: Int64, data: Data) async throws -> UploadChunkResponse {
+        try await post("/api/file/upload/chunk", body: ChunkedUploadChunkBody(
+            uploadId: uploadId,
+            offset: offset,
+            dataBase64: data.base64EncodedString()
+        ))
+    }
+
+    func completeChunkedUpload(uploadId: String) async throws {
+        let _: EmptyResponse = try await post("/api/file/upload/complete", body: ChunkedUploadIDBody(uploadId: uploadId))
+    }
+
+    func cancelChunkedUpload(uploadId: String) async throws {
+        let _: EmptyResponse = try await post("/api/file/upload/cancel", body: ChunkedUploadIDBody(uploadId: uploadId))
+    }
+
     func deletePath(path: String) async throws {
         var components = try components("/api/file")
         components.queryItems = [URLQueryItem(name: "path", value: path)]
@@ -206,6 +226,21 @@ struct WorkspaceAPI {
 }
 
 struct EmptyResponse: Codable {}
+
+private struct ChunkedUploadStartBody: Encodable {
+    let path: String
+    let size: Int64
+}
+
+private struct ChunkedUploadChunkBody: Encodable {
+    let uploadId: String
+    let offset: Int64
+    let dataBase64: String
+}
+
+private struct ChunkedUploadIDBody: Encodable {
+    let uploadId: String
+}
 
 struct AnyEncodable: Encodable {
     let encodeBody: (Encoder) throws -> Void

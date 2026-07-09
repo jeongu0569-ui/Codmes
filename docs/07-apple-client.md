@@ -106,9 +106,19 @@ Implemented:
   the row context menu. Each row now also has a visible `...` menu, so touch
   devices do not have to rely only on long-press discovery.
 - Notes and Code file browsers can attach an existing local file into the
-  current server-managed folder through the paperclip button. The app reads the
-  selected file and sends it to `POST /api/file/upload`; the Workspace Server
-  writes the file under the workspace root.
+  current server-managed folder through the paperclip button. The picker now
+  supports multiple files.
+- uploads show a compact status panel inside the active Notes/Code browser.
+  Each item moves through reading, uploading, done, or failed states. Active
+  uploads show progress, duplicate names surface as a clear failure, and
+  finished rows can be cleared without disturbing the file tree.
+- small uploads still use the simple `POST /api/file/upload` JSON path. Larger
+  uploads automatically switch to the chunked upload flow:
+  `POST /api/file/upload/start`, repeated `POST /api/file/upload/chunk`,
+  then `POST /api/file/upload/complete`. Failed chunked uploads are cancelled
+  with `POST /api/file/upload/cancel` when possible.
+- completed uploads refresh the current file tree and auto-open the uploaded
+  item when it is visible in the current folder.
 - approval and denial buttons for `approval.request` events
 - normalized Hermes session menu titles instead of raw generated session ids
 - zero-message Hermes sessions are hidden from the client session list
@@ -179,6 +189,11 @@ The app talks only to the Workspace Server:
 GET  /api/workspace
 GET  /api/tree
 GET  /api/file
+POST /api/file/upload
+POST /api/file/upload/start
+POST /api/file/upload/chunk
+POST /api/file/upload/complete
+POST /api/file/upload/cancel
 POST /api/search
 WS   /api/live
 ```

@@ -1,7 +1,8 @@
 import fs from "node:fs/promises";
-import { createReadStream } from "node:fs";
+import { constants as fsConstants, createReadStream } from "node:fs";
 import http from "node:http";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
   WORKSPACE_DIRS,
@@ -201,6 +202,18 @@ async function handleRequest(req, res) {
     if (req.method === "POST" && url.pathname === "/api/file/upload") {
       return sendJson(res, await uploadFile(req), 201);
     }
+    if (req.method === "POST" && url.pathname === "/api/file/upload/start") {
+      return sendJson(res, await startChunkedUpload(req), 201);
+    }
+    if (req.method === "POST" && url.pathname === "/api/file/upload/chunk") {
+      return sendJson(res, await appendUploadChunk(req));
+    }
+    if (req.method === "POST" && url.pathname === "/api/file/upload/complete") {
+      return sendJson(res, await completeChunkedUpload(req), 201);
+    }
+    if (req.method === "POST" && url.pathname === "/api/file/upload/cancel") {
+      return sendJson(res, await cancelChunkedUpload(req));
+    }
     if (req.method === "DELETE" && url.pathname === "/api/file") {
       return sendJson(res, await deletePath(url));
     }
@@ -362,9 +375,85 @@ async function uploadFile(req) {
     throw Object.assign(new Error("Missing file data."), { status: 400 });
   }
   const { relativePath, absolutePath } = resolveWorkspacePath(WORKSPACE_ROOT, body.path);
+  await assertPathAvailable(absolutePath);
   await fs.mkdir(path.dirname(absolutePath), { recursive: true });
   await fs.writeFile(absolutePath, Buffer.from(body.dataBase64, "base64"), { flag: "wx" });
   return { ok: true, path: relativePath };
+}
+
+async function startChunkedUpload(req) {
+  const body = await readJsonBody(req);
+  if (!body.path) throw Object.assign(new Error("Missing file path."), { status: 400 });
+  const size = Number(body.size);
+  if (!Number.isSafeInteger(size) || size < 0) {
+    throw Object.assign(new Error("Missing or invalid file size."), { status: 400 });
+  }
+  const { relativePath, absolutePath } = resolveWorkspacePath(WORKSPACE_ROOT, body.path);
+  await assertPathAvailable(absolutePath);
+  await fs.mkdir(uploadTempDir(), { recursive: true });
+  const uploadId = randomUUID();
+  const tempPath = uploadTempPath(uploadId);
+  const metaPath = uploadMetaPath(uploadId);
+  await fs.writeFile(tempPath, Buffer.alloc(0), { flag: "wx" });
+  await fs.writeFile(metaPath, JSON.stringify({
+    uploadId,
+    path: relativePath,
+    size,
+    received: 0,
+    createdAt: new Date().toISOString()
+  }, null, 2) + "\n", { flag: "wx" });
+  return { ok: true, uploadId, path: relativePath, received: 0 };
+}
+
+async function appendUploadChunk(req) {
+  const body = await readJsonBody(req);
+  const uploadId = requireUploadId(body.uploadId);
+  const offset = Number(body.offset);
+  if (!Number.isSafeInteger(offset) || offset < 0) {
+    throw Object.assign(new Error("Missing or invalid chunk offset."), { status: 400 });
+  }
+  if (typeof body.dataBase64 !== "string") {
+    throw Object.assign(new Error("Missing chunk data."), { status: 400 });
+  }
+  const meta = await readUploadMeta(uploadId);
+  const buffer = Buffer.from(body.dataBase64, "base64");
+  if (offset !== meta.received) {
+    throw Object.assign(new Error(`Unexpected chunk offset. Expected ${meta.received}.`), { status: 409 });
+  }
+  if (offset + buffer.length > meta.size) {
+    throw Object.assign(new Error("Chunk exceeds declared upload size."), { status: 400 });
+  }
+  const handle = await fs.open(uploadTempPath(uploadId), "r+");
+  try {
+    await handle.write(buffer, 0, buffer.length, offset);
+  } finally {
+    await handle.close();
+  }
+  meta.received = offset + buffer.length;
+  await writeUploadMeta(uploadId, meta);
+  return { ok: true, uploadId, received: meta.received, size: meta.size };
+}
+
+async function completeChunkedUpload(req) {
+  const body = await readJsonBody(req);
+  const uploadId = requireUploadId(body.uploadId);
+  const meta = await readUploadMeta(uploadId);
+  if (meta.received !== meta.size) {
+    throw Object.assign(new Error(`Upload incomplete. Received ${meta.received} of ${meta.size} bytes.`), { status: 400 });
+  }
+  const { relativePath, absolutePath } = resolveWorkspacePath(WORKSPACE_ROOT, meta.path);
+  await assertPathAvailable(absolutePath);
+  await fs.mkdir(path.dirname(absolutePath), { recursive: true });
+  await fs.copyFile(uploadTempPath(uploadId), absolutePath, fsConstants.COPYFILE_EXCL);
+  await cleanupUpload(uploadId);
+  return { ok: true, uploadId, path: relativePath };
+}
+
+async function cancelChunkedUpload(req) {
+  const body = await readJsonBody(req);
+  const uploadId = requireUploadId(body.uploadId);
+  await cleanupUpload(uploadId);
+  return { ok: true, uploadId };
 }
 
 async function deletePath(url) {
@@ -579,6 +668,52 @@ function cookieHeader(jar) {
   return Object.entries(jar).map(([key, value]) => `${key}=${value}`).join("; ");
 }
 
+function uploadTempDir() {
+  return path.join(WORKSPACE_ROOT, ".hermes-workspace", "uploads");
+}
+
+function requireUploadId(value) {
+  const uploadId = String(value || "");
+  if (!/^[0-9a-f-]{36}$/i.test(uploadId)) {
+    throw Object.assign(new Error("Missing or invalid upload id."), { status: 400 });
+  }
+  return uploadId;
+}
+
+function uploadTempPath(uploadId) {
+  return path.join(uploadTempDir(), `${uploadId}.part`);
+}
+
+function uploadMetaPath(uploadId) {
+  return path.join(uploadTempDir(), `${uploadId}.json`);
+}
+
+async function readUploadMeta(uploadId) {
+  try {
+    return JSON.parse(await fs.readFile(uploadMetaPath(uploadId), "utf8"));
+  } catch {
+    throw Object.assign(new Error("Upload session not found."), { status: 404 });
+  }
+}
+
+async function writeUploadMeta(uploadId, meta) {
+  await fs.writeFile(uploadMetaPath(uploadId), JSON.stringify(meta, null, 2) + "\n", "utf8");
+}
+
+async function cleanupUpload(uploadId) {
+  await fs.rm(uploadTempPath(uploadId), { force: true });
+  await fs.rm(uploadMetaPath(uploadId), { force: true });
+}
+
+async function assertPathAvailable(absolutePath) {
+  try {
+    await fs.access(absolutePath);
+  } catch {
+    return;
+  }
+  throw Object.assign(new Error("A file or folder already exists at that path."), { status: 409 });
+}
+
 async function readJsonBody(req) {
   const chunks = [];
   for await (const chunk of req) chunks.push(chunk);
@@ -614,7 +749,9 @@ function sendNoContent(res) {
 
 function sendError(res, error) {
   setCors(res);
-  const status = Number.isInteger(error?.status) ? error.status : 500;
+  const status = Number.isInteger(error?.status) ? error.status
+    : error?.code === "EEXIST" ? 409
+      : 500;
   sendJson(res, {
     error: error?.message || "Internal server error"
   }, status);

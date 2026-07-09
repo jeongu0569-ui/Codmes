@@ -122,6 +122,8 @@ struct FileBrowserPane: View {
                     .frame(height: 1)
             }
 
+            UploadStatusPanel(root: root)
+
             List(store.items(for: root)) { item in
                 HStack(spacing: 8) {
                     Button {
@@ -161,11 +163,10 @@ struct FileBrowserPane: View {
                 }
             }
         }
-        .fileImporter(isPresented: $isImportingFile, allowedContentTypes: [.item], allowsMultipleSelection: false) { result in
+        .fileImporter(isPresented: $isImportingFile, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             switch result {
             case let .success(urls):
-                guard let url = urls.first else { return }
-                Task { await store.uploadLocalFile(root: root, fileURL: url) }
+                Task { await store.uploadLocalFiles(root: root, fileURLs: urls) }
             case let .failure(error):
                 store.statusMessage = error.localizedDescription
             }
@@ -352,6 +353,110 @@ struct FileBrowserPane: View {
                     .font(.caption)
                     .foregroundStyle(.tertiary)
             }
+        }
+    }
+}
+
+private struct UploadStatusPanel: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    let root: String
+
+    private var uploads: [UploadItem] {
+        store.uploads(for: root)
+    }
+
+    var body: some View {
+        if !uploads.isEmpty {
+            VStack(spacing: 6) {
+                HStack(spacing: 8) {
+                    Text("Uploads")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button {
+                        store.clearFinishedUploads(root: root)
+                    } label: {
+                        Image(systemName: "xmark")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(!uploads.contains(where: { !$0.isActive }))
+                    .help("Clear finished uploads")
+                }
+
+                ForEach(uploads.prefix(3)) { item in
+                    UploadStatusRow(item: item)
+                }
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 8)
+            .background(.quaternary.opacity(0.08))
+            .overlay(alignment: .bottom) {
+                Rectangle()
+                    .fill(.quaternary.opacity(0.25))
+                    .frame(height: 1)
+            }
+        }
+    }
+}
+
+private struct UploadStatusRow: View {
+    let item: UploadItem
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 8) {
+                if item.isActive {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(width: 14, height: 14)
+                } else {
+                    Image(systemName: item.status.systemImage)
+                        .font(.caption)
+                        .foregroundStyle(iconColor)
+                        .frame(width: 14, height: 14)
+                }
+
+                Text(item.fileName)
+                    .font(.caption)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Spacer(minLength: 8)
+
+                Text(item.status.label)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(iconColor)
+            }
+
+            if item.isActive {
+                ProgressView(value: item.progress)
+                    .progressViewStyle(.linear)
+                    .controlSize(.small)
+            }
+
+            if !item.message.isEmpty {
+                Text(item.message)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+        }
+        .padding(8)
+        .background(.background.opacity(0.55), in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+    }
+
+    private var iconColor: Color {
+        switch item.status {
+        case .completed:
+            return .green
+        case .failed:
+            return .orange
+        case .cancelled:
+            return .secondary
+        case .reading, .uploading:
+            return .accentColor
         }
     }
 }
