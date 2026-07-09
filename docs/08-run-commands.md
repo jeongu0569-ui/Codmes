@@ -171,6 +171,7 @@ aiw code list
 aiw code show <taskId>
 aiw code patch <taskId> --path src/index.js --find "old text" --replace "new text"
 aiw code apply <taskId> <proposalId>
+aiw code apply <taskId> <proposalId> --check
 aiw code reject <taskId> <proposalId> --reason "방향이 다름"
 aiw code check <taskId>
 ```
@@ -273,6 +274,25 @@ curl -X POST "http://127.0.0.1:8787/api/agent/code-task/$TASK_ID/patches/$PROPOS
 
 `approved: true`가 없으면 서버는 `428`로 거절하고 파일을 수정하지 않는다. 적용
 시점에 대상 파일 내용이 제안 당시의 hash와 다르면 충돌로 처리한다.
+
+Patch 적용 후 자동 check 실행:
+
+```bash
+curl -X POST "http://127.0.0.1:8787/api/agent/code-task/$TASK_ID/patches/$PROPOSAL_ID/apply" \
+  -H 'content-type: application/json' \
+  --data '{
+    "approved": true,
+    "runChecksAfterApply": true,
+    "checksApproved": true
+  }'
+```
+
+`checksApproved: true`가 있을 때만 shell/test 명령을 이어서 실행한다. CLI에서는
+같은 흐름을 아래처럼 실행한다.
+
+```bash
+aiw code apply "$TASK_ID" "$PROPOSAL_ID" --check
+```
 
 Patch 거절:
 
@@ -704,7 +724,7 @@ Code 화면의 파일 브라우저에는 `Code Agent` 패널이 있다.
 → Create code task
 → 최근 task 목록에서 task 선택
 → taskMemory / diff 확인
-→ patch proposal이 있으면 Approve로 적용하거나 Deny로 거절
+→ patch proposal이 있으면 Approve로 적용, +Check로 적용 후 검증, Deny로 거절
 → Run checks로 서버-side 검증 실행
 ```
 
@@ -713,6 +733,7 @@ Code 화면의 파일 브라우저에는 `Code Agent` 패널이 있다.
 - iOS/macOS 앱은 shell을 직접 실행하지 않는다.
 - 파일 수정과 명령 실행은 모두 Workspace Server가 `Code/` scope 안에서 수행한다.
 - patch 적용과 check 실행은 서버 API에서 `approved: true`를 요구한다.
+- patch 적용 후 자동 check 실행은 `checksApproved: true`도 필요하다.
 - patch 거절은 파일을 수정하지 않고 task/decision/tool log에 기록된다.
 - 앱의 diff 표시는 현재 compact text diff다. side-by-side diff, 파일별 hunk
   접기, 승인 inbox는 이후 UI 개선 단계로 남아 있다.

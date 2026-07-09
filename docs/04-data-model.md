@@ -279,4 +279,8 @@ git.diff_ref
 
 The task status becomes `patch_proposed` after a proposal, `patch_rejected`
 after a denied proposal, and `patched` after the approved proposal is applied.
-Check execution can then move it to `checked` or `check_failed`.
+Check execution can then move it to `checked` or `check_failed`. When
+`runChecksAfterApply` and `checksApproved` are both supplied to the apply
+endpoint, the transition can happen in one orchestration step:
+`patch_proposed -> patched -> checked` or
+`patch_proposed -> patched -> check_failed`.

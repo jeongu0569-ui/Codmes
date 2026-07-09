@@ -315,6 +315,7 @@ export class CodeAgentRuntime {
       throw Object.assign(new Error(`Patch proposal is already ${proposal.status}.`), { status: 409 });
     }
     const scope = this.resolveCodeScope(proposal.scopePath || task.scopePath || params.scopePath || "Code");
+    const postPatchChecks = preparePostPatchChecks(task, params);
     await this.state.recordToolLog({
       type: "code.patch.apply.start",
       taskId: task.id,
@@ -380,7 +381,7 @@ export class CodeAgentRuntime {
       filesChanged,
       diffRef
     });
-    return {
+    const response = {
       ok: true,
       engine: "workspace-agent",
       runtime: "code-agent",
@@ -392,6 +393,26 @@ export class CodeAgentRuntime {
       git: updated.git,
       taskMemory: updated.taskMemory
     };
+    if (postPatchChecks?.approvalRequest) {
+      await this.state.recordToolLog(postPatchChecks.approvalRequest);
+      return {
+        ...response,
+        checkApprovalRequired: true,
+        checkApprovalRequest: postPatchChecks.approvalRequest
+      };
+    }
+    if (postPatchChecks?.params) {
+      const checkResult = await this.runChecks(task.id, postPatchChecks.params);
+      return {
+        ...response,
+        ok: checkResult.ok,
+        status: checkResult.status,
+        checkRun: checkResult.checkRun,
+        git: checkResult.git,
+        taskMemory: checkResult.taskMemory
+      };
+    }
+    return response;
   }
 
   async rejectPatch(taskId, params = {}) {
@@ -862,6 +883,42 @@ function truncateMemoryLog(value) {
   const max = 4000;
   if (text.length <= max) return text;
   return text.slice(0, max) + `\n[truncated ${text.length - max} chars]`;
+}
+
+function preparePostPatchChecks(task, params) {
+  const requested = params.runChecksAfterApply === true || params.runChecks === true || params.checkAfterApply === true;
+  if (!requested) return null;
+  const commands = Array.isArray(params.checkCommands)
+    ? params.checkCommands
+    : Array.isArray(params.commands)
+      ? params.commands
+      : undefined;
+  const checkParams = {
+    approved: true,
+    commands,
+    allowCustomCommands: params.allowCustomCommands === true,
+    timeoutMs: params.checkTimeoutMs || params.timeoutMs
+  };
+  if (params.checksApproved !== true && params.checkApproved !== true) {
+    return {
+      approvalRequest: {
+        type: "approval.request",
+        category: "code.checks.run",
+        taskId: task.id,
+        scopePath: task.scopePath,
+        summary: "Run code checks after applying the patch.",
+        commands: resolveCheckCommands(task, checkParams)
+      }
+    };
+  }
+  const resolvedCommands = resolveCheckCommands(task, checkParams);
+  return {
+    params: {
+      ...checkParams,
+      commands: resolvedCommands,
+      allowCustomCommands: true
+    }
+  };
 }
 
 function resolveCheckCommands(task, params) {

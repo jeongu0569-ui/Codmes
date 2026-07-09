@@ -424,9 +424,26 @@ Request:
 
 ```json
 {
-  "approved": true
+  "approved": true,
+  "runChecksAfterApply": false
 }
 ```
+
+Optional post-patch check orchestration:
+
+```json
+{
+  "approved": true,
+  "runChecksAfterApply": true,
+  "checksApproved": true
+}
+```
+
+`runChecksAfterApply` asks the runtime to continue into the task's detected
+check commands immediately after writing the approved patch. Because shell/test
+execution is a separate mutating capability, `checksApproved: true` is required
+before any command runs. Without it, the patch can still be applied, but the
+response includes a `checkApprovalRequest` instead of executing commands.
 
 Response:
 
@@ -443,6 +460,22 @@ Response:
     "isRepository": true,
     "status": " M src/index.js",
     "diffRef": ".ai-workspace/diffs/task-...-after-patch-....diff"
+  }
+}
+```
+
+When checks are approved and requested, the response status reflects the check
+result and includes `checkRun`:
+
+```json
+{
+  "ok": true,
+  "status": "checked",
+  "proposalId": "patch-...",
+  "filesChanged": ["Code/my-app/src/index.js"],
+  "checkRun": {
+    "allPassed": true,
+    "commands": ["npm run test"]
   }
 }
 ```

@@ -199,7 +199,7 @@ async function runCode(args) {
   aiw code show <taskId> [--url URL]
   aiw code patch <taskId> --path FILE --find OLD --replace NEW [--url URL]
   aiw code patch <taskId> --changes changes.json [--url URL]
-  aiw code apply <taskId> <proposalId> [--url URL]
+  aiw code apply <taskId> <proposalId> [--check] [--command "npm test"] [--url URL]
   aiw code reject <taskId> <proposalId> [--reason TEXT] [--url URL]
   aiw code check <taskId> [--command "npm test"] [--url URL]
 `);
@@ -303,12 +303,19 @@ async function codePatch(args) {
 }
 
 async function codeApply(args) {
-  const options = parseOptions(args, { boolean: ["json"] });
+  const options = parseOptions(args, { boolean: ["json", "check"] });
   const [taskId, proposalId] = options._;
   if (!taskId || !proposalId) throw new Error("Usage: aiw code apply <taskId> <proposalId>");
+  const commands = arrayOption(options.command);
   const result = await requestJson(workspaceUrl(options), `/api/agent/code-task/${encodeURIComponent(taskId)}/patches/${encodeURIComponent(proposalId)}/apply`, {
     method: "POST",
-    body: { approved: true }
+    body: {
+      approved: true,
+      runChecksAfterApply: options.check === true,
+      checksApproved: options.check === true,
+      commands: commands.length ? commands : undefined,
+      allowCustomCommands: commands.length ? true : undefined
+    }
   });
   if (options.json) {
     printJson(result);
@@ -318,6 +325,12 @@ async function codeApply(args) {
   console.log(`Status: ${result.status}`);
   if (Array.isArray(result.filesChanged) && result.filesChanged.length) {
     console.log(`Files: ${result.filesChanged.join(", ")}`);
+  }
+  if (result.checkRun) {
+    console.log(`Checks: ${result.checkRun.allPassed ? "passed" : "failed"}`);
+    for (const item of result.checkRun.results || []) {
+      console.log(`- ${item.ok ? "ok" : "fail"} ${item.command} (${item.exitCode})`);
+    }
   }
 }
 

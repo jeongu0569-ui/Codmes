@@ -381,16 +381,20 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    func applyCodePatch(_ proposal: CodePatchProposal) async {
+    func applyCodePatch(_ proposal: CodePatchProposal, runChecksAfterApply: Bool = false) async {
         guard let api, let selectedCodeTask else { return }
         isLoadingCodeTask = true
         defer { isLoadingCodeTask = false }
         do {
-            _ = try await api.applyCodePatch(taskId: selectedCodeTask.id, proposalId: proposal.id)
+            let response = try await api.applyCodePatch(
+                taskId: selectedCodeTask.id,
+                proposalId: proposal.id,
+                runChecksAfterApply: runChecksAfterApply
+            )
             self.selectedCodeTask = try await api.agentTask(id: selectedCodeTask.id)
             await loadSelectedCodeTaskDiff()
             await refreshTree(root: "code")
-            statusMessage = "Patch applied"
+            statusMessage = response.checkRun == nil ? "Patch applied" : "Patch applied and checks finished"
         } catch {
             statusMessage = error.localizedDescription
         }

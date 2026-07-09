@@ -630,6 +630,14 @@ private struct CodePatchProposalView: View {
                     .buttonStyle(.borderless)
                     .disabled(store.isLoadingCodeTask)
                     Button {
+                        Task { await store.applyCodePatch(proposal, runChecksAfterApply: true) }
+                    } label: {
+                        Text("+Check")
+                    }
+                    .font(.caption.weight(.semibold))
+                    .buttonStyle(.borderless)
+                    .disabled(store.isLoadingCodeTask)
+                    Button {
                         Task { await store.rejectCodePatch(proposal) }
                     } label: {
                         Text("Deny")

@@ -183,6 +183,12 @@ Status: in progress.
 - Approved check execution. Done with
   `POST /api/agent/code-task/:id/checks`; the server refuses to run shell
   commands unless the request includes `approved: true`.
+- Post-patch check orchestration. Done at the server/API/CLI level:
+  `POST /api/agent/code-task/:id/patches/:proposalId/apply` can receive
+  `runChecksAfterApply: true` plus `checksApproved: true` and continue into
+  the task's detected checks after the approved patch is written. Without
+  check approval, it returns a check approval request instead of running shell
+  commands.
 - Check output persistence. Done: command stdout/stderr, exit codes, duration,
   and refreshed git diff refs are appended to the task record.
 - Task memory accumulation. Done at the server level: code tasks now maintain a
@@ -191,8 +197,8 @@ Status: in progress.
 - Apple client Code Agent panel. First pass done: the Code browser can create
   inspect tasks for the current Code folder, list/load recent code tasks, show
   task memory, show the latest proposed/git diff artifact, approve/apply an
-  existing patch proposal, deny an unsafe proposal, and run approved checks
-  through the Workspace Server.
+  existing patch proposal, approve plus run checks, deny an unsafe proposal,
+  and run approved checks through the Workspace Server.
 
 Remaining:
 
@@ -207,8 +213,8 @@ Remaining:
   - plan
   - patch. Server-side proposal/apply flow done; automatic LLM-authored patch
     generation is still pending.
-  - shell/test. Approved check execution is done; patch-triggered test
-    orchestration is still pending.
+  - shell/test. Approved check execution and approved post-patch check
+    orchestration are done; richer retry/revise behavior is still pending.
   - collect diff
   - request approval when needed. Server event/response contract exists; Apple
     UI is still pending.

@@ -183,10 +183,14 @@ struct WorkspaceAPI {
         ))
     }
 
-    func applyCodePatch(taskId: String, proposalId: String) async throws -> CodePatchApplyResponse {
+    func applyCodePatch(taskId: String, proposalId: String, runChecksAfterApply: Bool = false) async throws -> CodePatchApplyResponse {
         var components = try components("/api/agent/code-task/\(taskId)/patches/\(proposalId)/apply")
         components.percentEncodedPath = "/api/agent/code-task/\(taskId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? taskId)/patches/\(proposalId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? proposalId)/apply"
-        return try await request(components, method: "POST", body: ApprovedBody(approved: true))
+        return try await request(components, method: "POST", body: PatchApplyBody(
+            approved: true,
+            runChecksAfterApply: runChecksAfterApply,
+            checksApproved: runChecksAfterApply
+        ))
     }
 
     func rejectCodePatch(taskId: String, proposalId: String, reason: String = "Rejected in Apple client.") async throws -> CodePatchRejectResponse {
@@ -294,6 +298,12 @@ private struct CodeTaskCreateBody: Encodable {
 
 private struct ApprovedBody: Encodable {
     let approved: Bool
+}
+
+private struct PatchApplyBody: Encodable {
+    let approved: Bool
+    let runChecksAfterApply: Bool
+    let checksApproved: Bool
 }
 
 private struct RejectPatchBody: Encodable {

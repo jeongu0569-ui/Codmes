@@ -123,7 +123,8 @@ Implemented:
   Workspace Agent Engine. It can create an inspect task for the current Code
   folder, list recent code tasks, load task detail, show `taskMemory`, show the
   latest proposed/git diff artifact, approve/apply or deny an existing patch
-  proposal, and run approved checks through the Workspace Server.
+  proposal, approve and immediately run approved checks, and run approved
+  checks through the Workspace Server.
 - approval and denial buttons for `approval.request` events
 - normalized Hermes session menu titles instead of raw generated session ids
 - zero-message Hermes sessions are hidden from the client session list
@@ -227,7 +228,7 @@ Code browser current folder
   -> GET recent code tasks
   -> Load task detail and taskMemory
   -> Show proposed patch diff when present
-  -> Approve or deny existing patch proposal
+  -> Approve, Approve + Check, or deny existing patch proposal
   -> Run approved checks
 ```
 

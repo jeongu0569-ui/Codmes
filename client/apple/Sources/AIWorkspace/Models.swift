@@ -295,6 +295,8 @@ struct CodePatchApplyResponse: Codable {
     let filesChanged: [String]?
     let git: CodeTaskRecord.GitInfo?
     let taskMemory: CodeTaskMemory?
+    let checkRun: CodeCheckRun?
+    let checkApprovalRequired: Bool?
 }
 
 struct CodePatchRejectResponse: Codable {

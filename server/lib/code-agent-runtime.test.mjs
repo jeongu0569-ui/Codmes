@@ -159,6 +159,50 @@ test("code agent runtime rejects a proposed patch without changing files", async
   assert.equal(rejectedTask.patchProposals[0].rejectionReason, "Wrong direction.");
 });
 
+test("code agent runtime can run approved checks immediately after applying a patch", async () => {
+  const root = await fixtureCodeWorkspace();
+  const state = new WorkspaceAgentStateStore(root);
+  const runtime = new CodeAgentRuntime({ workspaceRoot: root, stateStore: state });
+
+  const result = await runtime.inspectTask({
+    scopePath: "Code/demo-app",
+    instruction: "Change the greeting renderer",
+    maxFiles: 20
+  });
+  const patch = await runtime.proposePatch(result.taskId, {
+    changes: [{
+      path: "src/index.js",
+      find: "return 'hello';",
+      replace: "return 'checked';"
+    }]
+  });
+  const applied = await runtime.applyPatch(result.taskId, {
+    proposalId: patch.proposal.id,
+    approved: true,
+    runChecksAfterApply: true,
+    checksApproved: true
+  });
+
+  assert.equal(applied.status, "checked");
+  assert.equal(applied.checkRun.allPassed, true);
+  assert.equal(applied.checkRun.results[0].command, "npm run test");
+  assert.equal(applied.checkRun.results[0].exitCode, 0);
+  assert.ok(applied.taskMemory.changedFiles.includes("Code/demo-app/src/index.js"));
+  assert.ok(applied.taskMemory.commands.includes("npm run test"));
+  assert.equal(
+    await fs.readFile(path.join(root, "Code", "demo-app", "src", "index.js"), "utf8"),
+    "export function greeting() {\n  return 'checked';\n}\n"
+  );
+
+  const checkedTask = JSON.parse(await fs.readFile(
+    path.join(root, ".ai-workspace", "tasks", `${result.taskId}.json`),
+    "utf8"
+  ));
+  assert.equal(checkedTask.status, "checked");
+  assert.equal(checkedTask.checks.length, 1);
+  assert.equal(checkedTask.patchProposals[0].status, "applied");
+});
+
 test("code agent runtime rejects non-Code scopes", async () => {
   const root = await fixtureCodeWorkspace();
   const state = new WorkspaceAgentStateStore(root);
