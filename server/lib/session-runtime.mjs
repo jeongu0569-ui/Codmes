@@ -66,6 +66,62 @@ export class SessionRuntime {
     return { ok: true };
   }
 
+  async renameSession(sessionId, newTitle) {
+    if (this.stateStore) {
+      try {
+        const session = await this.stateStore.readSession(sessionId);
+        if (session) {
+          session.title = newTitle;
+          session.updatedAt = new Date().toISOString();
+          await this.stateStore.writeSession(session);
+          return { ok: true };
+        }
+      } catch {}
+    }
+    return { ok: false, error: "Session not found." };
+  }
+
+  async exportSession(sessionId) {
+    if (this.stateStore) {
+      try {
+        const session = await this.stateStore.readSession(sessionId);
+        if (session) {
+          const lines = [
+            `# Session: ${session.title || sessionId}`,
+            `Model: ${session.model || "unknown"}`,
+            `Updated: ${session.updatedAt}`,
+            ""
+          ];
+          for (const m of session.messages || []) {
+            lines.push(`## ${m.role.toUpperCase()}`);
+            lines.push(m.content || "");
+            lines.push("");
+          }
+          return { ok: true, markdown: lines.join("\n") };
+        }
+      } catch {}
+    }
+    return { ok: false, error: "Session not found." };
+  }
+
+  async pruneSessions() {
+    if (this.stateStore) {
+      try {
+        const sessions = await this.stateStore.listWorkspaceSessions();
+        let count = 0;
+        for (const s of sessions) {
+          const session = await this.stateStore.readSession(s.id);
+          if (!session || !session.messages || session.messages.length === 0) {
+            await this.deleteSession(s.id);
+            count++;
+          }
+        }
+        return { ok: true, pruned: count };
+      } catch {}
+    }
+    return { ok: false, pruned: 0 };
+  }
+
   async appendSessionMessage(sessionId, message) {
     if (this.stateStore) {
       try {

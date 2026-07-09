@@ -754,15 +754,21 @@ async function handleRuntimeProxy(req, res, url) {
     const isModels = url.pathname === "/api/models" || url.pathname === "/api/workspace/models";
     const isSessionsGet = url.pathname === "/api/sessions" && req.method === "GET";
     const isSessionsPost = url.pathname === "/api/sessions" && req.method === "POST";
+    const isSessionsPrune = url.pathname === "/api/sessions/prune" && req.method === "POST";
     
     const messagesMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/messages$/);
     const sessionMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)$/);
+    const renameMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/rename$/);
+    const exportMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)\/export$/);
 
     if (isModels && req.method === "GET") {
       return sendJson(res, await engine.listModels());
     }
     if (isSessionsGet) {
       return sendJson(res, normalizeSessionsResponse(await engine.listSessions(200)));
+    }
+    if (isSessionsPrune) {
+      return sendJson(res, await engine.pruneSessions());
     }
     if (messagesMatch && req.method === "GET") {
       const sessionId = decodeURIComponent(messagesMatch[1]);
@@ -773,6 +779,15 @@ async function handleRuntimeProxy(req, res, url) {
     if (sessionMatch && req.method === "DELETE") {
       const sessionId = decodeURIComponent(sessionMatch[1]);
       return sendJson(res, await engine.deleteSession(sessionId));
+    }
+    if (renameMatch && req.method === "POST") {
+      const sessionId = decodeURIComponent(renameMatch[1]);
+      const body = await readJsonBody(req);
+      return sendJson(res, await engine.renameSession(sessionId, body.title));
+    }
+    if (exportMatch && req.method === "GET") {
+      const sessionId = decodeURIComponent(exportMatch[1]);
+      return sendJson(res, await engine.exportSession(sessionId));
     }
     if (isSessionsPost) {
       const body = await readJsonBody(req);

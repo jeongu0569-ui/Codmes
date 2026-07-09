@@ -66,35 +66,79 @@ export class OpenAICompatibleRuntime extends EventEmitter {
   }
 
   async submitPrompt(params = {}) {
-    const selection = await this.resolveModelSelection(params);
-    const messages = buildMessages(params);
+    let activeParams = { ...params };
+    let attempts = 0;
+    let lastError = null;
 
-    this.emit("event", {
-      type: "turn.start",
-      sessionId: params.sessionId,
-      taskId: params.taskId,
-      provider: selection.provider.id,
-      model: selection.model
-    });
+    // Get fallback chain from config
+    let chain = [];
+    try {
+      const config = await readRuntimeConfig(this.workspaceRoot);
+      chain = config.fallbackChain || [];
+    } catch {}
 
-    const result = await this.runChatLoop(selection, messages, params);
+    for (;;) {
+      let selection;
+      try {
+        selection = await this.resolveModelSelection(activeParams);
+        const messages = buildMessages(activeParams);
 
-    this.emit("event", {
-      type: "turn.complete",
-      sessionId: params.sessionId,
-      taskId: params.taskId,
-      text: result.reply
-    });
+        this.emit("event", {
+          type: "turn.start",
+          sessionId: params.sessionId,
+          taskId: params.taskId,
+          provider: selection.provider.id,
+          model: selection.model
+        });
 
-    return {
-      ok: true,
-      sessionId: params.sessionId,
-      runtimeSessionId: params.sessionId,
-      reply: result.reply,
-      provider: selection.provider.id,
-      model: selection.model,
-      toolRounds: result.toolRounds
-    };
+        const result = await this.runChatLoop(selection, messages, activeParams);
+
+        this.emit("event", {
+          type: "turn.complete",
+          sessionId: params.sessionId,
+          taskId: params.taskId,
+          text: result.reply
+        });
+
+        return {
+          ok: true,
+          sessionId: params.sessionId,
+          runtimeSessionId: params.sessionId,
+          reply: result.reply,
+          provider: selection.provider.id,
+          model: selection.model,
+          toolRounds: result.toolRounds
+        };
+      } catch (error) {
+        lastError = error;
+        // Try fallback chain
+        if (attempts < chain.length) {
+          const nextTarget = chain[attempts];
+          attempts += 1;
+          const colonIdx = nextTarget.indexOf(":");
+          if (colonIdx !== -1) {
+            const nextProvider = nextTarget.slice(0, colonIdx).trim();
+            const nextModel = nextTarget.slice(colonIdx + 1).trim();
+
+            this.emit("event", {
+              type: "fallback.attempt",
+              sessionId: params.sessionId,
+              taskId: params.taskId,
+              fromProvider: selection ? selection.provider.id : params.provider,
+              fromModel: selection ? selection.model : params.model,
+              toProvider: nextProvider,
+              toModel: nextModel,
+              error: error.message
+            });
+
+            activeParams.provider = nextProvider;
+            activeParams.model = nextModel;
+            continue;
+          }
+        }
+        throw error;
+      }
+    }
   }
 
   async runChatLoop(selection, messages, params) {
@@ -147,6 +191,34 @@ export class OpenAICompatibleRuntime extends EventEmitter {
     };
     if (selection.apiKey) headers.authorization = `Bearer ${selection.apiKey}`;
 
+    // Read toggles & MCP servers to merge active tools
+    const config = await readRuntimeConfig(this.workspaceRoot);
+    const disabledTools = new Set(config.disabledTools || []);
+    const activeTools = [...WORKSPACE_TOOL_DEFINITIONS];
+
+    if (config.mcpServers) {
+      for (const mcp of config.mcpServers) {
+        if (mcp.enabled !== false) {
+          activeTools.push({
+            type: "function",
+            function: {
+              name: `mcp_${mcp.name}_tool`,
+              description: `Execute tool from MCP server ${mcp.name}`,
+              parameters: {
+                type: "object",
+                properties: {
+                  command: { type: "string" },
+                  arguments: { type: "array", items: { type: "string" } }
+                }
+              }
+            }
+          });
+        }
+      }
+    }
+
+    const filteredTools = activeTools.filter((t) => !disabledTools.has(t.function.name));
+
     const response = await this.fetch(`${selection.baseUrl}/chat/completions`, {
       method: "POST",
       headers,
@@ -154,8 +226,8 @@ export class OpenAICompatibleRuntime extends EventEmitter {
         model: selection.model,
         messages,
         stream: true,
-        tools: WORKSPACE_TOOL_DEFINITIONS,
-        tool_choice: "auto",
+        tools: filteredTools.length > 0 ? filteredTools : undefined,
+        tool_choice: filteredTools.length > 0 ? "auto" : undefined,
         ...reasoningOptions(params.reasoningEffort)
       })
     });
@@ -202,6 +274,41 @@ export class OpenAICompatibleRuntime extends EventEmitter {
   }
 
   async executeToolCall(call, params) {
+    // Check if tool is disabled
+    const config = await readRuntimeConfig(this.workspaceRoot);
+    const disabledTools = new Set(config.disabledTools || []);
+    if (disabledTools.has(call.name)) {
+      const errorMsg = `Tool '${call.name}' is currently disabled in config.`;
+      this.emit("event", {
+        type: "tool.error",
+        sessionId: params.sessionId,
+        taskId: params.taskId,
+        toolCallId: call.id,
+        toolName: call.name,
+        text: errorMsg,
+        error: errorMsg
+      });
+      return { ok: false, error: errorMsg };
+    }
+
+    // Check if it is MCP tool stub execution
+    if (call.name.startsWith("mcp_")) {
+      const mcpName = call.name.split("_")[1];
+      const mcp = config.mcpServers?.find((s) => s.name === mcpName);
+      if (!mcp) {
+        const errorMsg = `MCP server '${mcpName}' not found.`;
+        return { ok: false, error: errorMsg };
+      }
+      if (mcp.enabled === false) {
+        const errorMsg = `MCP server '${mcpName}' is disabled.`;
+        return { ok: false, error: errorMsg };
+      }
+      return {
+        ok: true,
+        output: `Executed MCP command: ${mcp.command} ${mcp.args?.join(" ")} with args: ${JSON.stringify(call.arguments)}`
+      };
+    }
+
     this.emit("event", {
       type: "tool.start",
       sessionId: params.sessionId,

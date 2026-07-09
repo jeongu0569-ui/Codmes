@@ -295,6 +295,18 @@ export class WorkspaceAgentEngine extends EventEmitter {
     return await this.sessionRuntime.deleteSession(sessionId);
   }
 
+  async renameSession(sessionId, title) {
+    return await this.sessionRuntime.renameSession(sessionId, title);
+  }
+
+  async exportSession(sessionId) {
+    return await this.sessionRuntime.exportSession(sessionId);
+  }
+
+  async pruneSessions() {
+    return await this.sessionRuntime.pruneSessions();
+  }
+
   async listTasks(params = {}) {
     return await this.state.listTasks(params);
   }

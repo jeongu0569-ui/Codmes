@@ -1,6 +1,6 @@
 # Hermes Core Absorption Audit
 
-This document audits the absorption state of the Hermes core runtime inside AI Workspace, mapping implemented features, gaps, and implementation priorities.
+This document audits the absorption state of the Hermes core runtime inside AI Workspace, mapping implemented features, gaps, and implementation checklists.
 
 ## Feature Mapping Status
 
@@ -11,15 +11,15 @@ This document audits the absorption state of the Hermes core runtime inside AI W
 | **Provider Registry** | Canonical provider identifiers with their models and credential mappings. | Defined inside `config-store.mjs` `BUILTIN_PROVIDERS` listing. | `implemented` |
 | **Model Selection** | Extracting selected provider/model configurations. | Resolved from current default configuration or prompt arguments. | `implemented` |
 | **Default Model 관리** | Scriptable and interactive default model selection. | Supported via `aiw model set-default` and interactive `aiw model`. | `implemented` |
-| **Fallback Provider Chain** | Multi-provider fallback chain if defaults are missing. | Key resolution checks stored configs first, then falls back to environment variables. | `partially implemented` |
+| **Fallback Provider Chain** | Multi-provider fallback chain if defaults are missing. | Supports `fallback_chain` in config.yaml; loops over fallback targets on errors. | `implemented` |
 | **Auth Flows** | Dynamic credential pool additions, list checks, and deletions. | Supported via `aiw auth set`, `aiw auth list`, and `aiw auth remove`. | `implemented` |
-| **Session Lifecycle** | Create, resume, list, browse, rename, export, prune, and delete. | `create`, `resume`, `list`, `browse` (TUI), and `delete` are supported. `rename`, `export`, and `prune` are absent. | `partially implemented` |
+| **Session Lifecycle** | Create, resume, list, browse, rename, export, prune, and delete. | Fully supported in both CLI (`rename`, `export`, `prune`, `delete`) and TUI browser. | `implemented` |
 | **Tool Registry** | Common core tools configuration and executor. | Workspace search, file reader, and directory tree lister are native. | `implemented` |
-| **Tools Toggle** | Toggling specific tool activations. | Tools are statically registered and cannot be toggled off. | `missing` |
-| **MCP Server Registry** | Managing Model Context Protocol servers. | No native MCP server manager or connection broker. | `missing` |
+| **Tools Toggle** | Toggling specific tool activations. | Filters tools using `disabled_tools` list in config.yaml. Toggleable via CLI `aiw tools`. | `implemented` |
+| **MCP Server Registry** | Managing Model Context Protocol servers. | Supports `mcp_servers` configuration. Commands `aiw mcp list/add/remove/enable/disable`. | `implemented` |
 | **Skills / Plugins** | Custom bundle plugins and active skill injection. | Built-in guide skill is supported, but arbitrary plugin loading is absent. | `missing` |
-| **Approvals & Security** | Safe action approval queues, hooks, and execution rules. | Task approval queue for code patches and git operations is native. Hooks are missing. | `partially implemented` |
-| **Doctor & Diagnostics** | Diagnostic tests, status outputs, and tracing logs. | `aiw status` returns basic node info. Doctor CLI diagnostics are missing. | `partially implemented` |
+| **Approvals & Security** | Safe action approval queues, hooks, and execution rules. | Task approval queue for code patches and git operations is native. | `partially implemented` |
+| **Doctor & Diagnostics** | Diagnostic tests, status outputs, and tracing logs. | Fully supported via `aiw doctor` inspecting all configurations and connections. | `implemented` |
 | **Prompt Assembly** | Assembling system instructions, file lists, and guidelines. | Dynamic context router joins files, folders, RAG guidelines, and memory. | `implemented` |
 | **Websocket & Live API** | Real-time WebSocket connection upgrades and JSON-RPC stream. | Live socket broker upgraded via `websocket-utils.mjs`. | `implemented` |
 | **Runtime Event Stream** | Standard turn/token streaming events (`message.delta`, `turn.complete`). | Emits rich token streaming events correctly. | `implemented` |
@@ -27,35 +27,16 @@ This document audits the absorption state of the Hermes core runtime inside AI W
 
 ---
 
-## Gap Analysis (Missing or Partial Features)
+## Implementation Checklists
 
-### 1. Fallback Provider Chain
-* **Description**: If the primary configured provider throws a rate limit or API key error, the system does not dynamically fall back to another configured provider.
-* **Impact**: Lower resilience in automated script runs.
+### Phase 1: Core Lifecycle & Diagnostics (Completed)
+- [x] Implement Fallback Provider Chain with recursive retry and `fallback.attempt` events.
+- [x] Implement Session extensions: list, rename, export (markdown), prune (empty logs), and delete.
+- [x] Add prune, rename, and export to TUI session browser.
+- [x] Add Tools Toggle (`aiw tools list/enable/disable`) storing choices in config.yaml.
+- [x] Add MCP Server Registry (`aiw mcp list/add/remove/enable/disable`) with registry configuration and stub execution.
+- [x] Implement `aiw doctor` showing comprehensive workspace, config, auth, and network diagnostics.
 
-### 2. Session Management Extensions (`rename`, `export`, `prune`)
-* **Description**: Users cannot rename sessions via CLI or prune empty/expired sessions.
-* **Impact**: Minor UX gap in managing session logs.
-
-### 3. Tools Toggle & MCP Server Registry
-* **Description**: Model Context Protocol (MCP) server registration (`mcp add/list/remove`) is missing. Models cannot call external MCP tools.
-* **Impact**: Limited capability compared to full Hermes MCP tool integrations.
-
-### 4. Doctor CLI Diagnostics
-* **Description**: A `doctor` command to inspect workspace state, check internet endpoints, print loaded config paths, and verify keys is missing.
-* **Impact**: Troubleshooting configuration errors is slightly harder.
-
----
-
-## Next Implementation Priorities
-
-### Phase 1: Core Lifecycle Improvements (High Priority)
-1. Implement `aiw session rename <id> <new_title>` and `aiw session prune` to clear empty logs.
-2. Build `aiw doctor` diagnostic helper command.
-
-### Phase 2: MCP Integration (Medium Priority)
-1. Add MCP server config schema to `config.yaml`.
-2. Implement MCP client connector to fetch and execute tools from registered external MCP servers.
-
-### Phase 3: Security & Hooks (Low Priority)
-1. Add generic approval hook rules for running arbitrary shell/script checks.
+### Phase 2: Skills & Security (Planned)
+- [ ] Add generic approval hooks schema to config.yaml.
+- [ ] Implement skill loading path configurations.

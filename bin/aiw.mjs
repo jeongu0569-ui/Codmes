@@ -13,7 +13,9 @@ import {
   removeCredentialValue,
   setCredentialValue,
   setDefaultModel,
-  readRuntimeConfig
+  readRuntimeConfig,
+  ensureRuntimeConfig,
+  writeRuntimeConfig
 } from "../server/lib/runtime/config-store.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -68,6 +70,16 @@ async function main(argv) {
     case "session":
       await runSessions(args);
       return;
+    case "tools":
+    case "tool":
+      await runTools(args);
+      return;
+    case "mcp":
+      await runMcp(args);
+      return;
+    case "doctor":
+      await runDoctor(args);
+      return;
     case "config":
       await runConfig(args);
       return;
@@ -96,7 +108,10 @@ Usage:
   aiw model [list|set-default|show] [...]                (Interactive model picker if no subcommand)
   aiw provider [list] [...]                             (Interactive provider manager if no subcommand)
   aiw auth [list|set|remove] [...]                      (Interactive auth manager if no subcommand)
-  aiw sessions                                          (Interactive session browser)
+  aiw sessions [list|rename|export|prune|delete]        (Interactive session browser if no subcommand)
+  aiw tools [list|enable|disable] <name>
+  aiw mcp [list|add|remove|enable|disable] <name> [...]
+  aiw doctor                                            (Diagnostics helper)
   aiw config [edit]                                     (User configuration manager)
   aiw approvals [list|show|approve|reject] [...]
   aiw tasks [list|show] [...]
@@ -1115,19 +1130,336 @@ async function runAuth(args) {
 
 async function runSessions(args) {
   const options = parseOptions(args, { boolean: ["help", "json"] });
+  const [subcommand, ...subArgs] = options._;
   const root = workspaceRoot(options);
 
-  if (options.help) {
+  if (options.help || subcommand === "help") {
     console.log(`Usage:
   aiw sessions [--root PATH]
+  aiw sessions list [--root PATH] [--json]
+  aiw sessions rename <id> <new_title> [--root PATH]
+  aiw sessions export <id> [--root PATH]
+  aiw sessions prune [--root PATH]
+  aiw sessions delete <id> [--root PATH]
 `);
     return;
   }
 
-  if (!process.stdin.isTTY) {
-    throw new Error("Sessions browser requires a TTY terminal.");
+  const { createWorkspaceAgentEngine } = await import("../server/lib/agent-engine.mjs");
+  const engine = createWorkspaceAgentEngine({ workspaceRoot: root });
+
+  try {
+    if (subcommand === "list") {
+      const result = await engine.listSessions(100);
+      if (options.json) {
+        printJson(result);
+      } else {
+        console.log(`=== Sessions ===`);
+        for (const s of result.sessions) {
+          console.log(`- [${s.id}] "${s.title}" (Model: ${s.model}, Updated: ${s.updatedAt})`);
+        }
+      }
+      return;
+    }
+
+    if (subcommand === "rename") {
+      const [id, title] = subArgs;
+      if (!id || !title) throw new Error("Usage: aiw sessions rename <id> <new_title>");
+      const res = await engine.renameSession(id, title);
+      console.log(res.ok ? `Renamed session '${id}' to "${title}".` : `Error: ${res.error}`);
+      return;
+    }
+
+    if (subcommand === "export") {
+      const [id] = subArgs;
+      if (!id) throw new Error("Usage: aiw sessions export <id>");
+      const res = await engine.exportSession(id);
+      if (res.ok) {
+        console.log(res.markdown);
+      } else {
+        console.log(`Error: ${res.error}`);
+      }
+      return;
+    }
+
+    if (subcommand === "prune") {
+      const res = await engine.pruneSessions();
+      console.log(`Pruned ${res.pruned} empty sessions.`);
+      return;
+    }
+
+    if (subcommand === "delete") {
+      const [id] = subArgs;
+      if (!id) throw new Error("Usage: aiw sessions delete <id>");
+      const res = await engine.deleteSession(id);
+      console.log(res.ok ? `Deleted session '${id}'.` : `Error deleting session.`);
+      return;
+    }
+
+    if (!process.stdin.isTTY) {
+      throw new Error("Sessions browser requires a TTY terminal.");
+    }
+    await runSessionsInteractive(root);
+  } finally {
+    engine.close();
   }
-  await runSessionsInteractive(root);
+}
+
+async function runTools(args) {
+  const options = parseOptions(args, { boolean: ["help"] });
+  const [subcommand, name] = options._;
+  const root = workspaceRoot(options);
+
+  if (options.help || !subcommand) {
+    console.log(`Usage:
+  aiw tools list [--root PATH]
+  aiw tools enable <name> [--root PATH]
+  aiw tools disable <name> [--root PATH]
+`);
+    return;
+  }
+
+  const config = await readRuntimeConfig(root);
+  const disabledTools = config.disabledTools || [];
+
+  if (subcommand === "list") {
+    console.log(`=== Tool Registry ===`);
+    const builtins = ["workspace_search", "workspace_read_file", "workspace_list_tree"];
+    for (const b of builtins) {
+      const isDisabled = disabledTools.includes(b);
+      const status = isDisabled ? "\x1b[31mdisabled\x1b[0m" : "\x1b[32menabled\x1b[0m";
+      console.log(`- ${b} [${status}] (Built-in)`);
+    }
+    for (const mcp of config.mcpServers || []) {
+      const status = mcp.enabled === false ? "\x1b[31mdisabled\x1b[0m" : "\x1b[32menabled\x1b[0m";
+      console.log(`- mcp_${mcp.name}_tool [${status}] (MCP Server: ${mcp.name})`);
+    }
+    return;
+  }
+
+  if (subcommand === "disable") {
+    if (!name) throw new Error("Usage: aiw tools disable <name>");
+    if (!disabledTools.includes(name)) {
+      disabledTools.push(name);
+      await writeRuntimeConfig(root, { ...config, disabledTools });
+    }
+    console.log(`Disabled tool '${name}'.`);
+    return;
+  }
+
+  if (subcommand === "enable") {
+    if (!name) throw new Error("Usage: aiw tools enable <name>");
+    const updated = disabledTools.filter(t => t !== name);
+    await writeRuntimeConfig(root, { ...config, disabledTools: updated });
+    console.log(`Enabled tool '${name}'.`);
+    return;
+  }
+
+  throw new Error(`Unknown tools subcommand: ${subcommand}`);
+}
+
+async function runMcp(args) {
+  const options = parseOptions(args, { boolean: ["help"] });
+  const [subcommand, name, command, ...argsRest] = options._;
+  const root = workspaceRoot(options);
+
+  if (options.help || !subcommand) {
+    console.log(`Usage:
+  aiw mcp list [--root PATH]
+  aiw mcp add <name> <command> [args...] [--root PATH]
+  aiw mcp remove <name> [--root PATH]
+  aiw mcp enable <name> [--root PATH]
+  aiw mcp disable <name> [--root PATH]
+`);
+    return;
+  }
+
+  const config = await readRuntimeConfig(root);
+  const mcpServers = config.mcpServers || [];
+
+  if (subcommand === "list") {
+    console.log(`=== MCP Servers ===`);
+    if (mcpServers.length === 0) {
+      console.log("(No registered MCP servers)");
+    } else {
+      for (const mcp of mcpServers) {
+        const status = mcp.enabled !== false ? "\x1b[32menabled\x1b[0m" : "\x1b[31mdisabled\x1b[0m";
+        console.log(`- ${mcp.name} [${status}] (${mcp.command} ${mcp.args?.join(" ") || ""})`);
+      }
+    }
+    return;
+  }
+
+  if (subcommand === "add") {
+    if (!name || !command) throw new Error("Usage: aiw mcp add <name> <command> [args...]");
+    if (mcpServers.some(s => s.name === name)) {
+      throw new Error(`MCP server with name '${name}' already exists.`);
+    }
+    mcpServers.push({
+      name,
+      command,
+      args: argsRest,
+      enabled: true
+    });
+    await writeRuntimeConfig(root, { ...config, mcpServers });
+    console.log(`Registered MCP server '${name}'.`);
+    return;
+  }
+
+  if (subcommand === "remove") {
+    if (!name) throw new Error("Usage: aiw mcp remove <name>");
+    const filtered = mcpServers.filter(s => s.name !== name);
+    await writeRuntimeConfig(root, { ...config, mcpServers: filtered });
+    console.log(`Removed MCP server '${name}'.`);
+    return;
+  }
+
+  if (subcommand === "enable") {
+    if (!name) throw new Error("Usage: aiw mcp enable <name>");
+    const mcp = mcpServers.find(s => s.name === name);
+    if (!mcp) throw new Error(`MCP server '${name}' not found.`);
+    mcp.enabled = true;
+    await writeRuntimeConfig(root, { ...config, mcpServers });
+    console.log(`Enabled MCP server '${name}'.`);
+    return;
+  }
+
+  if (subcommand === "disable") {
+    if (!name) throw new Error("Usage: aiw mcp disable <name>");
+    const mcp = mcpServers.find(s => s.name === name);
+    if (!mcp) throw new Error(`MCP server '${name}' not found.`);
+    mcp.enabled = false;
+    await writeRuntimeConfig(root, { ...config, mcpServers });
+    console.log(`Disabled MCP server '${name}'.`);
+    return;
+  }
+
+  throw new Error(`Unknown mcp subcommand: ${subcommand}`);
+}
+
+async function runDoctor(args) {
+  const options = parseOptions(args, { boolean: ["help"] });
+  const root = workspaceRoot(options);
+
+  console.log(`\x1b[36m=== AI Workspace Diagnostics (aiw doctor) ===\x1b[0m\n`);
+
+  console.log(`1. Workspace Root:`);
+  try {
+    const stat = await fs.stat(root);
+    if (stat.isDirectory()) {
+      console.log(`   \x1b[32m[OK]\x1b[0m Root directory exists: ${root}`);
+    } else {
+      console.log(`   \x1b[31m[ERROR]\x1b[0m Path is not a directory: ${root}`);
+    }
+  } catch {
+    console.log(`   \x1b[31m[ERROR]\x1b[0m Workspace root does not exist or is not readable.`);
+  }
+
+  console.log(`\n2. Configuration & Credentials Store:`);
+  const configPath = path.join(root, ".ai-workspace", "config", "config.yaml");
+  const authPath = path.join(root, ".ai-workspace", "config", "auth.json");
+  let hasConfig = false;
+  let hasAuth = false;
+
+  try {
+    await fs.access(configPath);
+    console.log(`   \x1b[32m[OK]\x1b[0m config.yaml is accessible.`);
+    hasConfig = true;
+  } catch {
+    console.log(`   \x1b[33m[WARNING]\x1b[0m config.yaml missing or inaccessible.`);
+  }
+
+  try {
+    await fs.access(authPath);
+    console.log(`   \x1b[32m[OK]\x1b[0m auth.json is accessible.`);
+    hasAuth = true;
+  } catch {
+    console.log(`   \x1b[33m[WARNING]\x1b[0m auth.json missing or inaccessible.`);
+  }
+
+  console.log(`\n3. Default Model Configuration:`);
+  let activeProvider = null;
+  let activeModel = null;
+  if (hasConfig) {
+    try {
+      const config = await readRuntimeConfig(root);
+      if (config.defaultModel?.provider && config.defaultModel?.model) {
+        activeProvider = config.defaultModel.provider;
+        activeModel = config.defaultModel.model;
+        console.log(`   \x1b[32m[OK]\x1b[0m Default provider: \x1b[36m${activeProvider}\x1b[0m`);
+        console.log(`   \x1b[32m[OK]\x1b[0m Default model: \x1b[36m${activeModel}\x1b[0m`);
+        if (config.fallbackChain?.length) {
+          console.log(`   \x1b[32m[OK]\x1b[0m Fallback chain: ${config.fallbackChain.join(" -> ")}`);
+        } else {
+          console.log(`   [INFO] No fallback chain configured.`);
+        }
+      } else {
+        console.log(`   \x1b[33m[WARNING]\x1b[0m No default model or provider selected.`);
+      }
+    } catch (err) {
+      console.log(`   \x1b[31m[ERROR]\x1b[0m Failed to parse runtime config: ${err.message}`);
+    }
+  }
+
+  console.log(`\n4. Active Credentials Status:`);
+  try {
+    const statuses = await listCredentialStatus(root);
+    let configuredCount = 0;
+    for (const stat of statuses) {
+      if (stat.configured) {
+        configuredCount++;
+        console.log(`   - Provider \x1b[36m${stat.provider}\x1b[0m: \x1b[32mCONFIGURED\x1b[0m (Stored keys: ${stat.storedKeys.join(", ") || "none"}, Env: ${stat.envKeys.join(", ") || "none"})`);
+      }
+    }
+    if (configuredCount === 0) {
+      console.log(`   \x1b[33m[WARNING]\x1b[0m No credentials configured for any provider.`);
+    }
+  } catch (err) {
+    console.log(`   \x1b[31m[ERROR]\x1b[0m Failed to retrieve credentials status: ${err.message}`);
+  }
+
+  console.log(`\n5. Runtime Tool Registry & Toggles:`);
+  try {
+    const config = await readRuntimeConfig(root);
+    const disabled = new Set(config.disabledTools || []);
+    const builtins = ["workspace_search", "workspace_read_file", "workspace_list_tree"];
+    for (const b of builtins) {
+      const status = disabled.has(b) ? "\x1b[31mDISABLED\x1b[0m" : "\x1b[32mACTIVE\x1b[0m";
+      console.log(`   - Tool \x1b[36m${b}\x1b[0m: ${status}`);
+    }
+  } catch (err) {
+    console.log(`   \x1b[31m[ERROR]\x1b[0m Failed to read tools config: ${err.message}`);
+  }
+
+  console.log(`\n6. Model Context Protocol (MCP) Servers:`);
+  try {
+    const config = await readRuntimeConfig(root);
+    if (config.mcpServers?.length) {
+      for (const mcp of config.mcpServers) {
+        const status = mcp.enabled !== false ? "\x1b[32mENABLED\x1b[0m" : "\x1b[31mDISABLED\x1b[0m";
+        console.log(`   - MCP Server \x1b[36m${mcp.name}\x1b[0m: ${status} (Command: ${mcp.command})`);
+      }
+    } else {
+      console.log(`   [INFO] No MCP servers registered.`);
+    }
+  } catch (err) {
+    console.log(`   \x1b[31m[ERROR]\x1b[0m Failed to read MCP registry: ${err.message}`);
+  }
+
+  console.log(`\n7. Local Server Connection:`);
+  const baseUrl = workspaceUrl(options);
+  try {
+    const health = await requestJson(baseUrl, "/api/health");
+    if (health?.ok) {
+      console.log(`   \x1b[32m[OK]\x1b[0m Successfully connected to server at: ${baseUrl}`);
+    } else {
+      console.log(`   \x1b[33m[WARNING]\x1b[0m Server returned non-ok health: ${JSON.stringify(health)}`);
+    }
+  } catch {
+    console.log(`   \x1b[33m[WARNING]\x1b[0m Server at ${baseUrl} is not currently running.`);
+  }
+
+  console.log(`\n\x1b[36m=== Diagnostics Complete ===\x1b[0m\n`);
 }
 
 async function runConfig(args) {
@@ -1382,6 +1714,7 @@ async function runSessionsInteractive(root) {
 
     const options = [
       "Create a new chat session",
+      "Prune empty sessions",
       ...sessions.map((s) => `${s.title} (${s.model || "unknown"}) - ${new Date(s.updatedAt).toLocaleString()}`),
       "Exit"
     ];
@@ -1411,12 +1744,27 @@ async function runSessionsInteractive(root) {
       await fs.mkdir(dirPath, { recursive: true });
       await fs.writeFile(path.join(dirPath, `${sessionId}.json`), JSON.stringify(sessionObj, null, 2) + "\n", "utf8");
       console.log(`Created new session: ${sessionObj.title}\n`);
+    } else if (choice === 1) {
+      let count = 0;
+      for (const s of sessions) {
+        if (!s.messages || s.messages.length === 0) {
+          try {
+            await fs.unlink(path.join(dirPath, `${s.id}.json`));
+            count++;
+          } catch {}
+        }
+      }
+      console.log(`Pruned ${count} empty sessions.\n`);
+      console.log("Press Enter to continue...");
+      await waitForEnter();
     } else if (choice === options.length - 1) {
       break;
     } else {
-      const selectedSession = sessions[choice - 1];
+      const selectedSession = sessions[choice - 2];
       const sessionOptions = [
         "View messages",
+        "Rename session",
+        "Export session",
         "Delete session",
         "Back to sessions list"
       ];
@@ -1435,6 +1783,37 @@ async function runSessionsInteractive(root) {
         console.log("\nPress Enter to continue...");
         await waitForEnter();
       } else if (action === 1) {
+        const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+        const newTitle = await new Promise((resolve) => {
+          rl.question("Enter new title: ", (ans) => {
+            rl.close();
+            resolve(ans.trim());
+          });
+        });
+        if (newTitle) {
+          selectedSession.title = newTitle;
+          selectedSession.updatedAt = new Date().toISOString();
+          await fs.writeFile(path.join(dirPath, `${selectedSession.id}.json`), JSON.stringify(selectedSession, null, 2) + "\n", "utf8");
+          console.log(`Renamed to "${newTitle}".\n`);
+        }
+      } else if (action === 2) {
+        const lines = [
+          `# Session: ${selectedSession.title}`,
+          `Model: ${selectedSession.model || "unknown"}`,
+          `Updated: ${selectedSession.updatedAt}`,
+          ""
+        ];
+        for (const m of selectedSession.messages || []) {
+          lines.push(`## ${m.role.toUpperCase()}`);
+          lines.push(m.content || "");
+          lines.push("");
+        }
+        const exportPath = path.join(root, `session-export-${selectedSession.id}.md`);
+        await fs.writeFile(exportPath, lines.join("\n"), "utf8");
+        console.log(`Exported session to: ${exportPath}\n`);
+        console.log("Press Enter to continue...");
+        await waitForEnter();
+      } else if (action === 3) {
         try {
           await fs.unlink(path.join(dirPath, `${selectedSession.id}.json`));
           console.log("Session deleted.\n");

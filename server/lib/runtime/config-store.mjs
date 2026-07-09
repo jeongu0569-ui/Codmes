@@ -74,6 +74,9 @@ export async function readRuntimeConfig(workspaceRoot) {
         id: (parsed.model.provider && parsed.model.default) ? `${parsed.model.provider}:${parsed.model.default}` : null,
         updatedAt: new Date().toISOString()
       } : null,
+      fallbackChain: parsed.model?.fallback_chain || [],
+      disabledTools: parsed.disabled_tools || [],
+      mcpServers: parsed.mcp_servers || [],
       models: [],
       providers: {}
     };
@@ -81,6 +84,9 @@ export async function readRuntimeConfig(workspaceRoot) {
     return {
       schemaVersion: 1,
       defaultModel: null,
+      fallbackChain: [],
+      disabledTools: [],
+      mcpServers: [],
       models: [],
       providers: {}
     };
@@ -99,10 +105,25 @@ export async function writeRuntimeConfig(workspaceRoot, value) {
   if (value.defaultModel) {
     parsed.model = {
       default: value.defaultModel.model,
-      provider: value.defaultModel.provider
+      provider: value.defaultModel.provider,
+      fallback_chain: value.fallbackChain || parsed.model?.fallback_chain || []
     };
   } else {
     parsed.model = null;
+  }
+
+  if (value.fallbackChain !== undefined) {
+    if (parsed.model) {
+      parsed.model.fallback_chain = value.fallbackChain;
+    } else {
+      parsed.model = { fallback_chain: value.fallbackChain, default: "", provider: "" };
+    }
+  }
+  if (value.disabledTools !== undefined) {
+    parsed.disabled_tools = value.disabledTools;
+  }
+  if (value.mcpServers !== undefined) {
+    parsed.mcp_servers = value.mcpServers;
   }
 
   const updatedContent = stringifyConfigYaml(existingContent, parsed);
