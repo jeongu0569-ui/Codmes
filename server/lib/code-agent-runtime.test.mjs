@@ -393,3 +393,63 @@ test("code agent runtime generates automatic patches using mock LLM server", asy
   }
 });
 
+test("code agent runtime executes git commands with safety approvals", async () => {
+  const root = await fixtureCodeWorkspace();
+  const state = new WorkspaceAgentStateStore(root);
+  const runtime = new CodeAgentRuntime({ workspaceRoot: root, stateStore: state });
+
+  const projectDir = path.join(root, "Code", "demo-app");
+  const { execSync } = await import("node:child_process");
+  try {
+    execSync("git init && git config user.name test && git config user.email test@test.com && git add . && git commit -m 'initial'", {
+      cwd: projectDir,
+      stdio: "ignore"
+    });
+  } catch (e) {
+    // Ignored in restricted testing scopes if git is unavailable
+  }
+
+  const inspect = await runtime.inspectTask({
+    scopePath: "Code/demo-app",
+    instruction: "Git testing",
+    maxFiles: 20
+  });
+
+  const taskId = inspect.taskId;
+
+  // 1. approved가 없을 때 실패
+  await assert.rejects(
+    runtime.runGitCommand(taskId, { command: "git status" }),
+    /approved: true/
+  );
+
+  // 2. git status 실행 성공
+  const statusRes = await runtime.runGitCommand(taskId, {
+    approved: true,
+    command: "git status"
+  });
+  assert.equal(statusRes.ok, true);
+  assert.equal(statusRes.command, "git status");
+  assert.ok(statusRes.taskMemory.commands.includes("git status"));
+  assert.equal(typeof statusRes.git.status, "string");
+
+  // 3. git push 실행 시 push 승인이 없을 때 실패
+  await assert.rejects(
+    runtime.runGitCommand(taskId, { approved: true, command: "git push" }),
+    /explicit gitPushApproved/
+  );
+
+  // 4. git push --force 실행 시 danger 승인이 없을 때 실패
+  await assert.rejects(
+    runtime.runGitCommand(taskId, { approved: true, gitPushApproved: true, command: "git push --force" }),
+    /force-push/
+  );
+  
+  // 5. git push -f 실행 시 danger 승인이 없을 때 실패
+  await assert.rejects(
+    runtime.runGitCommand(taskId, { approved: true, gitPushApproved: true, command: "git push -f" }),
+    /force-push/
+  );
+});
+
+

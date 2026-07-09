@@ -286,6 +286,10 @@ async function handleRequest(req, res) {
     if (codeChecksMatch && req.method === "POST") {
       return sendJson(res, await runCodeTaskChecks(codeChecksMatch[1], req));
     }
+    const codeGitMatch = url.pathname.match(/^\/api\/agent\/code-task\/([^/]+)\/git$/);
+    if (codeGitMatch && req.method === "POST") {
+      return sendJson(res, await runCodeTaskGit(codeGitMatch[1], req));
+    }
     const codePatchProposeMatch = url.pathname.match(/^\/api\/agent\/code-task\/([^/]+)\/patches$/);
     if (codePatchProposeMatch && req.method === "POST") {
       return sendJson(res, await proposeCodeTaskPatch(codePatchProposeMatch[1], req), 201);
@@ -308,7 +312,7 @@ async function handleRequest(req, res) {
     if (req.method === "POST" && url.pathname === "/api/render/code") {
       return sendJson(res, await renderCode(req));
     }
-    if (url.pathname.startsWith("/api/hermes/")) {
+    if (url.pathname.startsWith("/api/hermes/") || url.pathname.startsWith("/api/workspace/models") || url.pathname.startsWith("/api/workspace/sessions")) {
       return handleHermesProxy(req, res, url);
     }
 
@@ -341,7 +345,8 @@ async function workspaceInfo() {
       codeTaskEndpoint: "/api/agent/code-task",
       codePatchEndpoint: "/api/agent/code-task/:id/patches",
       codePatchRejectEndpoint: "/api/agent/code-task/:id/patches/:proposalId/reject",
-      codeChecksEndpoint: "/api/agent/code-task/:id/checks"
+      codeChecksEndpoint: "/api/agent/code-task/:id/checks",
+      codeGitEndpoint: "/api/agent/code-task/:id/git"
     },
     search: searchStatus(WORKSPACE_ROOT)
   };
@@ -636,6 +641,16 @@ async function runCodeTaskChecks(taskId, req) {
   }
 }
 
+async function runCodeTaskGit(taskId, req) {
+  const body = await readJsonBody(req);
+  const engine = createAgentEngine();
+  try {
+    return await engine.runCodeTaskGit(decodeURIComponent(taskId), body);
+  } finally {
+    engine.close();
+  }
+}
+
 async function getWorkspaceConfig() {
   const engine = createAgentEngine();
   try {
@@ -721,29 +736,34 @@ async function renderCode(req) {
 async function handleHermesProxy(req, res, url) {
   const engine = createAgentEngine();
   try {
-    if (url.pathname === "/api/hermes/models" && req.method === "GET") {
+    const isModels = url.pathname === "/api/hermes/models" || url.pathname === "/api/workspace/models";
+    const isSessionsGet = (url.pathname === "/api/hermes/sessions" || url.pathname === "/api/workspace/sessions") && req.method === "GET";
+    const isSessionsPost = (url.pathname === "/api/hermes/sessions" || url.pathname === "/api/workspace/sessions") && req.method === "POST";
+    
+    const messagesMatch = url.pathname.match(/^\/api\/(hermes|workspace)\/sessions\/([^/]+)\/messages$/);
+    const sessionMatch = url.pathname.match(/^\/api\/(hermes|workspace)\/sessions\/([^/]+)$/);
+
+    if (isModels && req.method === "GET") {
       return sendJson(res, await engine.listModels());
     }
-    if (url.pathname === "/api/hermes/sessions" && req.method === "GET") {
+    if (isSessionsGet) {
       return sendJson(res, normalizeHermesSessionsResponse(await engine.listSessions(200)));
     }
-    const messagesMatch = url.pathname.match(/^\/api\/hermes\/sessions\/([^/]+)\/messages$/);
     if (messagesMatch && req.method === "GET") {
-      const sessionId = decodeURIComponent(messagesMatch[1]);
+      const sessionId = decodeURIComponent(messagesMatch[2]);
       return sendJson(res, normalizeHermesSessionMessagesResponse(
         await engine.getSessionMessages(sessionId)
       ));
     }
-    const sessionMatch = url.pathname.match(/^\/api\/hermes\/sessions\/([^/]+)$/);
     if (sessionMatch && req.method === "DELETE") {
-      const sessionId = decodeURIComponent(sessionMatch[1]);
+      const sessionId = decodeURIComponent(sessionMatch[2]);
       return sendJson(res, await engine.deleteSession(sessionId));
     }
-    if (url.pathname === "/api/hermes/sessions" && req.method === "POST") {
+    if (isSessionsPost) {
       const body = await readJsonBody(req);
       return sendJson(res, await engine.createSession(body), 201);
     }
-    throw Object.assign(new Error("Unknown Hermes proxy endpoint."), { status: 404 });
+    throw Object.assign(new Error("Unknown Workspace/Hermes proxy endpoint."), { status: 404 });
   } finally {
     engine.close();
   }

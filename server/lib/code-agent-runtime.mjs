@@ -225,6 +225,112 @@ export class CodeAgentRuntime {
     };
   }
 
+  async runGitCommand(taskId, params = {}) {
+    if (params.approved !== true) {
+      throw Object.assign(new Error("Git command execution requires approved: true."), { status: 428 });
+    }
+    const task = await this.state.readTask(requireTaskId(taskId));
+    if (task.type !== "code") {
+      throw Object.assign(new Error("Only code tasks can run git commands."), { status: 400 });
+    }
+    const scope = this.resolveCodeScope(task.scopePath || params.scopePath || "Code");
+
+    const command = String(params.command || "").trim();
+    if (!command.startsWith("git ")) {
+      throw Object.assign(new Error("Only 'git' commands are allowed in this runtime."), { status: 400 });
+    }
+
+    // Strong Approval Policy
+    const isPush = /\bpush\b/.test(command);
+    const isForcePush = /\bpush\b/.test(command) && (/\s(--force|-f)\b/.test(command) || command.endsWith(" -f") || command.endsWith(" --force"));
+
+    if (isPush) {
+      if (params.gitPushApproved !== true && params.dangerApproved !== true) {
+        throw Object.assign(new Error("Git push commands require explicit gitPushApproved: true safety approval."), { status: 403 });
+      }
+    }
+    if (isForcePush) {
+      if (params.dangerApproved !== true) {
+        throw Object.assign(new Error("Git force-push commands are blocked. Set dangerApproved: true explicitly to override."), { status: 403 });
+      }
+    }
+
+    await this.state.recordToolLog({
+      type: "code.git.start",
+      taskId: task.id,
+      scopePath: scope.relativePath,
+      command
+    });
+
+    const startedAt = new Date().toISOString();
+    const result = await runShellCommand(scope.absolutePath, command, params);
+    const finishedAt = new Date().toISOString();
+
+    await this.state.recordToolLog({
+      type: "code.git.command",
+      taskId: task.id,
+      scopePath: scope.relativePath,
+      command,
+      exitCode: result.exitCode,
+      durationMs: result.durationMs,
+      ok: result.ok
+    });
+
+    const currentMemory = task.taskMemory || { commands: [], check_results: [], readFiles: [], proposedFiles: [], changedFiles: [], failureLogs: [], nextSteps: [] };
+    const taskMemory = {
+      ...currentMemory,
+      commands: [...(currentMemory.commands || []), command].slice(-50),
+      check_results: [...(currentMemory.check_results || []), `${command} (${result.ok ? "OK" : "FAIL"}:${result.exitCode})`].slice(-50)
+    };
+
+    const gitRun = {
+      command,
+      ok: result.ok,
+      exitCode: result.exitCode,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      durationMs: result.durationMs,
+      startedAt,
+      finishedAt
+    };
+
+    const gitRuns = [...(Array.isArray(task.gitRuns) ? task.gitRuns : []), gitRun];
+    const gitState = await this.inspectGit(scope.absolutePath);
+    const diffRef = await this.state.writeDiff(task.id, gitState.diff || "");
+
+    const updated = await this.state.finishTask(task.id, {
+      gitRuns,
+      taskMemory,
+      git: {
+        ...(task.git || {}),
+        isRepository: gitState.isRepository,
+        root: gitState.root,
+        status: gitState.status,
+        diffStat: gitState.diffStat,
+        diffRef
+      }
+    });
+
+    await this.state.recordDecision({
+      type: "code.git.result",
+      taskId: task.id,
+      scopePath: scope.relativePath,
+      summary: `Git command '${command}' executed with exit code ${result.exitCode}.`,
+      command
+    });
+
+    return {
+      ok: result.ok,
+      engine: "workspace-agent",
+      runtime: "code-agent",
+      taskId: task.id,
+      command,
+      result,
+      git: updated.git,
+      taskMemory: updated.taskMemory
+    };
+  }
+
   async generateAutomaticPatch(taskId, params = {}) {
     if (!this.hermes) {
       throw Object.assign(new Error("Automatic patch generation requires Hermes configuration."), { status: 400 });

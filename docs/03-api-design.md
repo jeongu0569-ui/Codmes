@@ -688,11 +688,57 @@ any command fails. The runtime also refreshes the task's git status/diff
 artifact after running checks. The task's `taskMemory` also records executed
 commands, compact check results, failure logs when present, and next steps.
 
-## Hermes Proxy
+### `POST /api/agent/code-task/:id/git`
 
-### `GET /api/hermes/models`
+Runs git operations (status, diff, add, commit, push) for an existing code task under the workspace root and appends execution records and logs to the task.
 
-Proxies Hermes model options.
+Safety rules (Strong Approval Policy):
+- `approved: true` is strictly required.
+- `git push` commands require explicit `gitPushApproved: true` or `dangerApproved: true`.
+- `git push --force` or `-f` commands require explicit `dangerApproved: true` to bypass the block policy.
+
+Request Body:
+
+```json
+{
+  "approved": true,
+  "command": "git commit -m 'Initial commit'"
+}
+```
+
+Request Body for Git Push:
+
+```json
+{
+  "approved": true,
+  "gitPushApproved": true,
+  "command": "git push origin main"
+}
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "engine": "workspace-agent",
+  "runtime": "code-agent",
+  "taskId": "task-...",
+  "command": "git status",
+  "result": {
+    "ok": true,
+    "exitCode": 0,
+    "stdout": "..."
+  }
+}
+```
+
+## Workspace & Hermes Proxy (Compatibility Aliases)
+
+### `GET /api/workspace/models`
+### `GET /api/hermes/models` (Legacy Alias)
+
+Proxies model options.
 
 Current target:
 
@@ -700,9 +746,10 @@ Current target:
 GET {HERMES_SERVER_URL}/api/model/options
 ```
 
-### `GET /api/hermes/sessions`
+### `GET /api/workspace/sessions`
+### `GET /api/hermes/sessions` (Legacy Alias)
 
-Returns normalized Hermes sessions for client menus.
+Returns normalized sessions for client menus.
 
 Current target:
 
@@ -729,9 +776,10 @@ empty zero-message sessions and returns a compact shape:
 }
 ```
 
-### `GET /api/hermes/sessions/:id/messages`
+### `GET /api/workspace/sessions/:id/messages`
+### `GET /api/hermes/sessions/:id/messages` (Legacy Alias)
 
-Returns normalized saved messages for a Hermes session.
+Returns normalized saved messages for a session.
 
 Current target:
 
@@ -768,9 +816,10 @@ Response:
 The Apple client uses this endpoint before `session.resume` so selecting an
 existing session shows its previous user/assistant messages immediately.
 
-### `DELETE /api/hermes/sessions/:id`
+### `DELETE /api/workspace/sessions/:id`
+### `DELETE /api/hermes/sessions/:id` (Legacy Alias)
 
-Deletes a Hermes session through the dashboard API.
+Deletes a session through the dashboard API.
 
 Current target:
 
@@ -781,9 +830,10 @@ DELETE {HERMES_SERVER_URL}/api/sessions/:id
 The Apple client disables deletion for the currently active live session and
 shows a confirmation dialog before calling this endpoint.
 
-### `POST /api/hermes/sessions`
+### `POST /api/workspace/sessions`
+### `POST /api/hermes/sessions` (Legacy Alias)
 
-Creates a Hermes session through the REST endpoint when available.
+Creates a session through the REST endpoint when available.
 
 Live WebSocket session creation will be added separately because it needs a
 stateful `/api/ws` bridge.

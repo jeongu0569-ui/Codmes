@@ -179,6 +179,10 @@ export class WorkspaceAgentEngine extends EventEmitter {
     return await this.codeRuntime.runChecks(taskId, params);
   }
 
+  async runCodeTaskGit(taskId, params = {}) {
+    return await this.codeRuntime.runGitCommand(taskId, params);
+  }
+
   async proposeCodeTaskPatch(taskId, params = {}) {
     const result = await this.codeRuntime.proposePatch(taskId, params);
     if (result.approvalRequest) {

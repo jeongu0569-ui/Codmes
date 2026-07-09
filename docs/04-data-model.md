@@ -277,6 +277,20 @@ checks[]
   - stderr
 ```
 
+When git commands are executed, the task also stores:
+
+```text
+gitRuns[]
+- command
+- ok
+- exit_code
+- stdout
+- stderr
+- duration_ms
+- started_at
+- finished_at
+```
+
 The task status becomes `checked` when all commands pass and `check_failed`
 when any command exits non-zero.
 
