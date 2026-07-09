@@ -159,6 +159,18 @@ struct AgentTaskSummary: Codable, Identifiable, Hashable {
     let scopePath: String?
     let message: String?
     let summary: String?
+    let approvalIds: [String]?
+    let hasPendingState: Bool?
+    let error: String?
+}
+
+struct AgentTaskActionResponse: Codable {
+    let ok: Bool?
+    let engine: String?
+    let runtime: String?
+    let status: String?
+    let task: AgentTaskSummary?
+    let alreadyResolved: Bool?
 }
 
 struct CodeTaskRecord: Codable, Identifiable {
@@ -371,6 +383,16 @@ struct WorkspaceApproval: Codable, Identifiable, Hashable {
     let diffRef: String?
     let commands: [String]?
     let reason: String?
+    let hasPendingState: Bool?
+}
+
+struct WorkspaceApprovalRespondResponse: Codable {
+    let ok: Bool?
+    let engine: String?
+    let runtime: String?
+    let status: String?
+    let approval: WorkspaceApproval?
+    let result: AgentTaskActionResponse?
 }
 
 struct HermesSessionSummary: Identifiable, Hashable {

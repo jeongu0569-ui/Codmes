@@ -49,6 +49,8 @@ Implemented:
 - server URL setting
 - optional server auth token setting. HTTP requests use `Authorization: Bearer`
   and live WebSocket/raw URLs use `?token=` when a token is configured.
+  The token is stored in Keychain first; the old UserDefaults value is used only
+  as a migration/fallback path.
 - workspace status loading
 - Notes root listing
 - Code root listing
@@ -78,6 +80,12 @@ Implemented:
 - chat context scope picker
 - `contextRequest` forwarding for current file, current folder, and workspace scopes
 - basic live event rendering for assistant, thinking, tool, approval, and system events
+- Approval inbox view for server-side approval items, including pending approval
+  review, approve/reject actions, and task refresh.
+- Task panel inside the Approval inbox, including task status badges plus
+  resume/cancel controls for `approval_required`, running, and queued tasks.
+- Live approval/task events trigger inbox and task-list refreshes so approval
+  state is visible without a manual restart.
 - grouped, collapsible thinking/tool activity rows, one compact activity group per user turn
 - streaming thinking/reasoning deltas coalesced into smooth activity blocks instead of one row per token
 - active activity shimmer while Hermes is still streaming; finished rows show

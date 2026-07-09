@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { OpenAICompatibleRuntime } from "./openai-compatible-runtime.mjs";
 import { setCredentialValue, setDefaultModel, writeRuntimeConfig } from "./config-store.mjs";
+import { writeSecurityConfig } from "./security-policy.mjs";
 
 test("OpenAI-compatible runtime streams chat completions from AI Workspace config", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "aiw-openai-runtime-"));
@@ -65,6 +66,53 @@ test("OpenAI-compatible runtime reports setup when no model is selected", async 
     () => runtime.submitPrompt({ sessionId: "session-1", message: "hello" }),
     /No default model is configured/
   );
+});
+
+test("OpenAI-compatible runtime injects search results and RAG chunks into model context", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "aiw-openai-runtime-rag-"));
+  await setDefaultModel(root, "custom", "demo-model");
+  await setCredentialValue(root, "custom", "AIW_CUSTOM_BASE_URL", "http://model.test/v1");
+  await setCredentialValue(root, "custom", "AIW_CUSTOM_API_KEY", "test-key");
+
+  let request = null;
+  const runtime = new OpenAICompatibleRuntime({
+    workspaceRoot: root,
+    fetchImpl: async (_url, options) => {
+      request = JSON.parse(options.body);
+      return {
+        ok: true,
+        headers: { get: () => "text/event-stream" },
+        body: streamChunks([
+          'data: {"choices":[{"delta":{"content":"찾은 내용을 요약했어요."}}]}\n\n',
+          'data: [DONE]\n\n'
+        ])
+      };
+    }
+  });
+
+  await runtime.submitPrompt({
+    sessionId: "session-1",
+    message: "검색 결과로 설명해줘",
+    context: {
+      workspaceContext: {
+        workspace: { scopeType: "workspace", ragRecommended: true },
+        searchResults: [
+          { path: "Notes/search.md", kind: "markdown", snippet: "검색 결과 스니펫" }
+        ],
+        ragChunks: [
+          { path: "Documents/manual.pdf", page: 3, text: "PDF 청크 내용" }
+        ]
+      }
+    }
+  });
+
+  const system = request.messages[0].content;
+  assert.match(system, /Search results context/);
+  assert.match(system, /Notes\/search\.md/);
+  assert.match(system, /검색 결과 스니펫/);
+  assert.match(system, /RAG chunk context/);
+  assert.match(system, /Documents\/manual\.pdf page 3/);
+  assert.match(system, /PDF 청크 내용/);
 });
 
 test("OpenAI-compatible runtime executes workspace search tool calls", async () => {
@@ -127,6 +175,58 @@ test("OpenAI-compatible runtime executes workspace search tool calls", async () 
 
 async function* streamChunks(chunks) {
   for (const chunk of chunks) yield Buffer.from(chunk, "utf8");
+}
+
+async function writeMockMcpServer(root, { tools, handler }) {
+  const script = `
+import readline from "readline";
+
+const tools = ${JSON.stringify(tools)};
+let callCount = 0;
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  terminal: false
+});
+
+rl.on("line", (line) => {
+  if (!line.trim()) return;
+  try {
+    const req = JSON.parse(line);
+    if (req.method === "initialize") {
+      process.stdout.write(JSON.stringify({
+        jsonrpc: "2.0",
+        id: req.id,
+        result: {
+          protocolVersion: "2024-11-05",
+          capabilities: { tools: {} },
+          serverInfo: { name: "mock-mcp", version: "1.0.0" }
+        }
+      }) + "\\n");
+    } else if (req.method === "tools/list") {
+      process.stdout.write(JSON.stringify({
+        jsonrpc: "2.0",
+        id: req.id,
+        result: { tools }
+      }) + "\\n");
+    } else if (req.method === "tools/call") {
+      callCount += 1;
+      process.stdout.write(JSON.stringify({
+        jsonrpc: "2.0",
+        id: req.id,
+        result: {
+          content: [
+            { type: "text", text: "${handler} called " + callCount }
+          ]
+        }
+      }) + "\\n");
+    }
+  } catch (err) {}
+});
+`;
+  const serverPath = path.join(root, "mock-approval-mcp.mjs");
+  await fs.writeFile(serverPath, script, "utf8");
+  return serverPath;
 }
 
 test("OpenAI-compatible runtime executes fallback provider chain on error", async () => {
@@ -326,6 +426,65 @@ rl.on("line", (line) => {
   runtime.close();
 });
 
+test("OpenAI-compatible runtime does not swallow MCP approvalRequired errors", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "aiw-openai-runtime-mcp-approval-"));
+  await setDefaultModel(root, "openai-api", "gpt-5.5");
+  await setCredentialValue(root, "openai-api", "AIW_OPENAI_API_KEY", "test-key");
+  await writeSecurityConfig(root, {
+    approvalMode: "auto",
+    allowShell: true,
+    allowedCommands: [],
+    deniedCommands: [],
+    requireApproval: ["mcp.tool.call"]
+  });
+
+  const serverPath = await writeMockMcpServer(root, {
+    tools: [
+      {
+        name: "delete_file",
+        description: "Delete a file",
+        inputSchema: {
+          type: "object",
+          properties: { path: { type: "string" } },
+          required: ["path"]
+        }
+      }
+    ],
+    handler: "delete_file"
+  });
+  await writeRuntimeConfig(root, {
+    defaultModel: { provider: "openai-api", model: "gpt-5.5" },
+    mcpServers: [
+      { name: "fs", command: "node", args: [serverPath], enabled: true }
+    ]
+  });
+
+  const runtime = new OpenAICompatibleRuntime({ workspaceRoot: root });
+  const events = [];
+  runtime.on("event", (event) => events.push(event));
+
+  await assert.rejects(
+    () => runtime.executeToolCall({
+      id: "call_delete",
+      name: "mcp_fs_delete_file",
+      arguments: "{\"path\":\"Notes/a.md\"}"
+    }, {
+      sessionId: "session-approval",
+      taskId: "task-approval"
+    }),
+    (error) => {
+      assert.equal(error.approvalRequired, true);
+      assert.equal(error.category, "mcp.tool.call");
+      assert.equal(error.pendingState.toolName, "delete_file");
+      return true;
+    }
+  );
+  assert.equal(events.some((event) => event.type === "approval.required"), true);
+  assert.equal(events.some((event) => event.type === "tool.error"), false);
+
+  runtime.close();
+});
+
 test("McpClient server crash handling and timeout error", async () => {
   const { McpClient } = await import("./mcp-client.mjs");
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "aiw-mcp-crash-"));
@@ -343,6 +502,7 @@ rl.on("line", (line) => {
     }) + "\\n");
   }
 });
+
 `;
   const timeoutServerPath = path.join(root, "timeout-server.mjs");
   await fs.writeFile(timeoutServerPath, timeoutServerScript, "utf8");

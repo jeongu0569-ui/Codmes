@@ -51,6 +51,28 @@ test("reports fallback search status", async () => {
   assert.equal(status.available, true);
   assert.equal(status.indexed, false);
   assert.ok(status.searchableExtensions.includes(".md"));
+  assert.ok(status.searchableExtensions.includes(".pdf"));
+});
+
+test("searches extracted PDF text and caches it", async () => {
+  const root = await fixtureWorkspace();
+  await fs.mkdir(path.join(root, "Documents"), { recursive: true });
+  await fs.writeFile(
+    path.join(root, "Documents", "manual.pdf"),
+    "%PDF-1.4\n1 0 obj << /Type /Page >> endobj\nBT (semantic workspace manual) Tj ET\n%%EOF",
+    "latin1"
+  );
+
+  const result = await searchWorkspace(root, {
+    query: "semantic workspace",
+    scopePath: "Documents"
+  });
+  assert.equal(result.resultCount, 1);
+  assert.equal(result.results[0].path, "Documents/manual.pdf");
+  assert.match(result.results[0].snippet, /semantic workspace/i);
+
+  const cacheEntries = await fs.readdir(path.join(root, ".ai-workspace", "index", "pdf-text"));
+  assert.equal(cacheEntries.length, 1);
 });
 
 async function fixtureWorkspace() {

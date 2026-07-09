@@ -2,6 +2,7 @@ import { EventEmitter } from "node:events";
 import { randomUUID } from "node:crypto";
 import {
   BUILTIN_PROVIDERS,
+  listRuntimeModels,
   readCredentials,
   readRuntimeConfig
 } from "./config-store.mjs";
@@ -36,6 +37,12 @@ export class OpenAICompatibleRuntime extends EventEmitter {
       throw Object.assign(new Error("This Node runtime does not provide fetch()."), { status: 500 });
     }
     return { ok: true };
+  }
+
+  async listModels() {
+    return {
+      models: await listRuntimeModels(this.workspaceRoot)
+    };
   }
 
   async createSession(params = {}) {
@@ -426,6 +433,9 @@ export class OpenAICompatibleRuntime extends EventEmitter {
         });
         return { ok: true, output };
       } catch (error) {
+        if (error?.approvalRequired) {
+          throw error;
+        }
         const errorMsg = error?.message || "MCP tool execution failed.";
         this.emit("event", {
           type: "tool.error",
@@ -575,6 +585,23 @@ export class OpenAICompatibleRuntime extends EventEmitter {
       for (const block of context.inlineBlocks) {
         parts.push(`--- ${block.title || block.kind || "Context"}${block.path ? `: ${block.path}` : ""} ---`);
         parts.push(String(block.content || ""));
+      }
+    }
+
+    if (Array.isArray(context.searchResults) && context.searchResults.length) {
+      parts.push("Search results context:");
+      for (const result of context.searchResults.slice(0, 12)) {
+        parts.push(`--- Search result: ${result.path || "(unknown)"}${result.kind ? ` (${result.kind})` : ""} ---`);
+        parts.push(String(result.snippet || result.text || "").slice(0, 2000));
+      }
+    }
+
+    if (Array.isArray(context.ragChunks) && context.ragChunks.length) {
+      parts.push("RAG chunk context:");
+      for (const chunk of context.ragChunks.slice(0, 12)) {
+        const page = chunk.page !== undefined && chunk.page !== null ? ` page ${chunk.page}` : "";
+        parts.push(`--- Chunk: ${chunk.path || "(unknown)"}${page} ---`);
+        parts.push(String(chunk.text || "").slice(0, 2000));
       }
     }
 
@@ -735,6 +762,23 @@ function buildSystemMessage(params) {
     for (const block of context.inlineBlocks) {
       parts.push(`--- ${block.title || block.kind || "Context"}${block.path ? `: ${block.path}` : ""} ---`);
       parts.push(String(block.content || ""));
+    }
+  }
+
+  if (Array.isArray(context.searchResults) && context.searchResults.length) {
+    parts.push("Search results context:");
+    for (const result of context.searchResults.slice(0, 12)) {
+      parts.push(`--- Search result: ${result.path || "(unknown)"}${result.kind ? ` (${result.kind})` : ""} ---`);
+      parts.push(String(result.snippet || result.text || "").slice(0, 2000));
+    }
+  }
+
+  if (Array.isArray(context.ragChunks) && context.ragChunks.length) {
+    parts.push("RAG chunk context:");
+    for (const chunk of context.ragChunks.slice(0, 12)) {
+      const page = chunk.page !== undefined && chunk.page !== null ? ` page ${chunk.page}` : "";
+      parts.push(`--- Chunk: ${chunk.path || "(unknown)"}${page} ---`);
+      parts.push(String(chunk.text || "").slice(0, 2000));
     }
   }
 

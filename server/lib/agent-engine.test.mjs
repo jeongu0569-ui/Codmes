@@ -5,6 +5,9 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { WorkspaceAgentEngine, WorkspaceAgentStateStore } from "./agent-engine.mjs";
+import { OpenAICompatibleRuntime } from "./runtime/openai-compatible-runtime.mjs";
+import { setCredentialValue, setDefaultModel, writeRuntimeConfig } from "./runtime/config-store.mjs";
+import { writeSecurityConfig } from "./runtime/security-policy.mjs";
 
 test("workspace agent engine resolves context and records task state", async () => {
   const root = await fixtureWorkspace();
@@ -189,6 +192,132 @@ test("workspace agent engine stores approval_required task and resumes approved 
   assert.equal(resumedTask.status, "completed");
   assert.equal(resumedTask.pendingState, null);
   assert.equal(resumedTask.result.result.output, "ok");
+});
+
+test("MCP dangerous tool call creates approval_required task and approved inbox response resumes only that tool call", async () => {
+  const root = await fixtureWorkspace();
+  await setDefaultModel(root, "custom", "demo-model");
+  await setCredentialValue(root, "custom", "AIW_CUSTOM_BASE_URL", "http://model.test/v1");
+  await setCredentialValue(root, "custom", "AIW_CUSTOM_API_KEY", "test-key");
+  await writeSecurityConfig(root, {
+    approvalMode: "auto",
+    allowShell: true,
+    allowedCommands: [],
+    deniedCommands: [],
+    requireApproval: ["mcp.tool.call"]
+  });
+  const mcpServerPath = await writeApprovalMcpServer(root);
+  await writeRuntimeConfig(root, {
+    defaultModel: { provider: "custom", model: "demo-model" },
+    mcpServers: [
+      { name: "files", command: "node", args: [mcpServerPath], enabled: true }
+    ]
+  });
+
+  let modelRequestCount = 0;
+  const runtime = new OpenAICompatibleRuntime({
+    workspaceRoot: root,
+    fetchImpl: async () => {
+      modelRequestCount += 1;
+      return {
+        ok: true,
+        headers: { get: () => "text/event-stream" },
+        body: streamChunks([
+          'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_delete","type":"function","function":{"name":"mcp_files_delete_file","arguments":"{\\"path\\":\\"Notes/a.md\\"}"}}]}}]}\n\n',
+          "data: [DONE]\n\n"
+        ])
+      };
+    }
+  });
+  const engine = new WorkspaceAgentEngine({ workspaceRoot: root }, runtime);
+  const events = [];
+  engine.on("event", (event) => events.push(event));
+
+  const session = await engine.createSession({});
+  const result = await engine.submitPrompt({
+    sessionId: session.sessionId,
+    message: "delete risky file"
+  });
+
+  assert.equal(result.status, "approval_required");
+  assert.equal(modelRequestCount, 1);
+
+  const task = await engine.readTask(result.taskId);
+  assert.equal(task.status, "approval_required");
+  assert.equal(task.approvalIds.includes(result.approvalId), true);
+  assert.equal(task.pendingState.type, "mcp.tool.call");
+  assert.equal(task.pendingState.toolName, "delete_file");
+
+  const approvals = await engine.listApprovals({ status: "pending" });
+  assert.equal(approvals.approvals.length, 1);
+  assert.equal(approvals.approvals[0].id, result.approvalId);
+  assert.equal(approvals.approvals[0].category, "mcp.tool.call");
+  assert.equal(approvals.approvals[0].hasPendingState, true);
+  assert.equal(events.some((event) => event.type === "approval.request"), true);
+
+  const approved = await engine.respondToWorkspaceApproval(result.approvalId, { approved: true });
+  assert.equal(approved.status, "approved");
+  assert.equal(approved.result.status, "completed");
+
+  const resumedTask = await engine.readTask(result.taskId);
+  assert.equal(resumedTask.status, "completed");
+  assert.equal(resumedTask.pendingState, null);
+  assert.deepEqual(resumedTask.result.result.output, [{ type: "text", text: "delete_file called 1" }]);
+  assert.equal(modelRequestCount, 1);
+
+  runtime.close();
+});
+
+test("approval.inbox.respond rejected marks MCP approval task failed", async () => {
+  const root = await fixtureWorkspace();
+  await setDefaultModel(root, "custom", "demo-model");
+  await setCredentialValue(root, "custom", "AIW_CUSTOM_BASE_URL", "http://model.test/v1");
+  await setCredentialValue(root, "custom", "AIW_CUSTOM_API_KEY", "test-key");
+  await writeSecurityConfig(root, {
+    approvalMode: "auto",
+    allowShell: true,
+    allowedCommands: [],
+    deniedCommands: [],
+    requireApproval: ["mcp.tool.call"]
+  });
+  const mcpServerPath = await writeApprovalMcpServer(root);
+  await writeRuntimeConfig(root, {
+    defaultModel: { provider: "custom", model: "demo-model" },
+    mcpServers: [
+      { name: "files", command: "node", args: [mcpServerPath], enabled: true }
+    ]
+  });
+
+  const runtime = new OpenAICompatibleRuntime({
+    workspaceRoot: root,
+    fetchImpl: async () => ({
+      ok: true,
+      headers: { get: () => "text/event-stream" },
+      body: streamChunks([
+        'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_delete","type":"function","function":{"name":"mcp_files_delete_file","arguments":"{\\"path\\":\\"Notes/a.md\\"}"}}]}}]}\n\n',
+        "data: [DONE]\n\n"
+      ])
+    })
+  });
+  const engine = new WorkspaceAgentEngine({ workspaceRoot: root }, runtime);
+  const session = await engine.createSession({});
+  const result = await engine.submitPrompt({
+    sessionId: session.sessionId,
+    message: "delete risky file"
+  });
+
+  const rejected = await engine.respondToWorkspaceApproval(result.approvalId, {
+    approved: false,
+    reason: "Too risky."
+  });
+  assert.equal(rejected.status, "rejected");
+
+  const task = await engine.readTask(result.taskId);
+  assert.equal(task.status, "failed");
+  assert.equal(task.pendingState, null);
+  assert.equal(task.error, "Too risky.");
+
+  runtime.close();
 });
 
 test("workspace agent engine cancels approval_required tasks", async () => {
@@ -391,4 +520,71 @@ async function fixtureWorkspace() {
   await fs.mkdir(path.join(root, "Notes"), { recursive: true });
   await fs.writeFile(path.join(root, "Notes", "a.md"), "# Alpha note\n\nHello.", "utf8");
   return root;
+}
+
+async function writeApprovalMcpServer(root) {
+  const script = `
+import readline from "readline";
+
+let callCount = 0;
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  terminal: false
+});
+
+rl.on("line", (line) => {
+  if (!line.trim()) return;
+  try {
+    const req = JSON.parse(line);
+    if (req.method === "initialize") {
+      process.stdout.write(JSON.stringify({
+        jsonrpc: "2.0",
+        id: req.id,
+        result: {
+          protocolVersion: "2024-11-05",
+          capabilities: { tools: {} },
+          serverInfo: { name: "approval-mcp", version: "1.0.0" }
+        }
+      }) + "\\n");
+    } else if (req.method === "tools/list") {
+      process.stdout.write(JSON.stringify({
+        jsonrpc: "2.0",
+        id: req.id,
+        result: {
+          tools: [
+            {
+              name: "delete_file",
+              description: "Delete a file from the workspace",
+              inputSchema: {
+                type: "object",
+                properties: { path: { type: "string" } },
+                required: ["path"]
+              }
+            }
+          ]
+        }
+      }) + "\\n");
+    } else if (req.method === "tools/call") {
+      callCount += 1;
+      process.stdout.write(JSON.stringify({
+        jsonrpc: "2.0",
+        id: req.id,
+        result: {
+          content: [
+            { type: "text", text: "delete_file called " + callCount }
+          ]
+        }
+      }) + "\\n");
+    }
+  } catch (err) {}
+});
+`;
+  const serverPath = path.join(root, "approval-mcp.mjs");
+  await fs.writeFile(serverPath, script, "utf8");
+  return serverPath;
+}
+
+async function* streamChunks(chunks) {
+  for (const chunk of chunks) yield Buffer.from(chunk, "utf8");
 }

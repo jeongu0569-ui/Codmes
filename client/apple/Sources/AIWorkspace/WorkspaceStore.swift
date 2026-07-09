@@ -3,7 +3,7 @@ import Foundation
 @MainActor
 final class WorkspaceStore: ObservableObject {
     @Published var serverURLText = UserDefaults.standard.string(forKey: "workspace.serverURL") ?? "http://127.0.0.1:8787"
-    @Published var serverAuthToken = UserDefaults.standard.string(forKey: "workspace.serverAuthToken") ?? ""
+    @Published var serverAuthToken = WorkspaceStore.initialServerAuthToken()
     @Published var workspace: WorkspaceInfo?
     @Published var notes: [WorkspaceItem] = []
     @Published var code: [WorkspaceItem] = []
@@ -33,6 +33,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var sessionManagerSearch = ""
     @Published var selectedHermesProjectId = "__all__"
     @Published var uploadItems: [UploadItem] = []
+    @Published var agentTasks: [AgentTaskSummary] = []
     @Published var codeTasks: [AgentTaskSummary] = []
     @Published var selectedCodeTask: CodeTaskRecord?
     @Published var selectedCodeTaskDiff = ""
@@ -86,7 +87,11 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func persistServerAuthToken() {
-        UserDefaults.standard.set(serverAuthToken, forKey: "workspace.serverAuthToken")
+        if KeychainStore.writeServerAuthToken(serverAuthToken) {
+            UserDefaults.standard.removeObject(forKey: "workspace.serverAuthToken")
+        } else {
+            UserDefaults.standard.set(serverAuthToken, forKey: "workspace.serverAuthToken")
+        }
     }
 
     func useMacTailscaleServerURL() {
@@ -122,6 +127,8 @@ final class WorkspaceStore: ObservableObject {
             await refreshHermesMetadata()
             connectionStep = "Loading pending approvals"
             await refreshApprovals()
+            connectionStep = "Loading agent tasks"
+            await refreshAgentTasks()
             statusMessage = "Connected"
             isWorkspaceConnected = true
             connectionStep = "Ready"
@@ -361,6 +368,42 @@ final class WorkspaceStore: ObservableObject {
             )
             statusMessage = approved ? "Approval submitted" : "Rejection submitted"
             await refreshApprovals()
+            await refreshAgentTasks()
+            await refreshCodeTasks()
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func refreshAgentTasks() async {
+        guard let api else { return }
+        do {
+            agentTasks = try await api.agentTasks(type: nil, limit: 80)
+        } catch {
+            statusMessage = "Tasks error: \(error.localizedDescription)"
+        }
+    }
+
+    func resumeAgentTask(_ task: AgentTaskSummary) async {
+        guard let api else { return }
+        do {
+            _ = try await api.resumeAgentTask(id: task.id)
+            statusMessage = "Task resumed"
+            await refreshApprovals()
+            await refreshAgentTasks()
+            await refreshCodeTasks()
+        } catch {
+            statusMessage = error.localizedDescription
+        }
+    }
+
+    func cancelAgentTask(_ task: AgentTaskSummary, reason: String? = nil) async {
+        guard let api else { return }
+        do {
+            _ = try await api.cancelAgentTask(id: task.id, reason: reason ?? "Cancelled in Apple client.")
+            statusMessage = "Task cancelled"
+            await refreshApprovals()
+            await refreshAgentTasks()
             await refreshCodeTasks()
         } catch {
             statusMessage = error.localizedDescription
@@ -1039,6 +1082,8 @@ final class WorkspaceStore: ObservableObject {
             activeActivityLineId = nil
             Task {
                 await refreshHermesMetadata()
+                await refreshApprovals()
+                await refreshAgentTasks()
                 updateActiveSessionTitle()
             }
             return
@@ -1058,6 +1103,17 @@ final class WorkspaceStore: ObservableObject {
         }
         if type == "approval.request" {
             chatLines.append(ChatLine(role: "approval", text: text.isEmpty ? "Approval requested." : text, approvalState: .pending))
+            Task {
+                await refreshApprovals()
+                await refreshAgentTasks()
+            }
+            return
+        }
+        if type.hasPrefix("task.") || type.contains("approval") {
+            Task {
+                await refreshApprovals()
+                await refreshAgentTasks()
+            }
             return
         }
     }
@@ -1280,6 +1336,17 @@ final class WorkspaceStore: ObservableObject {
         UserDefaults.standard.set(connectionStep, forKey: "workspace.lastConnectionStep")
         UserDefaults.standard.set(connectionDetail, forKey: "workspace.lastConnectionDetail")
         UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: "workspace.lastConnectionCheck")
+    }
+
+    private static func initialServerAuthToken() -> String {
+        if let token = KeychainStore.readServerAuthToken(), !token.isEmpty {
+            return token
+        }
+        let legacy = UserDefaults.standard.string(forKey: "workspace.serverAuthToken") ?? ""
+        if !legacy.isEmpty, KeychainStore.writeServerAuthToken(legacy) {
+            UserDefaults.standard.removeObject(forKey: "workspace.serverAuthToken")
+        }
+        return legacy
     }
 }
 

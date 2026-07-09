@@ -11,26 +11,46 @@ struct ApprovalsInboxView: View {
     var body: some View {
         #if os(macOS)
         NavigationSplitView {
-            sidebarList
+            reviewSidebar
                 .navigationTitle("Pending Approvals")
         } detail: {
             detailContent
         }
         .onAppear {
-            Task { await store.refreshApprovals() }
+            Task {
+                await store.refreshApprovals()
+                await store.refreshAgentTasks()
+            }
         }
         #else
         NavigationStack {
-            sidebarList
+            reviewSidebar
                 .navigationTitle("Approvals")
                 .navigationDestination(for: WorkspaceApproval.self) { approval in
                     iOSDetailView(approval: approval)
                 }
         }
         .onAppear {
-            Task { await store.refreshApprovals() }
+            Task {
+                await store.refreshApprovals()
+                await store.refreshAgentTasks()
+            }
         }
         #endif
+    }
+
+    private var reviewSidebar: some View {
+        VStack(spacing: 0) {
+            sidebarList
+                .frame(maxHeight: .infinity)
+            Divider()
+            taskListPanel
+                .frame(maxHeight: 260)
+        }
+        .refreshable {
+            await store.refreshApprovals()
+            await store.refreshAgentTasks()
+        }
     }
 
     private var sidebarList: some View {
@@ -99,6 +119,98 @@ struct ApprovalsInboxView: View {
             }
         }
         .padding(.vertical, 4)
+    }
+
+    private var taskListPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("Tasks", systemImage: "list.bullet.rectangle")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    Task { await store.refreshAgentTasks() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+                .help("Refresh tasks")
+            }
+            .padding(.horizontal, 12)
+            .padding(.top, 10)
+
+            if store.agentTasks.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "checkmark.circle")
+                        .foregroundStyle(.secondary)
+                    Text("No recent tasks")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, minHeight: 80)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(store.agentTasks.prefix(10)) { task in
+                            taskRow(for: task)
+                        }
+                    }
+                    .padding(.horizontal, 10)
+                    .padding(.bottom, 10)
+                }
+            }
+        }
+        .background(Color.secondary.opacity(0.04))
+    }
+
+    private func taskRow(for task: AgentTaskSummary) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                TaskStatusBadge(status: task.status ?? "unknown")
+                Text(task.type ?? "task")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(shortTaskId(task.id))
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.tertiary)
+            }
+
+            Text(task.summary ?? task.message ?? "Workspace task")
+                .font(.caption)
+                .lineLimit(2)
+
+            if let scope = task.scopePath, !scope.isEmpty {
+                Text(scope)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+
+            HStack(spacing: 10) {
+                if task.status == "approval_required" || task.hasPendingState == true {
+                    Button {
+                        Task { await store.resumeAgentTask(task) }
+                    } label: {
+                        Label("Resume", systemImage: "play.fill")
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption.weight(.semibold))
+                }
+
+                if task.status == "running" || task.status == "queued" || task.status == "approval_required" {
+                    Button(role: .destructive) {
+                        Task { await store.cancelAgentTask(task) }
+                    } label: {
+                        Label("Cancel", systemImage: "xmark")
+                    }
+                    .buttonStyle(.plain)
+                    .font(.caption.weight(.semibold))
+                }
+            }
+        }
+        .padding(10)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
     }
 
     @ViewBuilder
@@ -358,6 +470,43 @@ struct ApprovalsInboxView: View {
         let relativeFormatter = RelativeDateTimeFormatter()
         relativeFormatter.unitsStyle = .full
         return relativeFormatter.localizedString(for: date, relativeTo: Date())
+    }
+
+    private func shortTaskId(_ id: String) -> String {
+        guard id.count > 10 else { return id }
+        return String(id.prefix(10))
+    }
+}
+
+struct TaskStatusBadge: View {
+    let status: String
+
+    var body: some View {
+        Text(label)
+            .font(.caption2.weight(.bold))
+            .padding(.horizontal, 7)
+            .padding(.vertical, 3)
+            .background(color.opacity(0.16), in: Capsule())
+            .foregroundStyle(color)
+    }
+
+    private var label: String {
+        status.replacingOccurrences(of: "_", with: " ")
+    }
+
+    private var color: Color {
+        switch status {
+        case "completed":
+            .green
+        case "running", "queued":
+            .blue
+        case "approval_required":
+            .orange
+        case "failed", "cancelled":
+            .red
+        default:
+            .secondary
+        }
     }
 }
 

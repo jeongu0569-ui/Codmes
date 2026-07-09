@@ -325,6 +325,7 @@ export async function setCredentialValue(workspaceRoot, providerId, key, value) 
     configContent = await fs.readFile(configPath, "utf8");
   } catch {}
   const configObj = parseConfigYaml(configContent);
+  if (!Array.isArray(configObj.custom_providers)) configObj.custom_providers = [];
 
   // Read auth.json
   let authObj = { version: 1, credential_pool: {} };
@@ -405,6 +406,7 @@ export async function removeCredentialValue(workspaceRoot, providerId, key = "")
     configContent = await fs.readFile(configPath, "utf8");
   } catch {}
   const configObj = parseConfigYaml(configContent);
+  if (!Array.isArray(configObj.custom_providers)) configObj.custom_providers = [];
 
   // Read auth.json
   let authObj = { version: 1, credential_pool: {} };

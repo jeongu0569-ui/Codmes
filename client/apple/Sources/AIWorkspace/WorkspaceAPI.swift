@@ -9,7 +9,11 @@ enum WorkspaceAPIError: Error, LocalizedError {
         case .invalidURL:
             "Invalid workspace server URL."
         case let .badStatus(status, body):
-            "Workspace server returned \(status): \(body)"
+            if status == 401 {
+                "Workspace server rejected the request. Check the server token in Settings."
+            } else {
+                "Workspace server returned \(status): \(body)"
+            }
         }
     }
 }
@@ -160,12 +164,13 @@ struct WorkspaceAPI {
         return try await post("/api/search", body: body)
     }
 
-    func agentTasks(type: String = "code", limit: Int = 50) async throws -> [AgentTaskSummary] {
+    func agentTasks(type: String? = "code", limit: Int = 50) async throws -> [AgentTaskSummary] {
         var components = try components("/api/agent/tasks")
-        components.queryItems = [
-            URLQueryItem(name: "type", value: type),
-            URLQueryItem(name: "limit", value: String(limit))
-        ]
+        var queryItems = [URLQueryItem(name: "limit", value: String(limit))]
+        if let type, !type.isEmpty {
+            queryItems.insert(URLQueryItem(name: "type", value: type), at: 0)
+        }
+        components.queryItems = queryItems
         let response: AgentTasksResponse = try await request(components)
         return response.tasks
     }
@@ -186,7 +191,24 @@ struct WorkspaceAPI {
         return response.approvals
     }
 
-    func respondToApproval(id: String, approved: Bool, runChecksAfterApply: Bool = false, checksApproved: Bool = false, reason: String? = nil) async throws -> WorkspaceApproval {
+    func resumeAgentTask(id: String) async throws -> AgentTaskActionResponse {
+        var components = try components("/api/agent/tasks/\(id)/resume")
+        components.percentEncodedPath = "/api/agent/tasks/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)/resume"
+        return try await request(components, method: "POST", body: EmptyBody())
+    }
+
+    func cancelAgentTask(id: String, reason: String? = nil) async throws -> AgentTaskActionResponse {
+        var components = try components("/api/agent/tasks/\(id)/cancel")
+        components.percentEncodedPath = "/api/agent/tasks/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)/cancel"
+
+        struct CancelBody: Encodable {
+            let reason: String?
+        }
+
+        return try await request(components, method: "POST", body: CancelBody(reason: reason))
+    }
+
+    func respondToApproval(id: String, approved: Bool, runChecksAfterApply: Bool = false, checksApproved: Bool = false, reason: String? = nil) async throws -> WorkspaceApprovalRespondResponse {
         var components = try components("/api/agent/approvals/\(id)/respond")
         components.percentEncodedPath = "/api/agent/approvals/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)/respond"
         
@@ -343,6 +365,8 @@ private struct CodeTaskCreateBody: Encodable {
 private struct ApprovedBody: Encodable {
     let approved: Bool
 }
+
+private struct EmptyBody: Encodable {}
 
 private struct PatchApplyBody: Encodable {
     let approved: Bool

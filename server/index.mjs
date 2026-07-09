@@ -25,7 +25,16 @@ import { buildIndex, readFileMetadata, readIndex } from "./lib/file-index.mjs";
 import { renderCodeDocument, renderMarkdownDocument } from "./lib/render-service.mjs";
 import { searchStatus, searchWorkspace } from "./lib/search-service.mjs";
 import { readAuditSummary } from "./lib/runtime/audit-log.mjs";
-import { readRuntimeConfig, writeRuntimeConfig } from "./lib/runtime/config-store.mjs";
+import {
+  BUILTIN_PROVIDERS,
+  listCredentialStatus,
+  listProviderRegistry,
+  readRuntimeConfig,
+  removeCredentialValue,
+  setCredentialValue,
+  setDefaultModel,
+  writeRuntimeConfig
+} from "./lib/runtime/config-store.mjs";
 import { readSecurityConfig, writeSecurityConfig } from "./lib/runtime/security-policy.mjs";
 import { enableSkill, listSkills, readSkill } from "./lib/runtime/skill-registry.mjs";
 
@@ -330,6 +339,33 @@ async function handleRequest(req, res) {
     }
     if (req.method === "GET" && url.pathname === "/api/doctor") {
       return sendJson(res, await doctorStatus());
+    }
+    if (req.method === "GET" && url.pathname === "/api/providers") {
+      return sendJson(res, await listRuntimeProviders());
+    }
+    if (req.method === "POST" && url.pathname === "/api/providers/custom") {
+      return sendJson(res, await createCustomProvider(req), 201);
+    }
+    const customProviderDeleteMatch = url.pathname.match(/^\/api\/providers\/custom\/([^/]+)$/);
+    if (customProviderDeleteMatch && req.method === "DELETE") {
+      return sendJson(res, await deleteCustomProvider(customProviderDeleteMatch[1]));
+    }
+    if (req.method === "GET" && url.pathname === "/api/auth") {
+      return sendJson(res, await listRuntimeAuth());
+    }
+    const authProviderMatch = url.pathname.match(/^\/api\/auth\/([^/]+)$/);
+    if (authProviderMatch && req.method === "POST") {
+      return sendJson(res, await updateProviderAuth(authProviderMatch[1], req));
+    }
+    const authDeleteMatch = url.pathname.match(/^\/api\/auth\/([^/]+)\/([^/]+)$/);
+    if (authDeleteMatch && req.method === "DELETE") {
+      return sendJson(res, await deleteProviderAuth(authDeleteMatch[1], authDeleteMatch[2]));
+    }
+    if (req.method === "GET" && url.pathname === "/api/model/default") {
+      return sendJson(res, await readDefaultModel());
+    }
+    if (req.method === "POST" && url.pathname === "/api/model/default") {
+      return sendJson(res, await updateDefaultModel(req));
     }
     if (req.method === "GET" && url.pathname === "/api/agent/tasks") {
       return sendJson(res, await listAgentTasks(url));
@@ -852,6 +888,133 @@ async function doctorStatus() {
     audit,
     search: searchStatus(WORKSPACE_ROOT)
   };
+}
+
+async function listRuntimeProviders() {
+  const [providers, credentials, config] = await Promise.all([
+    Promise.resolve(listProviderRegistry()),
+    listCredentialStatus(WORKSPACE_ROOT),
+    readRuntimeConfig(WORKSPACE_ROOT)
+  ]);
+  const credentialMap = new Map(credentials.map((item) => [item.provider, item]));
+  return {
+    providers: providers.map((provider) => ({
+      ...provider,
+      configured: Boolean(credentialMap.get(provider.id)?.configured),
+      storedKeys: credentialMap.get(provider.id)?.storedKeys || [],
+      envKeys: credentialMap.get(provider.id)?.envKeys || [],
+      isDefault: config.defaultModel?.provider === provider.id
+    }))
+  };
+}
+
+async function listRuntimeAuth() {
+  return {
+    providers: await listCredentialStatus(WORKSPACE_ROOT)
+  };
+}
+
+async function readDefaultModel() {
+  const config = await readRuntimeConfig(WORKSPACE_ROOT);
+  return {
+    defaultModel: config.defaultModel || null
+  };
+}
+
+async function updateDefaultModel(req) {
+  const body = await readJsonBody(req);
+  const provider = String(body.provider || "").trim();
+  const model = String(body.model || body.name || "").trim();
+  if (!provider || !model) {
+    throw Object.assign(new Error("provider and model are required."), { status: 400 });
+  }
+  const defaultModel = await setDefaultModel(WORKSPACE_ROOT, provider, model);
+  return { ok: true, defaultModel };
+}
+
+async function updateProviderAuth(providerParam, req) {
+  const providerId = decodeURIComponent(providerParam);
+  const body = await readJsonBody(req);
+  const provider = BUILTIN_PROVIDERS.find((item) => item.id === providerId);
+  if (!provider) {
+    throw Object.assign(new Error(`Unknown provider: ${providerId}`), { status: 400 });
+  }
+
+  const rawValues = body.values && typeof body.values === "object" ? body.values : body;
+  const entries = [];
+  for (const [rawKey, rawValue] of Object.entries(rawValues || {})) {
+    if (["values", "provider"].includes(rawKey)) continue;
+    if (rawValue === undefined || rawValue === null) continue;
+    const value = String(rawValue);
+    if (!value && body.removeEmpty === true) continue;
+    entries.push([providerCredentialKey(provider, rawKey), value]);
+  }
+
+  if (entries.length === 0 && body.key) {
+    entries.push([providerCredentialKey(provider, body.key), String(body.value || "")]);
+  }
+  if (entries.length === 0) {
+    throw Object.assign(new Error("No credential values provided."), { status: 400 });
+  }
+
+  const stored = [];
+  for (const [key, value] of entries) {
+    stored.push(await setCredentialValue(WORKSPACE_ROOT, providerId, key, value));
+  }
+  return { ok: true, provider: providerId, stored };
+}
+
+async function deleteProviderAuth(providerParam, keyParam) {
+  const providerId = decodeURIComponent(providerParam);
+  const provider = BUILTIN_PROVIDERS.find((item) => item.id === providerId);
+  if (!provider) {
+    throw Object.assign(new Error(`Unknown provider: ${providerId}`), { status: 400 });
+  }
+  const key = providerCredentialKey(provider, decodeURIComponent(keyParam));
+  return await removeCredentialValue(WORKSPACE_ROOT, providerId, key);
+}
+
+async function createCustomProvider(req) {
+  const body = await readJsonBody(req);
+  const id = String(body.id || "custom").trim();
+  if (id !== "custom") {
+    throw Object.assign(new Error("This preview build supports the built-in custom provider id only."), { status: 400 });
+  }
+  const stored = [];
+  if (body.baseUrl) {
+    stored.push(await setCredentialValue(WORKSPACE_ROOT, "custom", "AIW_CUSTOM_BASE_URL", String(body.baseUrl)));
+  }
+  if (body.apiKey || body.token) {
+    stored.push(await setCredentialValue(WORKSPACE_ROOT, "custom", "AIW_CUSTOM_API_KEY", String(body.apiKey || body.token)));
+  }
+  if (body.model) {
+    await setDefaultModel(WORKSPACE_ROOT, "custom", String(body.model));
+  }
+  return { ok: true, provider: { id: "custom", name: body.name || "Custom OpenAI-compatible" }, stored };
+}
+
+async function deleteCustomProvider(idParam) {
+  const id = decodeURIComponent(idParam);
+  if (id !== "custom") {
+    throw Object.assign(new Error("This preview build supports the built-in custom provider id only."), { status: 404 });
+  }
+  return await removeCredentialValue(WORKSPACE_ROOT, "custom");
+}
+
+function providerCredentialKey(provider, rawKey) {
+  const key = String(rawKey || "").trim();
+  const normalized = key.toLowerCase();
+  if (provider.id === "custom") {
+    if (["baseurl", "base_url", "url", "endpoint"].includes(normalized)) return "AIW_CUSTOM_BASE_URL";
+    if (["apikey", "api_key", "token", "access_token", "key"].includes(normalized)) return "AIW_CUSTOM_API_KEY";
+  }
+  if (["baseurl", "base_url", "url", "endpoint"].includes(normalized) && provider.baseUrlEnv) {
+    return provider.baseUrlEnv;
+  }
+  if (["apikey", "api_key", "token", "access_token", "key"].includes(normalized)) {
+    return provider.env?.[0] || key;
+  }
+  return key;
 }
 
 function safeMcpName(value) {

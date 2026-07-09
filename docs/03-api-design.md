@@ -80,9 +80,33 @@ Large files should use `/api/raw` or future search/index APIs.
 Returns server-side file metadata, including kind, size, extension, modified
 time, and hash when the file is small enough to hash cheaply.
 
+For PDFs, the response also includes a `pdf` object with first-pass metadata:
+page-count estimate, extracted-text cache status, cache path, text length, and
+`ocr: "planned"`.
+
 ### `GET /api/raw?path=Documents/a.pdf`
 
 Streams a raw file. This is useful for PDFs and images.
+
+### Provider/Auth Settings
+
+Apple and other clients can update runtime settings without shelling out to the
+CLI:
+
+```text
+GET    /api/providers
+GET    /api/models
+GET    /api/auth
+POST   /api/auth/:provider
+DELETE /api/auth/:provider/:key
+GET    /api/model/default
+POST   /api/model/default
+POST   /api/providers/custom
+DELETE /api/providers/custom/:id
+```
+
+`POST /api/auth/:provider` accepts friendly keys like `apiKey`, `token`, and
+`baseUrl`; the server maps them to the provider registry storage keys.
 
 ### `PUT /api/file?path=Notes/Work/a.md`
 

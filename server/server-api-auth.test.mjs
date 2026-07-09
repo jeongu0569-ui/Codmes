@@ -69,6 +69,44 @@ test("workspace server protects APIs with AIW_SERVER_TOKEN and exposes managemen
     assert.equal(doctor.ok, true);
     assert.equal(doctor.authRequired, true);
     assert.equal(doctor.audit.path, ".ai-workspace/audit/audit.jsonl");
+
+    const providers = await fetchJson(`${baseUrl}/api/providers`, { token });
+    assert.ok(providers.providers.some((provider) => provider.id === "custom"));
+
+    const storedAuth = await fetchJson(`${baseUrl}/api/auth/custom`, {
+      token,
+      method: "POST",
+      body: {
+        baseUrl: "http://127.0.0.1:9999/v1",
+        apiKey: "local-test-key"
+      }
+    });
+    assert.equal(storedAuth.ok, true);
+    assert.equal(storedAuth.provider, "custom");
+
+    const authStatus = await fetchJson(`${baseUrl}/api/auth`, { token });
+    const customAuth = authStatus.providers.find((provider) => provider.provider === "custom");
+    assert.equal(customAuth.configured, true);
+
+    const defaultModel = await fetchJson(`${baseUrl}/api/model/default`, {
+      token,
+      method: "POST",
+      body: { provider: "custom", model: "demo-model" }
+    });
+    assert.equal(defaultModel.defaultModel.provider, "custom");
+    assert.equal(defaultModel.defaultModel.model, "demo-model");
+
+    const readDefault = await fetchJson(`${baseUrl}/api/model/default`, { token });
+    assert.equal(readDefault.defaultModel.id, "custom:demo-model");
+
+    const models = await fetchJson(`${baseUrl}/api/models`, { token });
+    assert.ok(models.models.some((model) => model.id === "custom:demo-model"));
+
+    const removedAuth = await fetchJson(`${baseUrl}/api/auth/custom/apiKey`, {
+      token,
+      method: "DELETE"
+    });
+    assert.equal(removedAuth.removed, true);
   } finally {
     server.kill("SIGTERM");
     await fs.rm(workspaceRoot, { recursive: true, force: true });

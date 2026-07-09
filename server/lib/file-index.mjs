@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
 import { fileKind, resolveWorkspacePath } from "./path-utils.mjs";
+import { getPdfTextMetadata } from "./pdf-text.mjs";
 
 const MAX_HASH_BYTES = 20 * 1024 * 1024;
 
@@ -90,7 +91,7 @@ async function visitWorkspace(workspaceRoot, absolutePath, items) {
 async function metadataForPath(workspaceRoot, absolutePath, stat) {
   const relativePath = path.relative(workspaceRoot, absolutePath).replace(/\\/g, "/");
   const kind = fileKind(relativePath);
-  return {
+  const metadata = {
     path: relativePath,
     kind,
     extension: path.extname(relativePath).toLowerCase(),
@@ -100,6 +101,16 @@ async function metadataForPath(workspaceRoot, absolutePath, stat) {
     indexedAt: new Date().toISOString(),
     indexStatus: "indexed"
   };
+  if (kind === "pdf") {
+    metadata.pdf = await getPdfTextMetadata(workspaceRoot, absolutePath, relativePath, stat).catch((error) => ({
+      type: "pdf",
+      textCached: false,
+      textLength: 0,
+      error: error?.message || "PDF metadata unavailable.",
+      ocr: "planned"
+    }));
+  }
+  return metadata;
 }
 
 async function sha256File(filePath) {

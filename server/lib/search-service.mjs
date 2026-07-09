@@ -1,12 +1,13 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileKind, resolveWorkspacePath } from "./path-utils.mjs";
+import { extractAndCachePdfText } from "./pdf-text.mjs";
 
 const DEFAULT_MAX_RESULTS = 20;
 const DEFAULT_MAX_SCAN_FILES = 1000;
 const DEFAULT_MAX_FILE_BYTES = 2 * 1024 * 1024;
 
-const SEARCHABLE_KINDS = new Set(["markdown", "code", "file"]);
+const SEARCHABLE_KINDS = new Set(["markdown", "code", "file", "pdf"]);
 const SEARCHABLE_EXTENSIONS = new Set([
   ".md",
   ".markdown",
@@ -32,7 +33,8 @@ const SEARCHABLE_EXTENSIONS = new Set([
   ".html",
   ".css",
   ".sh",
-  ".ps1"
+  ".ps1",
+  ".pdf"
 ]);
 
 export function searchStatus(workspaceRoot) {
@@ -60,7 +62,7 @@ export async function searchWorkspace(workspaceRoot, request = {}) {
   const results = [];
   for (const file of candidates) {
     if (results.length >= maxResults) break;
-    const hit = await searchFile(file, query);
+    const hit = await searchFile(workspaceRoot, file, query);
     if (hit) results.push(hit);
   }
   return {
@@ -104,7 +106,7 @@ async function listSearchableFiles(workspaceRoot, relativePath, options) {
   return results;
 }
 
-async function searchFile(file, query) {
+async function searchFile(workspaceRoot, file, query) {
   const needle = query.toLocaleLowerCase();
   const filenameIndex = file.path.toLocaleLowerCase().indexOf(needle);
   if (filenameIndex >= 0) {
@@ -119,10 +121,15 @@ async function searchFile(file, query) {
   }
   let text;
   try {
-    text = await fs.readFile(file.absolutePath, "utf8");
+    if (file.kind === "pdf") {
+      text = await extractAndCachePdfText(workspaceRoot, file.absolutePath, file.path);
+    } else {
+      text = await fs.readFile(file.absolutePath, "utf8");
+    }
   } catch {
     return null;
   }
+  if (!text) return null;
   const haystack = text.toLocaleLowerCase();
   const index = haystack.indexOf(needle);
   if (index < 0) return null;
