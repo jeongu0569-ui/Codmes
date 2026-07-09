@@ -719,34 +719,34 @@ async function renderCode(req) {
 }
 
 async function handleHermesProxy(req, res, url) {
-  if (url.pathname === "/api/hermes/models" && req.method === "GET") {
-    return sendJson(res, await hermesJson("/api/model/options"));
+  const engine = createAgentEngine();
+  try {
+    if (url.pathname === "/api/hermes/models" && req.method === "GET") {
+      return sendJson(res, await engine.listModels());
+    }
+    if (url.pathname === "/api/hermes/sessions" && req.method === "GET") {
+      return sendJson(res, normalizeHermesSessionsResponse(await engine.listSessions(200)));
+    }
+    const messagesMatch = url.pathname.match(/^\/api\/hermes\/sessions\/([^/]+)\/messages$/);
+    if (messagesMatch && req.method === "GET") {
+      const sessionId = decodeURIComponent(messagesMatch[1]);
+      return sendJson(res, normalizeHermesSessionMessagesResponse(
+        await engine.getSessionMessages(sessionId)
+      ));
+    }
+    const sessionMatch = url.pathname.match(/^\/api\/hermes\/sessions\/([^/]+)$/);
+    if (sessionMatch && req.method === "DELETE") {
+      const sessionId = decodeURIComponent(sessionMatch[1]);
+      return sendJson(res, await engine.deleteSession(sessionId));
+    }
+    if (url.pathname === "/api/hermes/sessions" && req.method === "POST") {
+      const body = await readJsonBody(req);
+      return sendJson(res, await engine.createSession(body), 201);
+    }
+    throw Object.assign(new Error("Unknown Hermes proxy endpoint."), { status: 404 });
+  } finally {
+    engine.close();
   }
-  if (url.pathname === "/api/hermes/sessions" && req.method === "GET") {
-    return sendJson(res, normalizeHermesSessionsResponse(await hermesJson("/api/sessions?limit=200")));
-  }
-  const messagesMatch = url.pathname.match(/^\/api\/hermes\/sessions\/([^/]+)\/messages$/);
-  if (messagesMatch && req.method === "GET") {
-    const sessionId = decodeURIComponent(messagesMatch[1]);
-    return sendJson(res, normalizeHermesSessionMessagesResponse(
-      await hermesJson(`/api/sessions/${encodeURIComponent(sessionId)}/messages`)
-    ));
-  }
-  const sessionMatch = url.pathname.match(/^\/api\/hermes\/sessions\/([^/]+)$/);
-  if (sessionMatch && req.method === "DELETE") {
-    const sessionId = decodeURIComponent(sessionMatch[1]);
-    return sendJson(res, await hermesJson(`/api/sessions/${encodeURIComponent(sessionId)}`, {
-      method: "DELETE"
-    }));
-  }
-  if (url.pathname === "/api/hermes/sessions" && req.method === "POST") {
-    const body = await readJsonBody(req);
-    return sendJson(res, await hermesJson("/api/sessions", {
-      method: "POST",
-      body: JSON.stringify(body)
-    }), 201);
-  }
-  throw Object.assign(new Error("Unknown Hermes proxy endpoint."), { status: 404 });
 }
 
 function normalizeHermesSessionsResponse(value) {

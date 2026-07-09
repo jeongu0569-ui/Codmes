@@ -2,12 +2,18 @@ import fs from "node:fs/promises";
 import { EventEmitter } from "node:events";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
-import { HermesLiveClient } from "./hermes-live.mjs";
+import { HermesLiveClient } from "./hermes-compat.mjs";
 import { buildWorkspaceContext } from "./context-router.mjs";
 import { CodeAgentRuntime } from "./code-agent-runtime.mjs";
+import { ChatRuntime } from "./chat-runtime.mjs";
+import { ModelRuntime } from "./model-runtime.mjs";
+import { SessionRuntime } from "./session-runtime.mjs";
 
 export function createWorkspaceAgentEngine(config) {
-  return new WorkspaceAgentEngine(config, new HermesAgentAdapter(config.hermes));
+  const compat = config.hermes?.hermesServerUrl 
+    ? new HermesLiveClient(config.hermes) 
+    : null;
+  return new WorkspaceAgentEngine(config, compat);
 }
 
 export async function ensureAgentWorkspaceState(workspaceRoot) {
@@ -15,10 +21,15 @@ export async function ensureAgentWorkspaceState(workspaceRoot) {
 }
 
 export class WorkspaceAgentEngine extends EventEmitter {
-  constructor(config, adapter) {
+  constructor(config, compat) {
     super();
     this.config = config;
-    this.adapter = adapter;
+    this.compat = compat;
+    
+    this.chatRuntime = new ChatRuntime({ hermesCompat: compat });
+    this.modelRuntime = new ModelRuntime({ hermesCompat: compat });
+    this.sessionRuntime = new SessionRuntime({ hermesCompat: compat });
+    
     this.state = new WorkspaceAgentStateStore(config.workspaceRoot);
     this.codeRuntime = new CodeAgentRuntime({
       workspaceRoot: config.workspaceRoot,
@@ -27,33 +38,35 @@ export class WorkspaceAgentEngine extends EventEmitter {
     });
     this.eventWrites = new Set();
 
-    this.adapter.on("event", (event) => {
-      const enriched = {
-        engine: "workspace-agent",
-        adapter: this.adapter.name,
-        ...event
-      };
-      this.trackEventWrite(this.state.recordAgentEvent(enriched));
-      this.emit("event", enriched);
-    });
-    this.adapter.on("close", () => this.emit("close"));
+    if (this.compat) {
+      this.compat.on("event", (event) => {
+        const enriched = {
+          engine: "workspace-agent",
+          adapter: this.compat.name || "hermes-live",
+          ...event
+        };
+        this.trackEventWrite(this.state.recordAgentEvent(enriched));
+        this.emit("event", enriched);
+      });
+      this.compat.on("close", () => this.emit("close"));
+    }
   }
 
   async connect() {
     await this.state.ensure();
-    await this.adapter.connect();
+    await this.chatRuntime.connect();
     await this.state.recordSessionEvent({
       type: "engine.connect",
-      adapter: this.adapter.name
+      adapter: this.compat?.name || "hermes-live"
     });
   }
 
   async createSession(params = {}) {
     await this.state.ensure();
-    const result = await this.adapter.createSession(params);
+    const result = await this.chatRuntime.createSession(params);
     await this.state.recordSessionEvent({
       type: "session.create",
-      adapter: this.adapter.name,
+      adapter: this.compat?.name || "hermes-live",
       sessionId: result.sessionId,
       runtimeSessionId: result.runtimeSessionId,
       provider: params.provider,
@@ -64,16 +77,16 @@ export class WorkspaceAgentEngine extends EventEmitter {
     return {
       ...result,
       engine: "workspace-agent",
-      adapter: this.adapter.name
+      adapter: this.compat?.name || "hermes-live"
     };
   }
 
   async resumeSession(sessionId) {
     await this.state.ensure();
-    const runtimeSessionId = await this.adapter.resumeSession(sessionId);
+    const runtimeSessionId = await this.chatRuntime.resumeSession(sessionId);
     await this.state.recordSessionEvent({
       type: "session.resume",
-      adapter: this.adapter.name,
+      adapter: this.compat?.name || "hermes-live",
       sessionId,
       runtimeSessionId
     });
@@ -85,7 +98,7 @@ export class WorkspaceAgentEngine extends EventEmitter {
     const context = await this.resolveContext(params);
     const task = await this.state.startTask({
       type: params.taskType || "chat",
-      adapter: this.adapter.name,
+      adapter: this.compat?.name || "hermes-live",
       sessionId: params.sessionId,
       message: params.message,
       contextRequest: params.contextRequest,
@@ -95,7 +108,7 @@ export class WorkspaceAgentEngine extends EventEmitter {
       reasoningEffort: params.reasoningEffort
     });
     try {
-      const result = await this.adapter.submitPrompt({
+      const result = await this.chatRuntime.submitPrompt({
         ...params,
         context,
         taskId: task.id
@@ -108,7 +121,7 @@ export class WorkspaceAgentEngine extends EventEmitter {
         ...result,
         taskId: task.id,
         engine: "workspace-agent",
-        adapter: this.adapter.name
+        adapter: this.compat?.name || "hermes-live"
       };
     } catch (error) {
       await this.state.finishTask(task.id, {
@@ -121,10 +134,10 @@ export class WorkspaceAgentEngine extends EventEmitter {
 
   async respondToApproval(params = {}) {
     await this.state.ensure();
-    const result = await this.adapter.respondToApproval(params);
+    const result = await this.chatRuntime.respondToApproval(params);
     await this.state.recordSessionEvent({
       type: "approval.respond",
-      adapter: this.adapter.name,
+      adapter: this.compat?.name || "hermes-live",
       sessionId: params.sessionId,
       approved: params.approved !== false,
       choice: result.choice
@@ -132,16 +145,16 @@ export class WorkspaceAgentEngine extends EventEmitter {
     return {
       ...result,
       engine: "workspace-agent",
-      adapter: this.adapter.name
+      adapter: this.compat?.name || "hermes-live"
     };
   }
 
   async setAccessMode(sessionId, accessMode) {
     await this.state.ensure();
-    await this.adapter.setAccessMode(sessionId, accessMode);
+    await this.chatRuntime.setAccessMode(sessionId, accessMode);
     await this.state.recordSessionEvent({
       type: "config.accessMode",
-      adapter: this.adapter.name,
+      adapter: this.compat?.name || "hermes-live",
       sessionId,
       accessMode
     });
@@ -149,10 +162,10 @@ export class WorkspaceAgentEngine extends EventEmitter {
 
   async setReasoning(sessionId, reasoningEffort) {
     await this.state.ensure();
-    await this.adapter.setReasoning(sessionId, reasoningEffort);
+    await this.chatRuntime.setReasoning(sessionId, reasoningEffort);
     await this.state.recordSessionEvent({
       type: "config.reasoning",
-      adapter: this.adapter.name,
+      adapter: this.compat?.name || "hermes-live",
       sessionId,
       reasoningEffort
     });
@@ -205,6 +218,22 @@ export class WorkspaceAgentEngine extends EventEmitter {
   async updateWorkspaceConfig(config) {
     await this.state.writeConfig(config);
     return { ok: true };
+  }
+
+  async listModels() {
+    return await this.modelRuntime.listModels();
+  }
+
+  async listSessions(limit) {
+    return await this.sessionRuntime.listSessions(limit);
+  }
+
+  async getSessionMessages(sessionId) {
+    return await this.sessionRuntime.getSessionMessages(sessionId);
+  }
+
+  async deleteSession(sessionId) {
+    return await this.sessionRuntime.deleteSession(sessionId);
   }
 
   async listTasks(params = {}) {
@@ -308,7 +337,7 @@ export class WorkspaceAgentEngine extends EventEmitter {
   }
 
   close() {
-    this.adapter.close();
+    this.chatRuntime.close();
   }
 
   async resolveContext(params) {
@@ -324,48 +353,6 @@ export class WorkspaceAgentEngine extends EventEmitter {
       .catch(() => {})
       .finally(() => this.eventWrites.delete(tracked));
     this.eventWrites.add(tracked);
-  }
-}
-
-export class HermesAgentAdapter extends EventEmitter {
-  constructor(config) {
-    super();
-    this.name = "hermes-live";
-    this.client = new HermesLiveClient(config);
-    this.client.on("event", (event) => this.emit("event", event));
-    this.client.on("close", () => this.emit("close"));
-  }
-
-  async connect() {
-    return await this.client.connect();
-  }
-
-  async createSession(params) {
-    return await this.client.createSession(params);
-  }
-
-  async resumeSession(sessionId) {
-    return await this.client.resumeSession(sessionId);
-  }
-
-  async submitPrompt(params) {
-    return await this.client.submitPrompt(params);
-  }
-
-  async respondToApproval(params) {
-    return await this.client.respondToApproval(params);
-  }
-
-  async setAccessMode(sessionId, accessMode) {
-    return await this.client.setAccessMode(sessionId, accessMode);
-  }
-
-  async setReasoning(sessionId, reasoningEffort) {
-    return await this.client.setReasoning(sessionId, reasoningEffort);
-  }
-
-  close() {
-    this.client.close();
   }
 }
 
