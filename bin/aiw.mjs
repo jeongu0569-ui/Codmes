@@ -69,13 +69,19 @@ function printHelp() {
 Usage:
   aiw serve [--host 0.0.0.0] [--port 8787] [--root PATH] [--hermes URL]
   aiw status [--url URL] [--json]
-  aiw model [show|set] [...]
-  aiw provider [list|set] [...]
-  aiw auth [list|add|remove] [...]
+  aiw model [show|list|set-default] [...]
+  aiw provider [list|add|update|remove] [...]
+  aiw auth [list|set|add|remove] [...]
   aiw approvals [list|show|approve|reject] [...]
   aiw tasks [list|show] [...]
   aiw code <list|create|show|patch|apply|reject|check> [...]
   aiw index <status|search> [...]
+
+Quick start (standalone, no Hermes):
+  aiw serve
+  aiw provider add ollama --type openai-compatible --base-url http://127.0.0.1:11434/v1 --no-api-key
+  aiw model set-default ollama qwen2.5-coder:latest --provider ollama
+  aiw auth set openai --api-key sk-...
 
 Aliases:
   ai-workspace is the long-form alias for aiw.
@@ -83,7 +89,7 @@ Aliases:
 Environment:
   AIW_SERVER_URL          Workspace Server URL for API commands
   HERMES_WORKSPACE_ROOT   Workspace root used by aiw serve/tasks
-  HERMES_BIN              Hermes executable for model/provider/auth wrappers
+  HERMES_SERVER_URL       Optional Hermes server URL for legacy compat mode
 `);
 }
 
@@ -885,14 +891,22 @@ async function runModel(args) {
 }
 
 async function runProvider(args) {
-  const options = parseOptions(args, { boolean: ["help", "json"] });
+  const options = parseOptions(args, { boolean: ["help", "json", "no-api-key"] });
   const [subcommand = "list", providerName] = options._;
 
   if (options.help || subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
     console.log(`Usage:
-  aiw provider [list] [--url URL] [--json]
-  aiw provider set <providerName> --provider-url <url> [--url URL]
-  aiw provider remove <providerName> [--url URL]
+  aiw provider list [--url URL] [--json]
+  aiw provider add <name> --type openai-compatible --base-url <url> [--no-api-key] [--url URL]
+  aiw provider update <name> [--base-url <url>] [--type <type>] [--no-api-key] [--url URL]
+  aiw provider remove <name> [--url URL]
+
+Examples:
+  aiw provider add ollama --type openai-compatible --base-url http://127.0.0.1:11434/v1 --no-api-key
+  aiw provider add lmstudio --type openai-compatible --base-url http://127.0.0.1:1234/v1 --no-api-key
+  aiw provider add openai --type openai-compatible --base-url https://api.openai.com/v1
+  aiw provider update openai --base-url https://api.openai.com/v1
+  aiw provider remove ollama
 `);
     return;
   }
@@ -906,39 +920,65 @@ async function runProvider(args) {
       return;
     }
     if (!providers.length) {
-      console.log("No custom providers configured.");
+      console.log("No providers configured. Use 'aiw provider add' to add one.");
       return;
     }
     const rows = providers.map((item) => ({
       provider: item.id,
       type: item.type || "openai-compatible",
-      url: item.baseUrl || ""
+      url: item.baseUrl || "",
+      apiKey: item.apiKeyRequired === false ? "not required" : "required"
     }));
     printTable(rows, [
-      ["provider", "PROVIDER", 20],
+      ["provider", "PROVIDER", 18],
       ["type", "TYPE", 20],
-      ["url", "BASE URL", 38]
+      ["url", "BASE URL", 36],
+      ["apiKey", "API KEY", 14]
     ]);
-  } else if (subcommand === "set" || (subcommand && subcommand !== "remove")) {
-    const targetProvider = subcommand === "set" ? providerName : subcommand;
-    const providerUrlValue = stringOption(options["provider-url"]) || stringOption(options.providerUrl);
+  } else if (subcommand === "add") {
+    const name = providerName;
+    const providerBaseUrl = stringOption(options["base-url"]) || stringOption(options["base_url"]) || stringOption(options.baseUrl);
+    const type = stringOption(options.type) || "openai-compatible";
+    const apiKeyRequired = options["no-api-key"] ? false : true;
+    if (!name) throw new Error("Usage: aiw provider add <name> --base-url <url>");
+    if (!providerBaseUrl) throw new Error("Usage: aiw provider add <name> --base-url <url>");
+    await requestJson(baseUrl, "/api/workspace/providers", {
+      method: "POST",
+      body: { id: name, type, baseUrl: providerBaseUrl, apiKeyRequired }
+    });
+    console.log(`Provider '${name}' added (${type}, ${providerBaseUrl}, apiKey: ${apiKeyRequired ? "required" : "not required"})`);
+  } else if (subcommand === "update") {
+    const name = providerName;
+    if (!name) throw new Error("Usage: aiw provider update <name> [--base-url <url>] [--type <type>]");
+    const patch = {};
+    const providerBaseUrl = stringOption(options["base-url"]) || stringOption(options["base_url"]) || stringOption(options.baseUrl);
+    if (providerBaseUrl) patch.baseUrl = providerBaseUrl;
+    if (options.type) patch.type = stringOption(options.type);
+    if (options["no-api-key"]) patch.apiKeyRequired = false;
+    await requestJson(baseUrl, `/api/workspace/providers/${encodeURIComponent(name)}`, {
+      method: "PATCH",
+      body: patch
+    });
+    console.log(`Provider '${name}' updated.`);
+  } else if (subcommand === "remove") {
+    const name = providerName;
+    if (!name) throw new Error("Usage: aiw provider remove <name>");
+    await requestJson(baseUrl, `/api/workspace/providers/${encodeURIComponent(name)}`, {
+      method: "DELETE"
+    });
+    console.log(`Provider '${name}' removed.`);
+  } else {
+    // Legacy: treat unknown subcommand as provider name to set URL
+    const targetProvider = subcommand;
+    const providerUrlValue = stringOption(options["provider-url"]) || stringOption(options.providerUrl) || stringOption(options["base-url"]);
     if (!targetProvider || !providerUrlValue) {
-      throw new Error("Usage: aiw provider set <providerName> --provider-url <url>");
+      throw new Error("Unknown provider subcommand. Run 'aiw provider help' for usage.");
     }
-
-    await requestJson(baseUrl, `/api/workspace/providers`, {
+    await requestJson(baseUrl, "/api/workspace/providers", {
       method: "POST",
       body: { id: targetProvider, baseUrl: providerUrlValue, type: "openai-compatible" }
     });
-    console.log(`Set provider '${targetProvider}' API URL to: ${providerUrlValue}`);
-  } else if (subcommand === "remove") {
-    if (!providerName) throw new Error("Usage: aiw provider remove <providerName>");
-    await requestJson(baseUrl, `/api/workspace/providers/${encodeURIComponent(providerName)}`, {
-      method: "DELETE"
-    });
-    console.log(`Successfully removed provider: ${providerName}`);
-  } else {
-    throw new Error(`Unknown provider subcommand '${subcommand}'.`);
+    console.log(`Set provider '${targetProvider}' base URL to: ${providerUrlValue}`);
   }
 }
 
@@ -948,9 +988,16 @@ async function runAuth(args) {
 
   if (options.help || subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
     console.log(`Usage:
-  aiw auth [list] [--url URL] [--json]
+  aiw auth list [--url URL] [--json]
   aiw auth add --provider <provider> --key <key> [--label <label>] [--url URL]
+  aiw auth set <provider> --api-key <key> [--url URL]     (alias for add)
   aiw auth remove <credentialId> [--url URL]
+
+Examples:
+  aiw auth set openai --api-key sk-...
+  aiw auth add anthropic --provider anthropic --key sk-ant-...
+  aiw auth list
+  aiw auth remove cred-abc123
 `);
     return;
   }
@@ -964,7 +1011,7 @@ async function runAuth(args) {
       return;
     }
     if (!credentials.length) {
-      console.log("No credentials registered.");
+      console.log("No credentials registered. Use 'aiw auth set <provider> --api-key <key>' to add one.");
       return;
     }
     printTable(credentials, [
@@ -973,29 +1020,44 @@ async function runAuth(args) {
       ["label", "LABEL", 24],
       ["apiKey", "API KEY", 22]
     ]);
-  } else if (subcommand === "add") {
-    const provider = stringOption(options.provider);
-    const key = stringOption(options.key) || stringOption(options.apiKey);
-    const label = stringOption(options.label) || "CLI Add";
-    if (!provider || !key) {
-      throw new Error("Usage: aiw auth add --provider <provider> --key <key> [--label <label>]");
+  } else if (subcommand === "add" || subcommand === "set") {
+    // 'set' form: aiw auth set <provider> --api-key <key>
+    // 'add' form: aiw auth add --provider <provider> --key <key>
+    let provider, key, label;
+    if (subcommand === "set") {
+      provider = targetId;
+      key = stringOption(options["api-key"]) || stringOption(options["apiKey"]) || stringOption(options.key);
+      label = stringOption(options.label) || "CLI Set";
+      if (!provider) throw new Error("Usage: aiw auth set <provider> --api-key <key>");
+      if (!key) throw new Error("Usage: aiw auth set <provider> --api-key <key>");
+    } else {
+      provider = stringOption(options.provider);
+      key = stringOption(options.key) || stringOption(options["api-key"]) || stringOption(options.apiKey);
+      label = stringOption(options.label) || "CLI Add";
+      if (!provider || !key) {
+        throw new Error("Usage: aiw auth add --provider <provider> --key <key>");
+      }
     }
 
     const result = await requestJson(baseUrl, "/api/workspace/credentials", {
       method: "POST",
       body: { provider, apiKey: key, label }
     });
-    console.log(`Successfully added credential: ${result.id} for provider '${provider}'`);
-  } else if (subcommand === "remove" || (subcommand && subcommand !== "list" && subcommand !== "add")) {
-    const idToRemove = subcommand === "remove" ? targetId : subcommand;
+    console.log(`Credential added: ${result.id} for provider '${provider}' (${result.apiKey})`);
+  } else if (subcommand === "remove") {
+    const idToRemove = targetId;
     if (!idToRemove) throw new Error("Usage: aiw auth remove <credentialId>");
-
     await requestJson(baseUrl, `/api/workspace/credentials/${encodeURIComponent(idToRemove)}`, {
       method: "DELETE"
     });
-    console.log(`Successfully removed credential: ${idToRemove}`);
+    console.log(`Credential removed: ${idToRemove}`);
   } else {
-    throw new Error(`Unknown auth subcommand '${subcommand}'.`);
+    // Legacy: bare credential ID as subcommand
+    const idToRemove = subcommand;
+    if (!idToRemove) throw new Error("Unknown auth subcommand. Run 'aiw auth help'.");
+    await requestJson(baseUrl, `/api/workspace/credentials/${encodeURIComponent(idToRemove)}`, {
+      method: "DELETE"
+    });
+    console.log(`Credential removed: ${idToRemove}`);
   }
 }
-

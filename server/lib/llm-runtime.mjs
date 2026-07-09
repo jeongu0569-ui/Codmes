@@ -3,7 +3,22 @@ export class LLMRuntime {
     this.chatRuntime = chatRuntime;
   }
 
+  /**
+   * Returns true when the underlying chat runtime has a configured backend
+   * (either WorkspaceChatBackend or HermesCompatChatBackend).
+   */
+  isAvailable() {
+    return Boolean(this.chatRuntime && this.chatRuntime.isAvailable());
+  }
+
   async generateCodePatch(params) {
+    if (!this.isAvailable()) {
+      throw Object.assign(
+        new Error("Automatic patch generation requires a configured chat backend. Set up a provider first."),
+        { status: 503, setupRequired: true }
+      );
+    }
+
     const prompt = `You are an expert software developer.
 Your task is to generate a code patch proposal (a list of find/replace changes) to fulfill the user's instruction based on the provided file contents.
 
@@ -48,80 +63,113 @@ ${(params.files || []).map(f => `--- File: ${f.path} ---\n${f.content}`).join("\
     }
 
     const reply = (res.reply || "").trim();
-    
-    let cleaned = reply;
-    if (cleaned.startsWith("```")) {
-      const lines = cleaned.split("\n");
-      if (lines[0].startsWith("```")) {
-        lines.shift();
-      }
-      if (lines.length > 0 && lines[lines.length - 1].startsWith("```")) {
-        lines.pop();
-      }
-      cleaned = lines.join("\n").trim();
-    }
+    return normalizePatchResponse(reply, params.instruction);
+  }
+}
 
-    let parsed;
+/**
+ * Normalize an LLM text response into a standard patch spec:
+ *   { summary: string, changes: [{ path, find, replace }] }
+ *
+ * Supported input shapes:
+ *  - { summary, changes: [{ path, find, replace }] }            (canonical)
+ *  - { summary, changes: [{ path, targetContent, replacementContent }] }
+ *  - { changes: [{ path, operation:"write", content }] }        (full-file write)
+ *  - [{ path, find, replace }]                                  (bare array)
+ */
+export function normalizePatchResponse(rawText, instruction = "") {
+  // Strip markdown fences
+  let cleaned = rawText.trim();
+  if (cleaned.startsWith("```")) {
+    const lines = cleaned.split("\n");
+    if (lines[0].startsWith("```")) lines.shift();
+    if (lines.length > 0 && lines[lines.length - 1].startsWith("```")) lines.pop();
+    cleaned = lines.join("\n").trim();
+  }
+
+  let parsed;
+  // Try direct parse
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch {
+    // Try extracting the largest JSON object or array from the text
     try {
-      parsed = JSON.parse(cleaned);
-    } catch {
+      const objStart = cleaned.indexOf("{");
+      const objEnd = cleaned.lastIndexOf("}") + 1;
+      if (objStart !== -1 && objEnd > objStart) {
+        parsed = JSON.parse(cleaned.slice(objStart, objEnd));
+      }
+    } catch {}
+    if (!parsed) {
       try {
-        const jsonStart = cleaned.indexOf("{");
-        const jsonEnd = cleaned.lastIndexOf("}") + 1;
-        if (jsonStart !== -1 && jsonEnd !== -1) {
-          parsed = JSON.parse(cleaned.slice(jsonStart, jsonEnd));
-        } else {
-          const arrStart = cleaned.indexOf("[");
-          const arrEnd = cleaned.lastIndexOf("]") + 1;
-          if (arrStart !== -1 && arrEnd !== -1) {
-            parsed = JSON.parse(cleaned.slice(arrStart, arrEnd));
-          }
+        const arrStart = cleaned.indexOf("[");
+        const arrEnd = cleaned.lastIndexOf("]") + 1;
+        if (arrStart !== -1 && arrEnd > arrStart) {
+          parsed = JSON.parse(cleaned.slice(arrStart, arrEnd));
         }
       } catch {}
     }
+  }
 
-    if (!parsed) {
-      throw new Error(`Failed to parse LLM patch response as JSON. Raw preview: ${reply.slice(0, 200)}`);
-    }
+  if (!parsed) {
+    throw new Error(
+      `Failed to parse LLM patch response as JSON. Raw preview: ${rawText.slice(0, 200)}`
+    );
+  }
 
-    let summary = `LLM-generated patch for instruction: ${params.instruction}`;
-    let rawChanges = [];
+  let summary = instruction
+    ? `LLM-generated patch for instruction: ${instruction}`
+    : "LLM-generated patch";
+  let rawChanges = [];
 
-    if (Array.isArray(parsed)) {
-      rawChanges = parsed;
-    } else if (parsed && typeof parsed === "object") {
-      summary = parsed.summary || summary;
-      rawChanges = Array.isArray(parsed.changes) ? parsed.changes : [];
-    }
+  if (Array.isArray(parsed)) {
+    rawChanges = parsed;
+  } else if (parsed && typeof parsed === "object") {
+    summary = parsed.summary || summary;
+    rawChanges = Array.isArray(parsed.changes) ? parsed.changes : [];
+  }
 
-    if (!rawChanges.length) {
-      throw new Error("LLM response did not contain any valid proposed patch changes.");
-    }
+  if (!rawChanges.length) {
+    throw new Error("LLM response did not contain any valid proposed patch changes.");
+  }
 
-    const normalizedChanges = rawChanges.map(c => {
-      const findVal = c.find !== undefined ? c.find
+  const normalizedChanges = rawChanges
+    .map(c => {
+      // find/replace canonical form
+      const findVal =
+        c.find !== undefined ? c.find
         : c.targetContent !== undefined ? c.targetContent
-          : c.old !== undefined ? c.old
-            : "";
-      const replaceVal = c.replace !== undefined ? c.replace
+        : c.old !== undefined ? c.old
+        : "";
+
+      let replaceVal =
+        c.replace !== undefined ? c.replace
         : c.replacementContent !== undefined ? c.replacementContent
-          : c.newContent !== undefined ? c.newContent
-            : c.new !== undefined ? c.new
-              : "";
+        : c.newContent !== undefined ? c.newContent
+        : c.new !== undefined ? c.new
+        : "";
+
+      // "write" operation: treat as full-file replacement (find="", replace=content)
+      if (c.operation === "write" && c.content !== undefined) {
+        return {
+          path: c.path || "",
+          find: "",
+          replace: c.content,
+          operation: "write"
+        };
+      }
+
       return {
         path: c.path || "",
         find: findVal,
         replace: replaceVal
       };
-    }).filter(c => c.path && (c.find !== "" || c.replace !== ""));
+    })
+    .filter(c => c.path && (c.find !== "" || c.replace !== "" || c.operation === "write"));
 
-    if (!normalizedChanges.length) {
-      throw new Error("LLM response changes normalization failed (empty or invalid changes).");
-    }
-
-    return {
-      summary,
-      changes: normalizedChanges
-    };
+  if (!normalizedChanges.length) {
+    throw new Error("LLM response changes normalization failed (empty or invalid changes).");
   }
+
+  return { summary, changes: normalizedChanges };
 }

@@ -368,7 +368,7 @@ export class CodeAgentRuntime {
 
     let patchSpec;
 
-    if (this.llmRuntime && this.llmRuntime.chatRuntime && this.llmRuntime.chatRuntime.isAvailable()) {
+    if (this.llmRuntime && this.llmRuntime.isAvailable()) {
       try {
         const promptParams = {
           instruction: task.message,
@@ -381,7 +381,10 @@ export class CodeAgentRuntime {
         throw Object.assign(new Error(`Failed to generate automatic patch: ${err.message}`), { status: 500 });
       }
     } else {
-      throw Object.assign(new Error("Automatic patch generation requires a configured LLM runtime."), { status: 503 });
+      throw Object.assign(
+        new Error("Automatic patch generation requires a configured LLM runtime. Set up a provider and model first."),
+        { status: 503, setupRequired: true }
+      );
     }
 
     if (!patchSpec || !Array.isArray(patchSpec.changes)) {
@@ -1430,6 +1433,17 @@ async function runGitFileCommand(cwd, command, params) {
     throw new Error(`Only 'git' commands are permitted. Parsed executable: ${parsed[0]}`);
   }
   const args = parsed.slice(1);
+
+  // Secondary per-argument metacharacter check (catches injection inside quoted args)
+  const argMetaRe = /[;&|`$\n\r<>\\]/;
+  for (const arg of args) {
+    if (argMetaRe.test(arg)) {
+      throw Object.assign(
+        new Error(`Security block: Argument contains forbidden characters: ${arg}`),
+        { status: 400 }
+      );
+    }
+  }
 
   try {
     const { stdout, stderr } = await execFileAsync("git", args, {

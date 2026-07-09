@@ -14,12 +14,15 @@ export class WorkspaceChatBackend extends ChatBackend {
 
   async createSession(params = {}) {
     const sessionId = `ws-sess-${Math.random().toString(36).substring(2, 9)}`;
+    const now = new Date().toISOString();
     const sessionObj = {
       id: sessionId,
       title: params.title || `Session ${new Date().toLocaleDateString()}`,
-      model: params.model || "gpt-4",
+      provider: params.provider || "",
+      model: params.model || "",
       preview: "",
-      updatedAt: new Date().toISOString(),
+      createdAt: now,
+      updatedAt: now,
       source: "workspace",
       runtime: "chat-runtime",
       isActive: true,

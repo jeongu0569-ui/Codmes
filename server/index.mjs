@@ -346,7 +346,50 @@ async function handleRequest(req, res) {
     if (req.method === "POST" && url.pathname === "/api/render/code") {
       return sendJson(res, await renderCode(req));
     }
-    if (url.pathname.startsWith("/api/hermes/") || url.pathname.startsWith("/api/workspace/models") || url.pathname.startsWith("/api/workspace/sessions")) {
+    // --- Workspace-owned session routes (no Hermes required) ---
+    const wsSessionsPath = "/api/workspace/sessions";
+    if (url.pathname === wsSessionsPath) {
+      const engine = createAgentEngine();
+      try {
+        if (req.method === "GET") {
+          return sendJson(res, normalizeHermesSessionsResponse(await engine.listSessions(200)));
+        }
+        if (req.method === "POST") {
+          const body = await readJsonBody(req);
+          return sendJson(res, await engine.createSession(body), 201);
+        }
+      } finally {
+        engine.close();
+      }
+    }
+    const wsSessionMsgMatch = url.pathname.match(/^\/api\/workspace\/sessions\/([^/]+)\/messages$/);
+    if (wsSessionMsgMatch) {
+      const engine = createAgentEngine();
+      try {
+        if (req.method === "GET") {
+          const sessionId = decodeURIComponent(wsSessionMsgMatch[1]);
+          return sendJson(res, normalizeHermesSessionMessagesResponse(
+            await engine.getSessionMessages(sessionId)
+          ));
+        }
+      } finally {
+        engine.close();
+      }
+    }
+    const wsSessionSingleMatch = url.pathname.match(/^\/api\/workspace\/sessions\/([^/]+)$/);
+    if (wsSessionSingleMatch) {
+      const engine = createAgentEngine();
+      try {
+        if (req.method === "DELETE") {
+          const sessionId = decodeURIComponent(wsSessionSingleMatch[1]);
+          return sendJson(res, await engine.deleteSession(sessionId));
+        }
+      } finally {
+        engine.close();
+      }
+    }
+    // --- Legacy Hermes proxy and workspace/models ---
+    if (url.pathname.startsWith("/api/hermes/") || url.pathname.startsWith("/api/workspace/models")) {
       return handleHermesProxy(req, res, url);
     }
 
