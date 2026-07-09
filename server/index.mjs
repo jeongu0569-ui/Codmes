@@ -132,6 +132,15 @@ async function handleLiveCommand(engine, message) {
   if (command === "approval.respond") {
     return await engine.respondToApproval(params);
   }
+  if (command === "approval.inbox.list") {
+    return await engine.listApprovals(params);
+  }
+  if (command === "approval.inbox.show") {
+    return await engine.readApproval(String(params.approvalId || params.id || ""));
+  }
+  if (command === "approval.inbox.respond") {
+    return await engine.respondToWorkspaceApproval(String(params.approvalId || params.id || ""), params);
+  }
   if (command === "config.accessMode") {
     await engine.setAccessMode(String(params.sessionId || ""), params.accessMode);
     return { ok: true };
@@ -253,6 +262,17 @@ async function handleRequest(req, res) {
     if (taskMatch && req.method === "GET") {
       return sendJson(res, await readAgentTask(taskMatch[1]));
     }
+    if (req.method === "GET" && url.pathname === "/api/agent/approvals") {
+      return sendJson(res, await listAgentApprovals(url));
+    }
+    const approvalMatch = url.pathname.match(/^\/api\/agent\/approvals\/([^/]+)$/);
+    if (approvalMatch && req.method === "GET") {
+      return sendJson(res, await readAgentApproval(approvalMatch[1]));
+    }
+    const approvalRespondMatch = url.pathname.match(/^\/api\/agent\/approvals\/([^/]+)\/respond$/);
+    if (approvalRespondMatch && req.method === "POST") {
+      return sendJson(res, await respondToAgentApproval(approvalRespondMatch[1], req));
+    }
     if (req.method === "POST" && url.pathname === "/api/agent/code-task") {
       return sendJson(res, await createCodeTask(req), 201);
     }
@@ -307,6 +327,7 @@ async function workspaceInfo() {
       adapters: ["hermes-live"],
       runtimes: ["code-agent"],
       taskEndpoint: "/api/agent/tasks",
+      approvalEndpoint: "/api/agent/approvals",
       codeTaskEndpoint: "/api/agent/code-task",
       codePatchEndpoint: "/api/agent/code-task/:id/patches",
       codePatchRejectEndpoint: "/api/agent/code-task/:id/patches/:proposalId/reject",
@@ -557,6 +578,39 @@ async function readAgentTask(taskId) {
   const engine = createAgentEngine();
   try {
     return await engine.readTask(decodeURIComponent(taskId));
+  } finally {
+    engine.close();
+  }
+}
+
+async function listAgentApprovals(url) {
+  const engine = createAgentEngine();
+  try {
+    return await engine.listApprovals({
+      status: url.searchParams.get("status") || "",
+      category: url.searchParams.get("category") || "",
+      taskId: url.searchParams.get("taskId") || "",
+      limit: url.searchParams.get("limit") || ""
+    });
+  } finally {
+    engine.close();
+  }
+}
+
+async function readAgentApproval(approvalId) {
+  const engine = createAgentEngine();
+  try {
+    return await engine.readApproval(decodeURIComponent(approvalId));
+  } finally {
+    engine.close();
+  }
+}
+
+async function respondToAgentApproval(approvalId, req) {
+  const body = await readJsonBody(req);
+  const engine = createAgentEngine();
+  try {
+    return await engine.respondToWorkspaceApproval(decodeURIComponent(approvalId), body);
   } finally {
     engine.close();
   }

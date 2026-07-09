@@ -163,6 +163,21 @@ aiw tasks --type code --limit 10
 aiw tasks show <taskId>
 ```
 
+승인 inbox 조회/처리:
+
+```bash
+aiw approvals
+aiw approvals show <approvalId>
+aiw approvals approve <approvalId>
+aiw approvals approve <approvalId> --check
+aiw approvals reject <approvalId> --reason "방향이 다름"
+```
+
+`aiw approvals approve`는 approval category에 맞는 서버-side 동작을 수행한다.
+예를 들어 `code.patch.apply` approval이면 patch를 적용하고,
+`code.checks.run` approval이면 서버에서 check 명령을 실행한다. `--check`는 patch
+승인 후 이어서 detected checks까지 실행하도록 요청한다.
+
 Code Agent Runtime 작업:
 
 ```bash

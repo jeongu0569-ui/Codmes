@@ -101,6 +101,8 @@ The Workspace Agent Engine writes its own minimal state under:
 ```text
 .ai-workspace/
 ├── sessions/events.jsonl
+├── approvals/events.jsonl
+├── approvals/approval-<timestamp>-<uuid>.json
 ├── tasks/events.jsonl
 ├── tasks/task-<timestamp>-<uuid>.json
 └── tool-logs/

@@ -110,6 +110,7 @@ The newer agent-engine state root is:
 ├── sessions/
 ├── tasks/
 ├── memory/
+├── approvals/
 ├── decisions/
 ├── tool-logs/
 ├── diffs/
@@ -124,6 +125,8 @@ Current implemented files:
 
 ```text
 .ai-workspace/sessions/events.jsonl
+.ai-workspace/approvals/events.jsonl
+.ai-workspace/approvals/approval-<timestamp>-<uuid>.json
 .ai-workspace/tasks/events.jsonl
 .ai-workspace/tasks/task-<timestamp>-<uuid>.json
 .ai-workspace/tool-logs/live-events.jsonl
@@ -157,6 +160,31 @@ proposed_changes
 files_changed
 task_memory
 ```
+
+Approval records currently store:
+
+```text
+id
+type: approval.request
+status: pending | approved | rejected
+category: code.patch.apply | code.checks.run | ...
+task_id
+proposal_id
+scope_path
+summary
+diff_ref
+commands[]
+created_at
+updated_at
+responded_at
+approved
+reason
+response
+```
+
+The approval inbox is workspace-owned. It is separate from Hermes live
+`approval.request` events so code patch/check approvals can be listed, resumed,
+approved, or rejected even if the chat stream is no longer visible.
 
 This is intentionally small. It does not yet replace Hermes conversation
 history. It records the Workspace Server's own view of the work so future code

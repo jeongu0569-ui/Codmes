@@ -199,6 +199,17 @@ export class CodeAgentRuntime {
       scopePath: scope.relativePath,
       allPassed
     });
+    if (params.approvalId) {
+      await this.state.resolveApproval(params.approvalId, {
+        approved: true,
+        response: {
+          taskId: task.id,
+          checkRunId: checkRun.id,
+          allPassed,
+          commands
+        }
+      });
+    }
     return {
       ok: allPassed,
       engine: "workspace-agent",
@@ -225,13 +236,24 @@ export class CodeAgentRuntime {
     const proposalId = `patch-${Date.now()}-${randomUUID().slice(0, 8)}`;
     const diff = buildUnifiedDiff(changes);
     const diffRef = await this.state.writeDiff(task.id, diff, proposalId);
+    const approvalRequest = {
+      type: "approval.request",
+      category: "code.patch.apply",
+      taskId: task.id,
+      proposalId,
+      scopePath: scope.relativePath,
+      summary: stringValue(params.summary) || summarizePatchChanges(changes),
+      diffRef
+    };
+    const approval = await this.state.recordApprovalRequest(approvalRequest);
     const proposal = {
       id: proposalId,
       status: "proposed",
       approved: false,
+      approvalId: approval.id,
       createdAt: new Date().toISOString(),
       scopePath: scope.relativePath,
-      summary: stringValue(params.summary) || summarizePatchChanges(changes),
+      summary: approval.summary,
       diffRef,
       changes: changes.map((change) => ({
         operation: change.operation,
@@ -260,16 +282,7 @@ export class CodeAgentRuntime {
       files: proposal.changes.map((change) => change.path),
       diffRef
     });
-    const approvalRequest = {
-      type: "approval.request",
-      category: "code.patch.apply",
-      taskId: task.id,
-      proposalId,
-      scopePath: scope.relativePath,
-      summary: proposal.summary,
-      diffRef
-    };
-    await this.state.recordToolLog(approvalRequest);
+    await this.state.recordToolLog(approval);
     await this.state.recordDecision({
       type: "code.patch.proposed",
       taskId: task.id,
@@ -288,13 +301,14 @@ export class CodeAgentRuntime {
       proposal: {
         id: proposal.id,
         status: proposal.status,
+        approvalId: proposal.approvalId,
         summary: proposal.summary,
         diffRef,
         changes: proposal.changes.map(({ content, ...metadata }) => metadata)
       },
       taskMemory: updated.taskMemory,
       approvalRequired: true,
-      approvalRequest
+      approvalRequest: approval
     };
   }
 
@@ -381,6 +395,17 @@ export class CodeAgentRuntime {
       filesChanged,
       diffRef
     });
+    if (proposal.approvalId || params.approvalId) {
+      await this.state.resolveApproval(params.approvalId || proposal.approvalId, {
+        approved: true,
+        response: {
+          taskId: task.id,
+          proposalId: proposal.id,
+          filesChanged,
+          diffRef
+        }
+      });
+    }
     const response = {
       ok: true,
       engine: "workspace-agent",
@@ -394,11 +419,12 @@ export class CodeAgentRuntime {
       taskMemory: updated.taskMemory
     };
     if (postPatchChecks?.approvalRequest) {
-      await this.state.recordToolLog(postPatchChecks.approvalRequest);
+      const checkApproval = await this.state.recordApprovalRequest(postPatchChecks.approvalRequest);
+      await this.state.recordToolLog(checkApproval);
       return {
         ...response,
         checkApprovalRequired: true,
-        checkApprovalRequest: postPatchChecks.approvalRequest
+        checkApprovalRequest: checkApproval
       };
     }
     if (postPatchChecks?.params) {
@@ -460,6 +486,12 @@ export class CodeAgentRuntime {
       scopePath: proposal.scopePath || task.scopePath,
       reason
     });
+    if (proposal.approvalId || params.approvalId) {
+      await this.state.resolveApproval(params.approvalId || proposal.approvalId, {
+        approved: false,
+        reason
+      });
+    }
     return {
       ok: true,
       engine: "workspace-agent",

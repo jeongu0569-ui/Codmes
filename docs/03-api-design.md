@@ -25,6 +25,7 @@ status. It also reports the active workspace agent engine capabilities:
     "adapters": ["hermes-live"],
     "runtimes": ["code-agent"],
     "taskEndpoint": "/api/agent/tasks",
+    "approvalEndpoint": "/api/agent/approvals",
     "codeTaskEndpoint": "/api/agent/code-task",
     "codePatchEndpoint": "/api/agent/code-task/:id/patches",
     "codePatchRejectEndpoint": "/api/agent/code-task/:id/patches/:proposalId/reject",
@@ -251,6 +252,63 @@ Response:
 ### `GET /api/agent/tasks/:id`
 
 Returns the full task record from `.ai-workspace/tasks/:id.json`.
+
+### `GET /api/agent/approvals`
+
+Lists workspace-owned approval inbox items from `.ai-workspace/approvals`.
+
+```text
+GET /api/agent/approvals?status=pending&limit=50
+```
+
+Response:
+
+```json
+{
+  "approvals": [
+    {
+      "id": "approval-...",
+      "status": "pending",
+      "category": "code.patch.apply",
+      "taskId": "task-...",
+      "proposalId": "patch-...",
+      "scopePath": "Code/my-app",
+      "summary": "Proposed 1 change(s): replace Code/my-app/src/index.js",
+      "diffRef": ".ai-workspace/diffs/task-...-patch-....diff"
+    }
+  ]
+}
+```
+
+### `GET /api/agent/approvals/:id`
+
+Returns the full approval record.
+
+### `POST /api/agent/approvals/:id/respond`
+
+Approves or rejects a workspace-owned approval request. For `code.patch.apply`,
+approval applies the patch and rejection rejects the patch proposal. For
+`code.checks.run`, approval runs the detected checks and rejection only records
+the rejected decision.
+
+Request:
+
+```json
+{
+  "approved": true,
+  "runChecksAfterApply": true,
+  "checksApproved": true
+}
+```
+
+Rejection:
+
+```json
+{
+  "approved": false,
+  "reason": "Needs a narrower patch."
+}
+```
 
 ### `POST /api/agent/code-task`
 

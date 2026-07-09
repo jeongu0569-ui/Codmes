@@ -39,6 +39,10 @@ async function main(argv) {
     case "tasks":
       await runTasks(args);
       return;
+    case "approvals":
+    case "approval":
+      await runApprovals(args);
+      return;
     case "code":
       await runCode(args);
       return;
@@ -59,6 +63,7 @@ Usage:
   aiw model [...args]       # forwards to hermes model
   aiw provider [...args]    # forwards to hermes provider
   aiw auth [...args]        # forwards to hermes auth
+  aiw approvals [list|show|approve|reject] [...]
   aiw tasks [list|show] [...]
   aiw code <list|create|show|patch|apply|reject|check> [...]
   aiw index <status|search> [...]
@@ -152,6 +157,86 @@ async function runTasks(args) {
     return;
   }
   await listTasks(rest);
+}
+
+async function runApprovals(args) {
+  const [subcommand = "list", ...rest] = args;
+  if (subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
+    console.log(`Usage:
+  aiw approvals [list] [--url URL] [--status pending] [--limit 20] [--json]
+  aiw approvals show <approvalId> [--url URL] [--json]
+  aiw approvals approve <approvalId> [--url URL] [--check]
+  aiw approvals reject <approvalId> [--url URL] [--reason TEXT]
+`);
+    return;
+  }
+  if (subcommand === "show") {
+    await approvalShow(rest);
+    return;
+  }
+  if (subcommand === "approve") {
+    await approvalRespond(rest, true);
+    return;
+  }
+  if (subcommand === "reject" || subcommand === "deny") {
+    await approvalRespond(rest, false);
+    return;
+  }
+  if (subcommand !== "list") {
+    await approvalList(args);
+    return;
+  }
+  await approvalList(rest);
+}
+
+async function approvalList(args) {
+  const options = parseOptions(args, { boolean: ["json"] });
+  const params = new URLSearchParams();
+  params.set("status", stringOption(options.status) || "pending");
+  if (options.category) params.set("category", stringOption(options.category));
+  if (options.task) params.set("taskId", stringOption(options.task));
+  if (options.taskId) params.set("taskId", stringOption(options.taskId));
+  params.set("limit", String(numberOption(options.limit, 20)));
+  const result = await requestJson(workspaceUrl(options), `/api/agent/approvals?${params.toString()}`);
+  if (options.json) {
+    printJson(result);
+    return;
+  }
+  printApprovalTable(result.approvals || []);
+}
+
+async function approvalShow(args) {
+  const options = parseOptions(args, { boolean: ["json"] });
+  const [approvalId] = options._;
+  if (!approvalId) throw new Error("Usage: aiw approvals show <approvalId>");
+  const result = await requestJson(workspaceUrl(options), `/api/agent/approvals/${encodeURIComponent(approvalId)}`);
+  if (options.json) {
+    printJson(result);
+    return;
+  }
+  console.log(JSON.stringify(result, null, 2));
+}
+
+async function approvalRespond(args, approved) {
+  const options = parseOptions(args, { boolean: ["json", "check"] });
+  const [approvalId] = options._;
+  if (!approvalId) throw new Error(`Usage: aiw approvals ${approved ? "approve" : "reject"} <approvalId>`);
+  const result = await requestJson(workspaceUrl(options), `/api/agent/approvals/${encodeURIComponent(approvalId)}/respond`, {
+    method: "POST",
+    body: {
+      approved,
+      reason: stringOption(options.reason) || undefined,
+      runChecksAfterApply: options.check === true,
+      checksApproved: options.check === true
+    }
+  });
+  if (options.json) {
+    printJson(result);
+    return;
+  }
+  console.log(`${approved ? "Approved" : "Rejected"} approval: ${approvalId}`);
+  console.log(`Status: ${result.status}`);
+  if (result.result?.status) console.log(`Result: ${result.result.status}`);
 }
 
 async function listTasks(args) {
@@ -516,6 +601,27 @@ function printTaskTable(tasks) {
     ["id", "ID", 34],
     ["type", "TYPE", 8],
     ["status", "STATUS", 16],
+    ["scope", "SCOPE", 28],
+    ["summary", "SUMMARY", 58]
+  ]);
+}
+
+function printApprovalTable(approvals) {
+  if (!approvals.length) {
+    console.log("No approvals found.");
+    return;
+  }
+  const rows = approvals.map((approval) => ({
+    id: approval.id || "",
+    status: approval.status || "",
+    category: approval.category || "",
+    scope: approval.scopePath || "",
+    summary: approval.summary || approval.proposalId || approval.taskId || ""
+  }));
+  printTable(rows, [
+    ["id", "ID", 34],
+    ["status", "STATUS", 10],
+    ["category", "CATEGORY", 18],
     ["scope", "SCOPE", 28],
     ["summary", "SUMMARY", 58]
   ]);

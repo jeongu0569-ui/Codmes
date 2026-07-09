@@ -193,6 +193,94 @@ export class WorkspaceAgentEngine extends EventEmitter {
     return await this.state.readTask(taskId);
   }
 
+  async listApprovals(params = {}) {
+    return await this.state.listApprovals(params);
+  }
+
+  async readApproval(approvalId) {
+    return await this.state.readApproval(approvalId);
+  }
+
+  async respondToWorkspaceApproval(approvalId, params = {}) {
+    await this.state.ensure();
+    const approval = await this.state.readApproval(approvalId);
+    const approved = params.approved !== false;
+    if (approval.status && approval.status !== "pending") {
+      return {
+        ok: true,
+        engine: "workspace-agent",
+        status: approval.status,
+        approval,
+        alreadyResolved: true
+      };
+    }
+    if (approval.category === "code.patch.apply" && approval.taskId && approval.proposalId) {
+      if (approved) {
+        const result = await this.applyCodeTaskPatch(approval.taskId, {
+          proposalId: approval.proposalId,
+          approved: true,
+          approvalId: approval.id,
+          runChecksAfterApply: params.runChecksAfterApply,
+          checksApproved: params.checksApproved
+        });
+        return {
+          ok: true,
+          engine: "workspace-agent",
+          status: "approved",
+          approval: await this.state.readApproval(approval.id),
+          result
+        };
+      }
+      const result = await this.rejectCodeTaskPatch(approval.taskId, {
+        proposalId: approval.proposalId,
+        approvalId: approval.id,
+        reason: params.reason || "Rejected from approval inbox."
+      });
+      return {
+        ok: true,
+        engine: "workspace-agent",
+        status: "rejected",
+        approval: await this.state.readApproval(approval.id),
+        result
+      };
+    }
+    if (approval.category === "code.checks.run" && approval.taskId) {
+      if (approved) {
+        const result = await this.runCodeTaskChecks(approval.taskId, {
+          approved: true,
+          approvalId: approval.id
+        });
+        return {
+          ok: result.ok,
+          engine: "workspace-agent",
+          status: "approved",
+          approval: await this.state.readApproval(approval.id),
+          result
+        };
+      }
+      const rejected = await this.state.resolveApproval(approval.id, {
+        approved: false,
+        reason: params.reason || "Rejected from approval inbox."
+      });
+      return {
+        ok: true,
+        engine: "workspace-agent",
+        status: "rejected",
+        approval: rejected
+      };
+    }
+    const resolved = await this.state.resolveApproval(approval.id, {
+      approved,
+      reason: params.reason
+    });
+    return {
+      ok: true,
+      engine: "workspace-agent",
+      status: resolved.status,
+      approval: resolved
+    };
+  }
+
   async flush() {
     await Promise.allSettled([...this.eventWrites]);
   }
@@ -272,6 +360,7 @@ export class WorkspaceAgentStateStore {
         fs.mkdir(path.join(this.root, "sessions"), { recursive: true }),
         fs.mkdir(path.join(this.root, "tasks"), { recursive: true }),
         fs.mkdir(path.join(this.root, "memory"), { recursive: true }),
+        fs.mkdir(path.join(this.root, "approvals"), { recursive: true }),
         fs.mkdir(path.join(this.root, "decisions"), { recursive: true }),
         fs.mkdir(path.join(this.root, "tool-logs"), { recursive: true }),
         fs.mkdir(path.join(this.root, "diffs"), { recursive: true }),
@@ -358,6 +447,98 @@ export class WorkspaceAgentStateStore {
     return { path: ".ai-workspace/decisions/events.jsonl", record };
   }
 
+  async recordApprovalRequest(value) {
+    await this.ensure();
+    const now = new Date().toISOString();
+    const id = value.approvalId || `approval-${now.replace(/[:.]/g, "-")}-${randomUUID()}`;
+    const approval = {
+      id,
+      approvalId: id,
+      type: "approval.request",
+      status: "pending",
+      createdAt: now,
+      updatedAt: now,
+      ...definedFields(value)
+    };
+    await this.writeApproval(approval);
+    await this.appendJsonl("approvals/events.jsonl", {
+      type: "approval.request.created",
+      at: now,
+      approvalId: approval.id,
+      category: approval.category,
+      taskId: approval.taskId,
+      proposalId: approval.proposalId,
+      scopePath: approval.scopePath
+    });
+    return approval;
+  }
+
+  async resolveApproval(approvalId, response = {}) {
+    await this.ensure();
+    const approval = await this.readApproval(approvalId);
+    const approved = response.approved !== false;
+    const status = approved ? "approved" : "rejected";
+    if (approval.status && approval.status !== "pending") {
+      if (approval.status === status) return { ...approval, alreadyResolved: true };
+      throw Object.assign(new Error(`Approval is already ${approval.status}.`), { status: 409 });
+    }
+    const now = new Date().toISOString();
+    const updated = {
+      ...approval,
+      status,
+      approved,
+      reason: response.reason || approval.reason,
+      response: definedFields(response.response || {}),
+      respondedAt: now,
+      updatedAt: now
+    };
+    await this.writeApproval(updated);
+    await this.appendJsonl("approvals/events.jsonl", {
+      type: "approval.request.resolved",
+      at: now,
+      approvalId: updated.id,
+      category: updated.category,
+      taskId: updated.taskId,
+      proposalId: updated.proposalId,
+      status: updated.status,
+      approved,
+      reason: updated.reason
+    });
+    return updated;
+  }
+
+  async readApproval(approvalId) {
+    const text = await fs.readFile(this.approvalPath(approvalId), "utf8");
+    return JSON.parse(text);
+  }
+
+  async listApprovals(options = {}) {
+    await this.ensure();
+    const status = String(options.status || "").trim();
+    const category = String(options.category || "").trim();
+    const taskId = String(options.taskId || "").trim();
+    const limit = clampNumber(options.limit, 1, 200, 50);
+    let entries = [];
+    try {
+      entries = await fs.readdir(path.join(this.root, "approvals"), { withFileTypes: true });
+    } catch {
+      return { approvals: [] };
+    }
+    const approvals = [];
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+      try {
+        const approval = JSON.parse(await fs.readFile(path.join(this.root, "approvals", entry.name), "utf8"));
+        if (status && approval.status !== status) continue;
+        if (category && approval.category !== category) continue;
+        if (taskId && approval.taskId !== taskId) continue;
+        approvals.push(summarizeApproval(approval));
+      } catch {}
+    }
+    approvals.sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
+    return { approvals: approvals.slice(0, limit) };
+  }
+
   async writeDiff(taskId, content, label = "") {
     await this.ensure();
     const suffix = label ? `-${safeArtifactName(label)}` : "";
@@ -399,8 +580,16 @@ export class WorkspaceAgentStateStore {
     await fs.writeFile(this.taskPath(task.id), JSON.stringify(task, null, 2) + "\n", "utf8");
   }
 
+  async writeApproval(approval) {
+    await fs.writeFile(this.approvalPath(approval.id), JSON.stringify(approval, null, 2) + "\n", "utf8");
+  }
+
   taskPath(taskId) {
     return path.join(this.root, "tasks", `${taskId}.json`);
+  }
+
+  approvalPath(approvalId) {
+    return path.join(this.root, "approvals", `${safeArtifactName(approvalId)}.json`);
   }
 
   async appendJsonl(relativePath, value) {
@@ -434,6 +623,25 @@ function summarizeTask(task) {
     scopePath: task.scopePath,
     message: task.message,
     summary: task.plan?.summary || task.result?.summary || task.error || ""
+  };
+}
+
+function summarizeApproval(approval) {
+  return {
+    id: approval.id,
+    type: approval.type,
+    status: approval.status,
+    category: approval.category,
+    createdAt: approval.createdAt,
+    updatedAt: approval.updatedAt,
+    respondedAt: approval.respondedAt,
+    taskId: approval.taskId,
+    proposalId: approval.proposalId,
+    scopePath: approval.scopePath,
+    summary: approval.summary,
+    diffRef: approval.diffRef,
+    commands: approval.commands,
+    reason: approval.reason
   };
 }
 

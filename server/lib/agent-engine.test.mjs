@@ -71,7 +71,7 @@ test("workspace agent engine records live tool events under workspace state", as
 test("workspace agent state creates the unified state directory shape", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "agent-state-"));
   await new WorkspaceAgentStateStore(root).ensure();
-  for (const folder of ["sessions", "tasks", "memory", "decisions", "tool-logs", "diffs", "index"]) {
+  for (const folder of ["sessions", "tasks", "memory", "approvals", "decisions", "tool-logs", "diffs", "index"]) {
     const stat = await fs.stat(path.join(root, ".ai-workspace", folder));
     assert.equal(stat.isDirectory(), true);
   }
@@ -100,6 +100,35 @@ test("workspace agent state lists task summaries", async () => {
   assert.equal(listed.tasks[0].id, codeTask.id);
   assert.equal(listed.tasks[0].summary, "Code task prepared.");
   assert.equal(listed.tasks[0].scopePath, "Code/demo");
+});
+
+test("workspace agent state records and resolves approval inbox items", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agent-state-approvals-"));
+  const state = new WorkspaceAgentStateStore(root);
+  const approval = await state.recordApprovalRequest({
+    category: "code.patch.apply",
+    taskId: "task-1",
+    proposalId: "patch-1",
+    scopePath: "Code/demo",
+    summary: "Apply patch"
+  });
+
+  assert.match(approval.id, /^approval-/);
+  assert.equal(approval.status, "pending");
+
+  const listed = await state.listApprovals({ status: "pending" });
+  assert.equal(listed.approvals.length, 1);
+  assert.equal(listed.approvals[0].id, approval.id);
+
+  const resolved = await state.resolveApproval(approval.id, {
+    approved: false,
+    reason: "No thanks."
+  });
+  assert.equal(resolved.status, "rejected");
+  assert.equal(resolved.reason, "No thanks.");
+
+  const pending = await state.listApprovals({ status: "pending" });
+  assert.equal(pending.approvals.length, 0);
 });
 
 class FakeAgentAdapter extends EventEmitter {

@@ -62,6 +62,9 @@ test("code agent runtime inspects a Code project and records artifacts", async (
   });
   assert.equal(patch.status, "patch_proposed");
   assert.equal(patch.approvalRequired, true);
+  assert.match(patch.approvalRequest.id, /^approval-/);
+  assert.equal(patch.approvalRequest.status, "pending");
+  assert.equal(patch.proposal.approvalId, patch.approvalRequest.id);
   assert.equal(patch.proposal.changes[0].path, "Code/demo-app/src/index.js");
   assert.match(patch.proposal.diffRef, /\.diff$/);
   assert.ok(patch.taskMemory.proposedFiles.includes("Code/demo-app/src/index.js"));
@@ -112,11 +115,17 @@ test("code agent runtime inspects a Code project and records artifacts", async (
   ));
   assert.equal(checkedTask.status, "checked");
   assert.equal(checkedTask.patchProposals[0].status, "applied");
+  assert.equal(checkedTask.patchProposals[0].approvalId, patch.approvalRequest.id);
   assert.equal(checkedTask.checks.length, 1);
   assert.match(checkedTask.checks[0].results[0].stdout, /test ok/);
   assert.ok(checkedTask.taskMemory.commands.includes("npm run test"));
   assert.equal(checkedTask.taskMemory.checkResults.at(-1).allPassed, true);
   assert.ok(checkedTask.taskMemory.nextSteps.some((step) => step.includes("Review git diff")));
+  const approval = JSON.parse(await fs.readFile(
+    path.join(root, ".ai-workspace", "approvals", `${patch.approvalRequest.id}.json`),
+    "utf8"
+  ));
+  assert.equal(approval.status, "approved");
 });
 
 test("code agent runtime rejects a proposed patch without changing files", async () => {
@@ -157,6 +166,11 @@ test("code agent runtime rejects a proposed patch without changing files", async
   ));
   assert.equal(rejectedTask.patchProposals[0].status, "rejected");
   assert.equal(rejectedTask.patchProposals[0].rejectionReason, "Wrong direction.");
+  const approval = JSON.parse(await fs.readFile(
+    path.join(root, ".ai-workspace", "approvals", `${patch.approvalRequest.id}.json`),
+    "utf8"
+  ));
+  assert.equal(approval.status, "rejected");
 });
 
 test("code agent runtime can run approved checks immediately after applying a patch", async () => {

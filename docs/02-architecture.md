@@ -235,9 +235,10 @@ the first approved edit loop: proposed patches are stored as diff artifacts
 without modifying files, and only an approved proposal can be applied. Approved
 check commands can then run inside the code task scope.
 
-A coding task is recorded under `.ai-workspace/tasks`, tool activity under
-`.ai-workspace/tool-logs`, decisions under `.ai-workspace/decisions`, and
-produced or captured diffs under `.ai-workspace/diffs`.
+A coding task is recorded under `.ai-workspace/tasks`, approval requests under
+`.ai-workspace/approvals`, tool activity under `.ai-workspace/tool-logs`,
+decisions under `.ai-workspace/decisions`, and produced or captured diffs under
+`.ai-workspace/diffs`.
 
 Future automatic code generation should extend this runtime rather than adding
 a parallel code path.

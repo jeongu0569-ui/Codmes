@@ -189,6 +189,13 @@ Status: in progress.
   the task's detected checks after the approved patch is written. Without
   check approval, it returns a check approval request instead of running shell
   commands.
+- Dedicated approval inbox. First server/CLI pass done:
+  - `.ai-workspace/approvals/approval-*.json` stores pending/resolved approval
+    requests.
+  - `GET /api/agent/approvals` and
+    `POST /api/agent/approvals/:id/respond` expose approval management.
+  - `aiw approvals` can list, approve, and reject workspace-owned approval
+    requests.
 - Check output persistence. Done: command stdout/stderr, exit codes, duration,
   and refreshed git diff refs are appended to the task record.
 - Task memory accumulation. Done at the server level: code tasks now maintain a
@@ -206,8 +213,8 @@ Remaining:
   Code Agent panel, but side-by-side hunks, file grouping, and stronger review
   ergonomics are still pending.
 - Full approval UI for code task patch/check execution. The first apply/check
-  and deny buttons exist, but a dedicated approval inbox and richer safety copy
-  are still pending.
+  and deny buttons exist. The server/CLI approval inbox exists, but the Apple
+  dedicated inbox panel and richer safety copy are still pending.
 - Codex-style work loop:
   - inspect files. Initial server pass done.
   - plan
@@ -216,7 +223,7 @@ Remaining:
   - shell/test. Approved check execution and approved post-patch check
     orchestration are done; richer retry/revise behavior is still pending.
   - collect diff
-  - request approval when needed. Server event/response contract exists; Apple
-    UI is still pending.
+  - request approval when needed. Server event/response contract and
+    workspace-owned approval inbox exist; Apple inbox UI is still pending.
   - write task/decision/tool logs under `.ai-workspace`. Initial server pass
     done.
