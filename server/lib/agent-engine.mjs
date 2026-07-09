@@ -198,6 +198,15 @@ export class WorkspaceAgentEngine extends EventEmitter {
     return await this.codeRuntime.rejectPatch(taskId, params);
   }
 
+  async getWorkspaceConfig() {
+    return await this.state.readConfig();
+  }
+
+  async updateWorkspaceConfig(config) {
+    await this.state.writeConfig(config);
+    return { ok: true };
+  }
+
   async listTasks(params = {}) {
     return await this.state.listTasks(params);
   }
@@ -611,6 +620,37 @@ export class WorkspaceAgentStateStore {
       JSON.stringify(value) + "\n",
       "utf8"
     );
+  }
+
+  async readConfig() {
+    await this.ensure();
+    const filePath = path.join(this.root, "config.json");
+    try {
+      const data = await fs.readFile(filePath, "utf8");
+      return JSON.parse(data);
+    } catch (error) {
+      if (error.code === "ENOENT") {
+        return {
+          model: {
+            default: "anthropic/claude-3-5-sonnet",
+            provider: "anthropic"
+          },
+          providers: {
+            anthropic: {
+              baseUrl: "https://api.anthropic.com/v1"
+            }
+          },
+          credentials: []
+        };
+      }
+      throw error;
+    }
+  }
+
+  async writeConfig(config) {
+    await this.ensure();
+    const filePath = path.join(this.root, "config.json");
+    await fs.writeFile(filePath, JSON.stringify(config, null, 2), "utf8");
   }
 }
 

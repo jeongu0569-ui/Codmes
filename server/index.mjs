@@ -249,6 +249,12 @@ async function handleRequest(req, res) {
     if (req.method === "POST" && url.pathname === "/api/context") {
       return sendJson(res, await resolveContext(req));
     }
+    if (req.method === "GET" && url.pathname === "/api/config") {
+      return sendJson(res, await getWorkspaceConfig());
+    }
+    if (req.method === "POST" && url.pathname === "/api/config") {
+      return sendJson(res, await updateWorkspaceConfig(req));
+    }
     if (req.method === "GET" && url.pathname === "/api/search/status") {
       return sendJson(res, searchStatus(WORKSPACE_ROOT));
     }
@@ -625,6 +631,25 @@ async function runCodeTaskChecks(taskId, req) {
   const engine = createAgentEngine();
   try {
     return await engine.runCodeTaskChecks(decodeURIComponent(taskId), body);
+  } finally {
+    engine.close();
+  }
+}
+
+async function getWorkspaceConfig() {
+  const engine = createAgentEngine();
+  try {
+    return await engine.getWorkspaceConfig();
+  } finally {
+    engine.close();
+  }
+}
+
+async function updateWorkspaceConfig(req) {
+  const body = await readJsonBody(req);
+  const engine = createAgentEngine();
+  try {
+    return await engine.updateWorkspaceConfig(body);
   } finally {
     engine.close();
   }

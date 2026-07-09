@@ -10,7 +10,7 @@ const REPO_ROOT = path.resolve(__dirname, "..");
 const SERVER_ENTRY = path.join(REPO_ROOT, "server", "index.mjs");
 const DEFAULT_SERVER_URL = "http://127.0.0.1:8787";
 const DEFAULT_WORKSPACE_ROOT = path.join(os.homedir(), "HermesWorkspace");
-const HERMES_WRAPPER_COMMANDS = new Set(["model", "provider", "auth"]);
+const HERMES_WRAPPER_COMMANDS = new Set();
 
 main(process.argv.slice(2)).catch((error) => {
   console.error(`aiw: ${error.message}`);
@@ -39,6 +39,15 @@ async function main(argv) {
     case "tasks":
       await runTasks(args);
       return;
+    case "model":
+      await runModel(args);
+      return;
+    case "provider":
+      await runProvider(args);
+      return;
+    case "auth":
+      await runAuth(args);
+      return;
     case "approvals":
     case "approval":
       await runApprovals(args);
@@ -60,9 +69,9 @@ function printHelp() {
 Usage:
   aiw serve [--host 0.0.0.0] [--port 8787] [--root PATH] [--hermes URL]
   aiw status [--url URL] [--json]
-  aiw model [...args]       # forwards to hermes model
-  aiw provider [...args]    # forwards to hermes provider
-  aiw auth [...args]        # forwards to hermes auth
+  aiw model [show|set] [...]
+  aiw provider [list|set] [...]
+  aiw auth [list|add|remove] [...]
   aiw approvals [list|show|approve|reject] [...]
   aiw tasks [list|show] [...]
   aiw code <list|create|show|patch|apply|reject|check> [...]
@@ -795,3 +804,192 @@ async function runProcess(command, args, options) {
     });
   });
 }
+
+async function runModel(args) {
+  const options = parseOptions(args, { boolean: ["help", "json"] });
+  const [subcommand = "show", modelName] = options._;
+
+  if (options.help || subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
+    console.log(`Usage:
+  aiw model [show] [--url URL] [--json]
+  aiw model set <modelName> [--provider <provider>] [--url URL]
+`);
+    return;
+  }
+
+  const baseUrl = workspaceUrl(options);
+
+  if (subcommand === "show") {
+    const config = await requestJson(baseUrl, "/api/config");
+    if (options.json) {
+      printJson(config.model || {});
+      return;
+    }
+    console.log(`Default Model   : ${config.model?.default || "(none)"}`);
+    console.log(`Default Provider: ${config.model?.provider || "(none)"}`);
+  } else if (subcommand === "set" || (subcommand && !modelName)) {
+    const targetModel = subcommand === "set" ? modelName : subcommand;
+    if (!targetModel) throw new Error("Usage: aiw model set <modelName> [--provider <provider>]");
+    
+    const config = await requestJson(baseUrl, "/api/config");
+    if (!config.model) config.model = {};
+    config.model.default = targetModel;
+    if (options.provider) {
+      config.model.provider = stringOption(options.provider);
+    } else {
+      const parts = targetModel.split("/");
+      if (parts.length > 1) {
+        config.model.provider = parts[0];
+      }
+    }
+
+    await requestJson(baseUrl, "/api/config", {
+      method: "POST",
+      body: config
+    });
+    console.log(`Updated default model to: ${targetModel} (${config.model.provider || "unknown provider"})`);
+  } else {
+    throw new Error(`Unknown model subcommand '${subcommand}'.`);
+  }
+}
+
+async function runProvider(args) {
+  const options = parseOptions(args, { boolean: ["help", "json"] });
+  const [subcommand = "list", providerName] = options._;
+
+  if (options.help || subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
+    console.log(`Usage:
+  aiw provider [list] [--url URL] [--json]
+  aiw provider set <providerName> --provider-url <url> [--url URL]
+`);
+    return;
+  }
+
+  const baseUrl = workspaceUrl(options);
+
+  if (subcommand === "list") {
+    const config = await requestJson(baseUrl, "/api/config");
+    if (options.json) {
+      printJson(config.providers || {});
+      return;
+    }
+    const providers = Object.entries(config.providers || {});
+    if (!providers.length) {
+      console.log("No custom providers configured.");
+      return;
+    }
+    const rows = providers.map(([name, item]) => ({
+      provider: name,
+      url: item?.baseUrl || ""
+    }));
+    printTable(rows, [
+      ["provider", "PROVIDER", 20],
+      ["url", "BASE URL", 58]
+    ]);
+  } else if (subcommand === "set" || (subcommand && !providerName)) {
+    const targetProvider = subcommand === "set" ? providerName : subcommand;
+    const providerUrlValue = stringOption(options["provider-url"]) || stringOption(options.providerUrl);
+    if (!targetProvider || !providerUrlValue) {
+      throw new Error("Usage: aiw provider set <providerName> --provider-url <url>");
+    }
+
+    const config = await requestJson(baseUrl, "/api/config");
+    if (!config.providers) config.providers = {};
+    config.providers[targetProvider] = { baseUrl: providerUrlValue };
+
+    await requestJson(baseUrl, "/api/config", {
+      method: "POST",
+      body: config
+    });
+    console.log(`Set provider '${targetProvider}' API URL to: ${providerUrlValue}`);
+  } else {
+    throw new Error(`Unknown provider subcommand '${subcommand}'.`);
+  }
+}
+
+async function runAuth(args) {
+  const options = parseOptions(args, { boolean: ["help", "json"] });
+  const [subcommand = "list", targetId] = options._;
+
+  if (options.help || subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
+    console.log(`Usage:
+  aiw auth [list] [--url URL] [--json]
+  aiw auth add --provider <provider> --key <key> [--label <label>] [--url URL]
+  aiw auth remove <credentialId> [--url URL]
+`);
+    return;
+  }
+
+  const baseUrl = workspaceUrl(options);
+
+  if (subcommand === "list") {
+    const config = await requestJson(baseUrl, "/api/config");
+    const credentials = config.credentials || [];
+    if (options.json) {
+      printJson(credentials);
+      return;
+    }
+    if (!credentials.length) {
+      console.log("No credentials registered.");
+      return;
+    }
+    const rows = credentials.map((cred) => {
+      const rawKey = cred.apiKey || "";
+      const maskedKey = rawKey.length > 8 
+        ? `${rawKey.slice(0, 7)}...${rawKey.slice(-4)}` 
+        : "*".repeat(rawKey.length || 8);
+      return {
+        id: cred.id || "",
+        provider: cred.provider || "",
+        label: cred.label || "(none)",
+        key: maskedKey
+      };
+    });
+    printTable(rows, [
+      ["id", "CREDENTIAL ID", 24],
+      ["provider", "PROVIDER", 16],
+      ["label", "LABEL", 24],
+      ["key", "API KEY", 22]
+    ]);
+  } else if (subcommand === "add") {
+    const provider = stringOption(options.provider);
+    const key = stringOption(options.key) || stringOption(options.apiKey);
+    const label = stringOption(options.label) || "CLI Add";
+    if (!provider || !key) {
+      throw new Error("Usage: aiw auth add --provider <provider> --key <key> [--label <label>]");
+    }
+
+    const config = await requestJson(baseUrl, "/api/config");
+    if (!Array.isArray(config.credentials)) config.credentials = [];
+    
+    const id = `cred-${new Date().getTime()}`;
+    config.credentials.push({ id, provider, apiKey: key, label });
+
+    await requestJson(baseUrl, "/api/config", {
+      method: "POST",
+      body: config
+    });
+    console.log(`Successfully added credential: ${id} for provider '${provider}'`);
+  } else if (subcommand === "remove" || (subcommand && subcommand !== "list" && subcommand !== "add")) {
+    const idToRemove = subcommand === "remove" ? targetId : subcommand;
+    if (!idToRemove) throw new Error("Usage: aiw auth remove <credentialId>");
+
+    const config = await requestJson(baseUrl, "/api/config");
+    const credentials = config.credentials || [];
+    const index = credentials.findIndex((c) => c.id === idToRemove);
+    if (index === -1) {
+      throw new Error(`Credential not found with ID: ${idToRemove}`);
+    }
+    credentials.splice(index, 1);
+    config.credentials = credentials;
+
+    await requestJson(baseUrl, "/api/config", {
+      method: "POST",
+      body: config
+    });
+    console.log(`Successfully removed credential: ${idToRemove}`);
+  } else {
+    throw new Error(`Unknown auth subcommand '${subcommand}'.`);
+  }
+}
+

@@ -131,6 +131,33 @@ test("workspace agent state records and resolves approval inbox items", async ()
   assert.equal(pending.approvals.length, 0);
 });
 
+test("workspace agent state config read and write", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agent-state-config-"));
+  const state = new WorkspaceAgentStateStore(root);
+
+  const defaults = await state.readConfig();
+  assert.equal(defaults.model?.provider, "anthropic");
+  assert.equal(defaults.model?.default, "anthropic/claude-3-5-sonnet");
+  assert.deepEqual(defaults.credentials, []);
+
+  defaults.model.default = "openai/gpt-4o";
+  defaults.model.provider = "openai";
+  defaults.credentials.push({
+    id: "cred-test",
+    provider: "openai",
+    apiKey: "sk-openai-key-123",
+    label: "OpenAI Key"
+  });
+
+  await state.writeConfig(defaults);
+
+  const updated = await state.readConfig();
+  assert.equal(updated.model?.default, "openai/gpt-4o");
+  assert.equal(updated.model?.provider, "openai");
+  assert.equal(updated.credentials.length, 1);
+  assert.equal(updated.credentials[0].apiKey, "sk-openai-key-123");
+});
+
 class FakeAgentAdapter extends EventEmitter {
   constructor() {
     super();
