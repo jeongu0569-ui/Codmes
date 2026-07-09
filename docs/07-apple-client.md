@@ -203,10 +203,17 @@ POST /api/file/upload/cancel
 POST /api/search
 GET  /api/agent/tasks
 GET  /api/agent/tasks/:id
+GET  /api/agent/approvals
+GET  /api/agent/approvals/:id
+POST /api/agent/approvals/:id/respond
 POST /api/agent/code-task
+POST /api/agent/code-task/:id/patches
+POST /api/agent/code-task/:id/patches/generate
 POST /api/agent/code-task/:id/patches/:proposalId/apply
 POST /api/agent/code-task/:id/patches/:proposalId/reject
 POST /api/agent/code-task/:id/checks
+GET  /api/config
+POST /api/config
 WS   /api/live
 ```
 

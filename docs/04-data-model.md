@@ -131,6 +131,33 @@ Current implemented files:
 .ai-workspace/tasks/task-<timestamp>-<uuid>.json
 .ai-workspace/tool-logs/live-events.jsonl
 .ai-workspace/tool-logs/tool-events.jsonl
+.ai-workspace/config.json
+```
+
+## Workspace Configuration
+
+The workspace-wide configuration (default model, custom providers, and credentials) is saved in `.ai-workspace/config.json`:
+
+```json
+{
+  "model": {
+    "default": "anthropic/claude-3-5-sonnet",
+    "provider": "anthropic"
+  },
+  "providers": {
+    "anthropic": {
+      "baseUrl": "https://api.anthropic.com/v1"
+    }
+  },
+  "credentials": [
+    {
+      "id": "cred-...",
+      "provider": "anthropic",
+      "apiKey": "sk-...",
+      "label": "My Anthropic Key"
+    }
+  ]
+}
 ```
 
 Task records currently store:

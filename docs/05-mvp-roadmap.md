@@ -21,7 +21,7 @@ Status: in progress.
 - AI Workspace CLI first pass. Done with `aiw` and `ai-workspace` package bins:
   - `aiw serve` starts the Workspace Server with friendly host/port/root/Hermes options.
   - `aiw status` checks Workspace/Hermes/search/agent status through the server API.
-  - `aiw model`, `aiw provider`, and `aiw auth` delegate to the Hermes CLI.
+  - `aiw model`, `aiw provider`, and `aiw auth` manage configuration directly via the server's Unified Engine config storage.
   - `aiw tasks`, `aiw code`, and `aiw index` expose the current workspace task,
     code task, patch/check, and search APIs.
   - This is a transition layer. Final Unified Engine operation should keep
@@ -209,21 +209,12 @@ Status: in progress.
 
 Remaining:
 
-- Rich diff viewer in the Apple client. A compact text diff view exists in the
-  Code Agent panel, but side-by-side hunks, file grouping, and stronger review
-  ergonomics are still pending.
-- Full approval UI for code task patch/check execution. The first apply/check
-  and deny buttons exist. The server/CLI approval inbox exists, but the Apple
-  dedicated inbox panel and richer safety copy are still pending.
+- Rich diff viewer in the Apple client. A compact text diff view exists in the Code Agent panel, but side-by-side hunks and file grouping are still pending.
 - Codex-style work loop:
-  - inspect files. Initial server pass done.
-  - plan
-  - patch. Server-side proposal/apply flow done; automatic LLM-authored patch
-    generation is still pending.
-  - shell/test. Approved check execution and approved post-patch check
-    orchestration are done; richer retry/revise behavior is still pending.
-  - collect diff
-  - request approval when needed. Server event/response contract and
-    workspace-owned approval inbox exist; Apple inbox UI is still pending.
-  - write task/decision/tool logs under `.ai-workspace`. Initial server pass
-    done.
+  - inspect files. Done.
+  - plan. Done.
+  - patch. Done (including automatic LLM-authored patch generation).
+  - shell/test. Done (including check execution and check logging).
+  - collect diff. Done.
+  - request approval. Done (both server-side approvals inbox and Apple client dedicated Approvals Inbox panel are fully integrated).
+  - write task/decision/tool logs under `.ai-workspace`. Done.

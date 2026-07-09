@@ -115,6 +115,41 @@ Deletes a file or folder.
 This endpoint exists for MVP development, but production UI should add undo or
 trash semantics before exposing it casually.
 
+### `GET /api/config`
+
+Reads the unified workspace configuration (default model, provider endpoints, and auth credentials) from `.ai-workspace/config.json`.
+
+Response:
+
+```json
+{
+  "model": {
+    "default": "anthropic/claude-3-5-sonnet",
+    "provider": "anthropic"
+  },
+  "providers": {
+    "anthropic": {
+      "baseUrl": "https://api.anthropic.com/v1"
+    }
+  },
+  "credentials": [
+    {
+      "id": "cred-...",
+      "provider": "anthropic",
+      "apiKey": "sk-...",
+      "label": "My Anthropic Key"
+    }
+  ]
+}
+```
+
+### `POST /api/config`
+
+Updates the unified workspace configuration.
+
+Request Body:
+The full configuration JSON object to overwrite the configuration file.
+
 ## Context Router
 
 ### `POST /api/context`
@@ -455,14 +490,16 @@ Response:
 }
 ```
 
-Side effects:
-
-```text
 .ai-workspace/tasks/task-....json
 .ai-workspace/tool-logs/tool-events.jsonl
 .ai-workspace/decisions/events.jsonl
 .ai-workspace/diffs/task-...-patch-....diff
-```
+
+### `POST /api/agent/code-task/:id/patches/generate`
+
+Invokes the LLM to automatically generate a patch proposal for the code task. This streams response blocks from the Hermes live agent, parses the resulting find/replace JSON changes, and proposes the patch (saving a diff artifact and queuing it for approval).
+
+Response is identical to `POST /api/agent/code-task/:id/patches` on success.
 
 ### `POST /api/agent/code-task/:id/patches/:proposalId/apply`
 
