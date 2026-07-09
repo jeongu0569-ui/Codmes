@@ -817,7 +817,9 @@ async function runModel(args) {
   if (options.help || subcommand === "help" || subcommand === "--help" || subcommand === "-h") {
     console.log(`Usage:
   aiw model [show] [--url URL] [--json]
+  aiw model list [--url URL] [--json]
   aiw model set <modelName> [--provider <provider>] [--url URL]
+  aiw model set-default <modelName> [--provider <provider>] [--url URL]
 `);
     return;
   }
@@ -832,9 +834,33 @@ async function runModel(args) {
     }
     console.log(`Default Model   : ${config.model?.default || "(none)"}`);
     console.log(`Default Provider: ${config.model?.provider || "(none)"}`);
-  } else if (subcommand === "set" || (subcommand && !modelName)) {
-    const targetModel = subcommand === "set" ? modelName : subcommand;
-    if (!targetModel) throw new Error("Usage: aiw model set <modelName> [--provider <provider>]");
+  } else if (subcommand === "list") {
+    const result = await requestJson(baseUrl, "/api/workspace/models");
+    if (options.json) {
+      printJson(result.models || []);
+      return;
+    }
+    const models = result.models || [];
+    if (!models.length) {
+      console.log("No models detected or configuration required.");
+      return;
+    }
+    const rows = models.map(m => ({
+      id: m.id,
+      name: m.name,
+      provider: m.provider,
+      source: m.source,
+      status: m.isActive ? "ACTIVE" : ""
+    }));
+    printTable(rows, [
+      ["id", "MODEL ID", 28],
+      ["provider", "PROVIDER", 16],
+      ["source", "SOURCE", 22],
+      ["status", "STATUS", 10]
+    ]);
+  } else if (subcommand === "set" || subcommand === "set-default" || (subcommand && subcommand !== "show" && subcommand !== "list" && !modelName)) {
+    const targetModel = (subcommand === "set" || subcommand === "set-default") ? modelName : subcommand;
+    if (!targetModel) throw new Error("Usage: aiw model set-default <modelName> [--provider <provider>]");
     
     const config = await requestJson(baseUrl, "/api/config");
     if (!config.model) config.model = {};

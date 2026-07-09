@@ -960,3 +960,152 @@ Server responses use:
 
 The event kind is still named `hermes.event` for client compatibility. New
 server work should treat `engine` and `adapter` as the more durable boundary.
+
+---
+
+## Workspace-Owned Provider & Auth APIs
+
+These endpoints are served by the Workspace Server itself. No Hermes connection
+is required.
+
+### `GET /api/workspace/providers`
+
+Returns the list of configured providers.
+
+Response:
+
+```json
+{
+  "providers": [
+    {
+      "id": "openai",
+      "type": "openai-compatible",
+      "baseUrl": "https://api.openai.com/v1",
+      "defaultModel": "gpt-4o"
+    }
+  ],
+  "defaultProvider": "openai"
+}
+```
+
+### `POST /api/workspace/providers`
+
+Adds a new provider.
+
+Body:
+
+```json
+{
+  "id": "ollama",
+  "type": "openai-compatible",
+  "baseUrl": "http://localhost:11434/v1",
+  "defaultModel": "llama3"
+}
+```
+
+### `DELETE /api/workspace/providers/:id`
+
+Removes a provider by ID.
+
+---
+
+### `GET /api/workspace/credentials`
+
+Lists credentials (API keys are masked).
+
+Response:
+
+```json
+{
+  "credentials": [
+    { "providerId": "openai", "maskedKey": "sk-...ABCD", "updatedAt": "..." }
+  ]
+}
+```
+
+### `POST /api/workspace/credentials`
+
+Stores a credential. Body:
+
+```json
+{ "providerId": "openai", "apiKey": "sk-..." }
+```
+
+### `DELETE /api/workspace/credentials/:providerId`
+
+Removes a stored credential.
+
+---
+
+### `GET /api/workspace/models`
+
+Returns the merged model list (workspace config + hermes-compat if connected).
+
+### `POST /api/workspace/models/default`
+
+Sets the default model. Body:
+
+```json
+{ "model": "gpt-4o", "provider": "openai" }
+```
+
+---
+
+## LLM / Patch Generation API
+
+### `POST /api/agent/code-task/:id/patch/auto`
+
+Triggers LLM-authored automatic patch generation for a code task.
+
+Body:
+
+```json
+{
+  "instruction": "Change the greeting renderer"
+}
+```
+
+Response (proposed patch stored as artifact):
+
+```json
+{
+  "ok": true,
+  "proposalId": "patch-...",
+  "summary": "Updates greeting() to return 'auto-patched'.",
+  "changes": [
+    {
+      "path": "Code/demo-app/src/index.js",
+      "find": "return 'hello';",
+      "replace": "return 'auto-patched';"
+    }
+  ]
+}
+```
+
+The patch is stored under `.ai-workspace/diffs/` and requires explicit approval
+before files are modified. Use `POST /api/agent/code-task/:id/patches/:proposalId/approve`
+to approve and apply.
+
+---
+
+## Git Safety Policy
+
+`POST /api/agent/code-task/:id/git`
+
+Body:
+
+```json
+{ "command": "git status", "approved": true }
+```
+
+The following rules are enforced server-side regardless of input:
+
+| Command class | Required flag |
+| :--- | :--- |
+| `git status`, `git add`, `git commit`, `git diff`, `git log` | `approved: true` |
+| `git push` | `gitPushApproved: true` (or `dangerApproved: true`) |
+| `git push --force` / `git push -f` | `dangerApproved: true` |
+| Any argument containing `; & | > < \` $ ( )` | **Blocked unconditionally** |
+
+Arguments are passed via `execFile` (no shell expansion). Shell metacharacters
+in git argument tokens are rejected with a 400 error before execution.

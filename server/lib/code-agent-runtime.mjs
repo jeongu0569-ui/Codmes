@@ -5,8 +5,6 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { fileKind, joinWorkspacePath, resolveWorkspacePath } from "./path-utils.mjs";
 import { searchWorkspace } from "./search-service.mjs";
-import { HermesLiveClient } from "./hermes-compat.mjs";
-
 const execFileAsync = promisify(execFile);
 const execAsync = promisify(exec);
 
@@ -36,10 +34,9 @@ const TEXT_EXTENSIONS = new Set([
 const PATCH_CONTENT_LIMIT = 2 * 1024 * 1024;
 
 export class CodeAgentRuntime {
-  constructor({ workspaceRoot, stateStore, hermes, llmRuntime }) {
+  constructor({ workspaceRoot, stateStore, llmRuntime }) {
     this.workspaceRoot = workspaceRoot;
     this.state = stateStore;
-    this.hermes = hermes;
     this.llmRuntime = llmRuntime;
   }
 
@@ -379,107 +376,12 @@ export class CodeAgentRuntime {
           model: params.model,
           provider: params.provider
         };
-        const rawJsonList = await this.llmRuntime.generateCodePatch(promptParams);
-        patchSpec = {
-          summary: `Auto-patch to fulfill: ${task.message}`,
-          changes: rawJsonList.map(c => ({
-            path: c.path,
-            find: c.targetContent || c.find || "",
-            replace: c.replacementContent || c.replace || ""
-          }))
-        };
+        patchSpec = await this.llmRuntime.generateCodePatch(promptParams);
       } catch (err) {
         throw Object.assign(new Error(`Failed to generate automatic patch: ${err.message}`), { status: 500 });
       }
-    } else if (this.hermes && this.hermes.hermesServerUrl) {
-      const systemPrompt = `You are an expert software developer.
-Your task is to generate a code patch proposal (a list of find/replace changes) to fulfill the user's instruction based on the provided file contents.
-
-You MUST respond with a single valid JSON object containing exactly two keys: "summary" and "changes".
-The JSON structure MUST look exactly like this:
-{
-  "summary": "Brief explanation of what this patch does.",
-  "changes": [
-    {
-      "path": "Code/demo-app/src/index.js",
-      "find": "Exact code block to find in the target file. MUST match exactly, including spaces, indentation, and newlines.",
-      "replace": "The replacement code block."
-    }
-  ]
-}
-
-Rules:
-- Do NOT wrap your JSON response in markdown code blocks like \`\`\`json ... \`\`\`. Just return raw JSON.
-- The "find" string must exist exactly as written in the target file, otherwise the patch application will fail.
-- Output ONLY the JSON object. Do not write any greetings or preambles.`;
-
-      const userPrompt = `Instruction: ${task.message}
-
-Workspace Root: ${this.workspaceRoot}
-
-Target Files and Contents:
-${fileContents.map(f => `
----
-File Path: ${f.path}
-Content:
-${f.content}
----`).join("\n")}`;
-
-      const client = new HermesLiveClient(this.hermes);
-      await client.connect();
-
-      const session = await client.createSession({
-        accessMode: "full",
-        reasoningEffort: "medium"
-      });
-
-      let answerText = "";
-      let resolveDone;
-      let rejectError;
-      const promise = new Promise((resolve, reject) => {
-        resolveDone = resolve;
-        rejectError = reject;
-      });
-
-      client.on("event", (envelope) => {
-        const type = envelope.type || "";
-        const text = envelope.text || "";
-
-        if (type === "message.delta" || type === "assistant.delta" || type === "assistant.message.delta") {
-          answerText += text;
-        } else if (
-          type === "message.done" ||
-          type === "response.done" ||
-          type === "turn.complete" ||
-          type === "turn.completed" ||
-          type === "message.completed"
-        ) {
-          resolveDone();
-        }
-      });
-
-      client.on("close", () => {
-        rejectError(new Error("Hermes connection closed prematurely."));
-      });
-
-      try {
-        await client.submitPrompt({
-          sessionId: session.sessionId,
-          message: systemPrompt + "\n\n" + userPrompt
-        });
-
-        await promise;
-      } finally {
-        client.close();
-      }
-
-      try {
-        patchSpec = parseJsonAnswer(answerText);
-      } catch (parseErr) {
-        throw Object.assign(new Error(`Failed to parse LLM patch response as JSON. Raw: ${answerText.slice(0, 300)}`), { status: 500 });
-      }
     } else {
-      throw Object.assign(new Error("Automatic patch generation requires a configured chat backend."), { status: 503 });
+      throw Object.assign(new Error("Automatic patch generation requires a configured LLM runtime."), { status: 503 });
     }
 
     if (!patchSpec || !Array.isArray(patchSpec.changes)) {

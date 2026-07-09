@@ -7,6 +7,9 @@ import { createServer } from "node:http";
 import { CodeAgentRuntime } from "./code-agent-runtime.mjs";
 import { WorkspaceAgentStateStore } from "./agent-engine.mjs";
 import { acceptWebSocket, createFrameDecoder, encodeWebSocketFrame } from "./hermes-live.mjs";
+import { ChatRuntime } from "./chat-runtime.mjs";
+import { LLMRuntime } from "./llm-runtime.mjs";
+import { HermesLiveClient } from "./hermes-compat.mjs";
 
 test("code agent runtime inspects a Code project and records artifacts", async () => {
   const root = await fixtureCodeWorkspace();
@@ -353,14 +356,18 @@ test("code agent runtime generates automatic patches using mock LLM server", asy
   try {
     const root = await fixtureCodeWorkspace();
     const state = new WorkspaceAgentStateStore(root);
-    const runtime = new CodeAgentRuntime({
-      workspaceRoot: root,
-      stateStore: state,
-      hermes: {
+    const chatRuntime = new ChatRuntime({
+      hermesCompat: new HermesLiveClient({
         hermesServerUrl: `http://127.0.0.1:${port}`,
         dashboardUsername: "test",
         dashboardPassword: "test"
-      }
+      })
+    });
+    const llmRuntime = new LLMRuntime({ chatRuntime });
+    const runtime = new CodeAgentRuntime({
+      workspaceRoot: root,
+      stateStore: state,
+      llmRuntime
     });
 
     const result = await runtime.inspectTask({

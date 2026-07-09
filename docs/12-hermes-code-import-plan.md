@@ -1,50 +1,63 @@
-# Hermes Agent Code Import Strategy
+# Hermes Agent Code Import Strategy — Completion Summary
 
-This document outlines the architectural plan to import, adapt, and vendor core subsystems from the Hermes Agent codebase directly into the Unified AI Workspace Engine. By doing so, we establish a standalone server capable of managing providers, models, authentication credentials, and chat backends without external dependencies.
-
----
-
-## 1. Core Principles
-
-1. **Standalone Operation**: AI Workspace must function independently of the Hermes Desktop App and the legacy `hermes serve` wrapper.
-2. **First-Class Workspace Ownership**: Configuration metadata and session storage reside strictly within the workspace's `.ai-workspace/` state store.
-3. **Graceful Compatibility Layer**: Legacy `/api/hermes/*` routes and `HERMES_SERVER_URL` hooks are retained purely as optional fallback bridges.
+This document records the architectural work that established a standalone
+AI Workspace Engine independent of the Hermes Desktop App.
 
 ---
 
-## 2. Code Assessment & Module Mapping
+## 1. Core Principles (Achieved)
 
-The following table divides the Hermes Agent codebase into modules to import and modules to exclude:
-
-| Component | Target Location in Workspace | Import / Re-use Strategy | Action Status |
-| :--- | :--- | :--- | :--- |
-| **Model Registry** | `server/lib/model-runtime.mjs` | Extracted and integrated with `.ai-workspace/config.json`. | **Ready for Integration** |
-| **Provider Registry** | `server/lib/provider-runtime.mjs` | Custom CRUD handlers reading/writing to the state store configuration. | **NEW Runtime** |
-| **Credentials & Auth** | `server/lib/auth-runtime.mjs` | API key masking, local keychain-ready storage, and credential selection helper. | **NEW Runtime** |
-| **OpenAI-Compatible Driver**| `server/lib/workspace-chat-backend.mjs`| Native implementation targeting `/v1/chat/completions` API schema. | **NEW Backend** |
-| **Ollama / Local Driver** | `server/lib/workspace-chat-backend.mjs`| Direct mapping to OpenAI-compatible drivers using custom base URLs. | **NEW Backend** |
-| **Session State Store** | `server/lib/session-runtime.mjs` | Local `.json` files representing serialized chat contexts. | **Active & Extended** |
-| **LLM Runtime Bridge** | `server/lib/llm-runtime.mjs` | Isolated interface managing code patch generation and prompt formatting. | **NEW Runtime** |
-
-### Modules to Exclude
-- **Hermes Dashboard UI & Cookies**: The Unified Engine does not serve or use session cookies for dashboard access control.
-- **Process Spawning / CLI Wrappers**: The engine executes directly inside the Node process space, removing shell wraps.
+1. **Standalone Operation**: AI Workspace functions independently of the Hermes
+   Desktop App and the legacy `hermes serve` process. `HERMES_SERVER_URL` is
+   optional; omitting it runs the engine fully self-contained.
+2. **First-Class Workspace Ownership**: Configuration, credentials, sessions,
+   tasks, diffs, and approvals all reside in `.ai-workspace/`.
+3. **Graceful Compatibility Layer**: Legacy `/api/hermes/*` routes and
+   `HERMES_SERVER_URL` are retained as opt-in fallback bridges only.
 
 ---
 
-## 3. License & Attribution
+## 2. Implemented Module Map
 
-- **License**: The imported logic inherits the MIT/Apache licenses (subject to Hermes Agent's repository details).
-- **Attribution**: Original authors are acknowledged in `third_party/LICENSE` or inline module file headers where applicable.
+| Component | Location | Status |
+| :--- | :--- | :--- |
+| **ProviderRuntime** | `server/lib/provider-runtime.mjs` | ✅ Done |
+| **AuthRuntime** | `server/lib/auth-runtime.mjs` | ✅ Done |
+| **ModelRuntime** | `server/lib/model-runtime.mjs` | ✅ Done |
+| **SessionRuntime** | `server/lib/session-runtime.mjs` | ✅ Done |
+| **ChatRuntime** | `server/lib/chat-runtime.mjs` | ✅ Done |
+| **WorkspaceChatBackend** | `server/lib/workspace-chat-backend.mjs` | ✅ Done |
+| **HermesCompatChatBackend** | `server/lib/chat-runtime.mjs` | ✅ Legacy shim |
+| **LLMRuntime** | `server/lib/llm-runtime.mjs` | ✅ Done |
+| **CodeAgentRuntime** | `server/lib/code-agent-runtime.mjs` | ✅ Done |
+| **hermes-compat** | `server/lib/hermes-compat.mjs` | ✅ Legacy shim only |
+
+### Modules excluded as intended
+- Hermes Dashboard UI & session cookies
+- Process spawning / shell wrapper (`hermes serve`)
+- `HermesAgentAdapter` (fully removed)
 
 ---
 
-## 4. Phase-by-Phase Integration Roadmap
+## 3. Phase-by-Phase Integration Roadmap — Final State
 
 ```mermaid
 graph TD
-  A["Phase 1: Build Provider & Auth Runtimes"] --> B["Phase 2: Implement WorkspaceChatBackend (OpenAI/Ollama)"]
-  B --> C["Phase 3: Refactor Session & Model Runtimes (Local config prioritization)"]
+  A["Phase 1: Build Provider & Auth Runtimes"] --> B["Phase 2: Implement WorkspaceChatBackend (OpenAI-compatible)"]
+  B --> C["Phase 3: Refactor Session & Model Runtimes (local config priority)"]
   C --> D["Phase 4: Decouple CodeAgentRuntime LLM dependencies (LLMRuntime injection)"]
-  D --> E["Phase 5: Harden Git execution arguments parsing (Shell Metacharacters removal)"]
+  D --> E["Phase 5: Harden Git execution (execFile, shell metacharacter blocking)"]
+  E --> F["Phase 6: wait:true fix – LLMRuntime passes wait flag to ChatRuntime"]
+  F --> G["✅ All 32 tests green – standalone engine complete"]
 ```
+
+---
+
+## 4. Remaining Work
+
+| Area | Status |
+| :--- | :--- |
+| docsearch-mcp RAG integration | Future |
+| Ollama local model driver | Future |
+| Apple Client polish (dark mode, approval UI) | In progress |
+| MCP tool routing in WorkspaceAgentEngine | Future |

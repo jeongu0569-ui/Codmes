@@ -8,7 +8,7 @@ test("WorkspaceChatBackend submitPrompt calls openai compatible api", async () =
     readConfig: async () => ({
       model: { default: "qwen2.5-coder:latest", provider: "ollama" },
       providers: {
-        ollama: { baseUrl: "http://127.0.0.1:11434/v1" }
+        ollama: { baseUrl: "http://127.0.0.1:11434/v1", apiKeyRequired: false }
       }
     })
   };

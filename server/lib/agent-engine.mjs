@@ -33,7 +33,7 @@ export class WorkspaceAgentEngine extends EventEmitter {
     this.providerRuntime = new ProviderRuntime({ stateStore: this.state });
     this.authRuntime = new AuthRuntime({ stateStore: this.state });
     this.chatRuntime = new ChatRuntime({
-      hermesCompat: compat,
+      hermesCompat: compat?.config?.hermesServerUrl ? compat : null,
       stateStore: this.state,
       authRuntime: this.authRuntime,
       providerRuntime: this.providerRuntime
@@ -44,7 +44,6 @@ export class WorkspaceAgentEngine extends EventEmitter {
     this.codeRuntime = new CodeAgentRuntime({
       workspaceRoot: config.workspaceRoot,
       stateStore: this.state,
-      hermes: compat,
       llmRuntime: this.llmRuntime
     });
     this.eventWrites = new Set();

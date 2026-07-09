@@ -2,34 +2,32 @@
 
 ## High-Level Shape
 
-Current transitional shape:
+Current shape (`aiw serve` standalone, Hermes fallback optional):
 
 ```text
 iOS / macOS Client
         │
         ▼
-Workspace Server
+aiw serve (Workspace Server)
         │
         ├── Filesystem workspace root
-        ├── Metadata DB
-        ├── Search/index state
-        ├── Workspace Agent Engine
-        ├── Hermes API proxy
-        ├── Workspace context router
-        └── Search API
-        │
-        ▼
-Agent Adapters
-        ├── Hermes adapter
-        │   ├── Sessions
-        │   ├── Models
-        │   ├── Tools
-        │   ├── Approvals
-        │   └── MCP/docsearch
-        └── Future local/Codex-style code runtime
+        ├── .ai-workspace/ state store
+        │   ├── tasks/, approvals/, decisions/
+        │   ├── diffs/, tool-logs/, memory/
+        │   └── sessions/<id>.json
+        └── WorkspaceAgentEngine
+            ├── ProviderRuntime   – provider list/add/remove
+            ├── AuthRuntime       – credential list/add/remove
+            ├── ModelRuntime      – model list, default selection
+            ├── SessionRuntime    – local sessions + hermes-compat merge
+            ├── ChatRuntime       – backend selection (WorkspaceChatBackend first)
+            │     ├── WorkspaceChatBackend  (default: direct OpenAI-compatible)
+            │     └── HermesCompatChatBackend (fallback if HERMES_SERVER_URL set)
+            ├── LLMRuntime        – structured LLM calls (patch generation)
+            └── CodeAgentRuntime  – task/patch/approval/git loop
 ```
 
-Final target shape:
+Final target shape (reached, pending docsearch RAG integration):
 
 ```text
 iOS / macOS Client
@@ -50,19 +48,14 @@ aiw serve
         └── Approval/safety gate
 ```
 
-The final direction is not "Workspace Server as a thin client for the Hermes
-app." The goal is a self-owned Unified Engine started by `aiw serve`, without
-requiring the Hermes desktop app or a separate Hermes CLI process for normal
-operation. The existing Hermes adapter is a migration bridge while Workspace
-chat/model/provider/auth behavior is internalized.
-
-The client should not talk directly to random filesystem paths. It talks to the
-Workspace Server using workspace-relative paths.
+`HERMES_SERVER_URL` is **optional**. When omitted the server runs in
+standalone mode and `WorkspaceChatBackend` handles all chat using provider /
+credential settings stored in `.ai-workspace/config.json`.
 
 ## Why App → Workspace Server → Agent Engine
 
 The Obsidian plugin connected directly to Hermes because the Vault already lived
-inside Obsidian. The new app should put the Workspace Server in the middle.
+inside Obsidian. The new app puts the Workspace Server in the middle.
 
 Benefits:
 
@@ -84,6 +77,8 @@ HermesWorkspace/Notes/Work/meeting.md
 HermesWorkspace/Documents/os-book.pdf
 HermesWorkspace/Code/my-app/package.json
 HermesWorkspace/.ai-workspace/tasks/task-....json
+HermesWorkspace/.ai-workspace/sessions/<sessionId>.json
+HermesWorkspace/.ai-workspace/config.json
 ```
 
 The metadata DB should not replace files. It augments them:
@@ -96,7 +91,7 @@ The metadata DB should not replace files. It augments them:
 - checksum
 - indexed status
 - thumbnail/cache paths
-- Hermes session associations
+- session associations
 
 ## Path Rule
 
@@ -118,52 +113,47 @@ C:/Users/user/secret.txt
 
 This is the most important early invariant.
 
-## Hermes Integration
+## hermes-compat Layer
 
-The existing Hermes Connection plugin proved these useful flows:
+`server/lib/hermes-compat.mjs` is a **legacy compatibility shim only**.
+It connects to an external Hermes Server via WebSocket when
+`HERMES_SERVER_URL` is defined. It is not used for standalone operation.
 
-```text
-POST /api/auth/ws-ticket
-WS   /api/ws
-RPC  session.create
-RPC  session.resume
-RPC  prompt.submit
-RPC  approval.respond
+- `HermesCompatChatBackend` wraps `HermesLiveClient` with the `ChatBackend` interface.
+- `WorkspaceChatBackend` is the primary backend used when no Hermes URL is set.
+- `ChatRuntime` selects `WorkspaceChatBackend` by default; falls back to
+  `HermesCompatChatBackend` only when `HERMES_SERVER_URL` is configured.
+
+New workspace features must never be added to `hermes-compat.mjs`.
+
+## Chat / Provider / Auth ownership
+
+Provider and credential settings are stored in `.ai-workspace/config.json`:
+
+```json
+{
+  "providers": [
+    {
+      "id": "openai",
+      "type": "openai-compatible",
+      "baseUrl": "https://api.openai.com/v1",
+      "defaultModel": "gpt-4o"
+    }
+  ],
+  "defaultProvider": "openai",
+  "defaultModel": "gpt-4o"
+}
 ```
 
-The Workspace Server exposes a client-friendly live endpoint that bridges those
-Hermes events:
+API keys are stored separately in `.ai-workspace/credentials.json` and are
+masked in API responses. `AuthRuntime` and `ProviderRuntime` own this state.
+`WorkspaceChatBackend` reads these at request time.
 
-```text
-message.delta
-thinking.delta
-reasoning.delta
-tool.start
-tool.progress
-tool.complete
-approval.request
-message.complete
-```
+## Session Persistence
 
-The first live bridge keeps Hermes dashboard cookies and WebSocket tickets on
-the server side.
-
-In the current server, `/api/live` no longer talks to `HermesLiveClient`
-directly. It talks to a `WorkspaceAgentEngine`, which currently uses the
-`HermesAgentAdapter` implementation. The client-facing event envelope still
-uses `kind: "hermes.event"` for compatibility, but each event also passes
-through the workspace-owned agent state layer first.
-
-This is the first step toward the intended 1.5 architecture:
-
-```text
-Client
-  -> Workspace Server
-  -> WorkspaceAgentEngine
-     -> HermesAgentAdapter today
-     -> CodeAgentRuntime inspect loop today
-     -> Codex-style patch/test runtime later
-```
+`WorkspaceChatBackend` writes conversation history to
+`.ai-workspace/sessions/<sessionId>.json`. Each call to `submitPrompt` reads
+existing messages and appends new ones before calling the provider.
 
 ## Notes Context Router
 
@@ -194,8 +184,6 @@ Example metadata:
 }
 ```
 
-Hermes/docsearch should perform the actual search.
-
 Implemented server API:
 
 ```text
@@ -214,31 +202,29 @@ or a vector index can replace the internals without changing the client.
 
 ## Code Area
 
-Code projects live under `Code/`, but should have stricter permission handling
-than Notes.
+Code projects live under `Code/`. Permission handling is stricter than Notes.
 
-Future modes:
+The Code Agent safety policy:
 
 ```text
-Safe: Hermes dangerous-command approval prompts stay on.
-Full: Hermes yolo/full mode may bypass dangerous-command prompts.
+git status / add / commit / diff / log  – requires approved: true on the task
+git push                                 – requires gitPushApproved: true (or dangerApproved: true)
+git push --force / -f                    – requires dangerApproved: true only
+shell metacharacters in git arguments   – blocked unconditionally
 ```
 
-The client should show diffs and approvals before users trust automated code
-changes.
+`CodeAgentRuntime` owns the full loop:
 
-The code agent loop lives behind the same `WorkspaceAgentEngine` interface
-instead of being bolted directly to the client. `CodeAgentRuntime` scans a
-`Code/` project, searches relevant files, detects package/test commands,
-records git status and diff output, and writes a task plan. It also supports
-the first approved edit loop: proposed patches are stored as diff artifacts
-without modifying files, and only an approved proposal can be applied. Approved
-check commands can then run inside the code task scope.
+1. `inspectProject` – scan files, detect test/package commands, record git status
+2. `proposePatch` – store LLM-authored or human diff artifact (no file writes yet)
+3. `rejectPatch` – discard proposal without applying
+4. `applyPatch` – write file changes only after `approved: true` decision
+5. `runChecks` – execute test/lint commands inside the task scope
+6. `runGitCommand` – execute safe git commands via `execFile` (no shell expansion)
+7. `generateAutomaticPatch` – call `LLMRuntime.generateCodePatch` to produce a
+   structured `{ summary, changes: [{ path, find, replace }] }` response
 
 A coding task is recorded under `.ai-workspace/tasks`, approval requests under
 `.ai-workspace/approvals`, tool activity under `.ai-workspace/tool-logs`,
 decisions under `.ai-workspace/decisions`, and produced or captured diffs under
 `.ai-workspace/diffs`.
-
-Future automatic code generation should extend this runtime rather than adding
-a parallel code path.

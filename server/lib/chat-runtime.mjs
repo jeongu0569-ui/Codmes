@@ -21,6 +21,60 @@ export class HermesCompatChatBackend extends ChatBackend {
   }
 
   async submitPrompt(params) {
+    if (params.wait) {
+      const replyPromise = new Promise((resolve, reject) => {
+        let answerText = "";
+        const onEvent = (envelope) => {
+          const type = envelope.type || "";
+          const text = envelope.text || envelope.payload?.text || (typeof envelope.payload === "string" ? envelope.payload : "");
+
+          if (type === "message.delta" || type === "assistant.delta" || type === "assistant.message.delta") {
+            answerText += text;
+          } else if (
+            type === "message.done" ||
+            type === "response.done" ||
+            type === "turn.complete" ||
+            type === "turn.completed" ||
+            type === "message.completed"
+          ) {
+            cleanup();
+            resolve({
+              ok: true,
+              sessionId: params.sessionId,
+              reply: answerText
+            });
+          }
+        };
+
+        const onClose = () => {
+          cleanup();
+          reject(new Error("Hermes live connection closed prematurely."));
+        };
+
+        const onError = (err) => {
+          cleanup();
+          reject(err);
+        };
+
+        const cleanup = () => {
+          this.compat.off("event", onEvent);
+          this.compat.off("close", onClose);
+          this.compat.off("error", onError);
+        };
+
+        this.compat.on("event", onEvent);
+        this.compat.on("close", onClose);
+        this.compat.on("error", onError);
+
+        this.compat.submitPrompt(params).catch((err) => {
+          cleanup();
+          reject(err);
+        });
+      });
+
+      return await replyPromise;
+    }
+
     return await this.compat.submitPrompt(params);
   }
 
