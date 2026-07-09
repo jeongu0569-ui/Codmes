@@ -8,8 +8,8 @@ import { WorkspaceAgentEngine, WorkspaceAgentStateStore } from "./agent-engine.m
 
 test("workspace agent engine resolves context and records task state", async () => {
   const root = await fixtureWorkspace();
-  const adapter = new FakeAgentAdapter();
-  const engine = new WorkspaceAgentEngine({ workspaceRoot: root }, adapter);
+  const runtime = new FakeAgentRuntime();
+  const engine = new WorkspaceAgentEngine({ workspaceRoot: root }, runtime);
 
   const session = await engine.createSession({
     provider: "local",
@@ -30,8 +30,8 @@ test("workspace agent engine resolves context and records task state", async () 
     }
   });
   assert.equal(prompt.ok, true);
-  assert.equal(adapter.lastPrompt.context.workspaceContext.workspace.activePath, "Notes/a.md");
-  assert.equal(adapter.lastPrompt.context.workspaceContext.inlineBlocks[0].path, "Notes/a.md");
+  assert.equal(runtime.lastPrompt.context.workspaceContext.workspace.activePath, "Notes/a.md");
+  assert.equal(runtime.lastPrompt.context.workspaceContext.inlineBlocks[0].path, "Notes/a.md");
 
   const taskDir = path.join(root, ".ai-workspace", "tasks");
   const allFiles = await fs.readdir(taskDir);
@@ -47,10 +47,10 @@ test("workspace agent engine resolves context and records task state", async () 
 
 test("workspace agent engine records live tool events under workspace state", async () => {
   const root = await fixtureWorkspace();
-  const adapter = new FakeAgentAdapter();
-  const engine = new WorkspaceAgentEngine({ workspaceRoot: root }, adapter);
+  const runtime = new FakeAgentRuntime();
+  const engine = new WorkspaceAgentEngine({ workspaceRoot: root }, runtime);
 
-  adapter.emit("event", {
+  runtime.emit("event", {
     type: "tool.start",
     sessionId: "stored-1",
     text: "search_files"
@@ -66,8 +66,8 @@ test("workspace agent engine records live tool events under workspace state", as
 
 test("workspace agent engine persists streamed assistant replies into sessions", async () => {
   const root = await fixtureWorkspace();
-  const adapter = new StreamingAgentAdapter();
-  const engine = new WorkspaceAgentEngine({ workspaceRoot: root }, adapter);
+  const runtime = new StreamingAgentRuntime();
+  const engine = new WorkspaceAgentEngine({ workspaceRoot: root }, runtime);
 
   const session = await engine.createSession({
     provider: "custom",
@@ -90,8 +90,8 @@ test("workspace agent engine persists streamed assistant replies into sessions",
     message: "이전 답변 기억해?"
   });
 
-  assert.deepEqual(adapter.lastPrompt.history.map((message) => message.role), ["user", "assistant"]);
-  assert.deepEqual(adapter.lastPrompt.history.map((message) => message.content), ["안녕", "안녕하세요"]);
+  assert.deepEqual(runtime.lastPrompt.history.map((message) => message.role), ["user", "assistant"]);
+  assert.deepEqual(runtime.lastPrompt.history.map((message) => message.content), ["안녕", "안녕하세요"]);
 });
 
 test("workspace agent state creates the unified state directory shape", async () => {
@@ -157,7 +157,7 @@ test("workspace agent state records and resolves approval inbox items", async ()
   assert.equal(pending.approvals.length, 0);
 });
 
-class FakeAgentAdapter extends EventEmitter {
+class FakeAgentRuntime extends EventEmitter {
   constructor() {
     super();
     this.name = "fake-agent";
@@ -203,7 +203,7 @@ class FakeAgentAdapter extends EventEmitter {
   close() {}
 }
 
-class StreamingAgentAdapter extends EventEmitter {
+class StreamingAgentRuntime extends EventEmitter {
   constructor() {
     super();
     this.name = "streaming-agent";

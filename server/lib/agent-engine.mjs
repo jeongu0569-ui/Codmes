@@ -47,7 +47,7 @@ export class WorkspaceAgentEngine extends EventEmitter {
       this.runtime.on("event", (event) => {
         const enriched = {
           engine: "workspace-agent",
-          adapter: this.adapterName(),
+          runtime: this.runtimeName(),
           ...event
         };
         this.trackTranscriptEvent(enriched);
@@ -58,7 +58,7 @@ export class WorkspaceAgentEngine extends EventEmitter {
       this.runtime.on("error", (error) => {
         const enriched = {
           engine: "workspace-agent",
-          adapter: this.adapterName(),
+          runtime: this.runtimeName(),
           type: "runtime.error",
           error: error?.message || "Runtime error.",
           text: error?.message || "Runtime error."
@@ -76,7 +76,7 @@ export class WorkspaceAgentEngine extends EventEmitter {
     }
     await this.state.recordSessionEvent({
       type: "engine.connect",
-      adapter: this.adapterName()
+      runtime: this.runtimeName()
     });
   }
 
@@ -103,7 +103,7 @@ export class WorkspaceAgentEngine extends EventEmitter {
 
     await this.state.recordSessionEvent({
       type: "session.create",
-      adapter: this.adapterName(),
+      runtime: this.runtimeName(),
       sessionId: result.sessionId,
       runtimeSessionId: result.runtimeSessionId,
       provider: params.provider,
@@ -114,7 +114,7 @@ export class WorkspaceAgentEngine extends EventEmitter {
     return {
       ...result,
       engine: "workspace-agent",
-      adapter: this.adapterName()
+      runtime: this.runtimeName()
     };
   }
 
@@ -125,7 +125,7 @@ export class WorkspaceAgentEngine extends EventEmitter {
       : sessionId;
     await this.state.recordSessionEvent({
       type: "session.resume",
-      adapter: this.adapterName(),
+      runtime: this.runtimeName(),
       sessionId,
       runtimeSessionId
     });
@@ -137,7 +137,7 @@ export class WorkspaceAgentEngine extends EventEmitter {
     const context = await this.resolveContext(params);
     const task = await this.state.startTask({
       type: params.taskType || "chat",
-      adapter: this.adapterName(),
+      runtime: this.runtimeName(),
       sessionId: params.sessionId,
       message: params.message,
       contextRequest: params.contextRequest,
@@ -185,7 +185,7 @@ export class WorkspaceAgentEngine extends EventEmitter {
         ...result,
         taskId: task.id,
         engine: "workspace-agent",
-        adapter: this.adapterName()
+        runtime: this.runtimeName()
       };
     } catch (error) {
       await this.state.finishTask(task.id, {
@@ -201,7 +201,7 @@ export class WorkspaceAgentEngine extends EventEmitter {
     const result = await this.chatRuntime.respondToApproval(params);
     await this.state.recordSessionEvent({
       type: "approval.respond",
-      adapter: this.adapterName(),
+      runtime: this.runtimeName(),
       sessionId: params.sessionId,
       approved: params.approved !== false,
       choice: result.choice
@@ -209,7 +209,7 @@ export class WorkspaceAgentEngine extends EventEmitter {
     return {
       ...result,
       engine: "workspace-agent",
-      adapter: this.adapterName()
+      runtime: this.runtimeName()
     };
   }
 
@@ -218,7 +218,7 @@ export class WorkspaceAgentEngine extends EventEmitter {
     await this.chatRuntime.setAccessMode(sessionId, accessMode);
     await this.state.recordSessionEvent({
       type: "config.accessMode",
-      adapter: this.adapterName(),
+      runtime: this.runtimeName(),
       sessionId,
       accessMode
     });
@@ -229,7 +229,7 @@ export class WorkspaceAgentEngine extends EventEmitter {
     await this.chatRuntime.setReasoning(sessionId, reasoningEffort);
     await this.state.recordSessionEvent({
       type: "config.reasoning",
-      adapter: this.adapterName(),
+      runtime: this.runtimeName(),
       sessionId,
       reasoningEffort
     });
@@ -252,7 +252,7 @@ export class WorkspaceAgentEngine extends EventEmitter {
     if (result.approvalRequest) {
       this.emit("event", {
         engine: "workspace-agent",
-        adapter: "code-agent",
+        runtime: "code-agent",
         ...result.approvalRequest
       });
     }
@@ -264,7 +264,7 @@ export class WorkspaceAgentEngine extends EventEmitter {
     if (result.approvalRequest) {
       this.emit("event", {
         engine: "workspace-agent",
-        adapter: "code-agent",
+        runtime: "code-agent",
         ...result.approvalRequest
       });
     }
@@ -395,7 +395,7 @@ export class WorkspaceAgentEngine extends EventEmitter {
     await Promise.allSettled([...this.eventWrites]);
   }
 
-  adapterName() {
+  runtimeName() {
     return this.runtime?.name || "ai-workspace-runtime";
   }
 
@@ -495,7 +495,7 @@ export class WorkspaceAgentStateStore {
       taskId: task.id,
       sessionId: task.sessionId,
       createdAt: task.createdAt,
-      adapter: task.adapter
+      runtime: task.runtime
     });
     return task;
   }
@@ -795,7 +795,7 @@ function summarizeTask(task) {
     status: task.status,
     createdAt: task.createdAt,
     updatedAt: task.updatedAt,
-    adapter: task.adapter,
+    runtime: task.runtime,
     sessionId: task.sessionId,
     scopePath: task.scopePath,
     message: task.message,

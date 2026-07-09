@@ -45,7 +45,7 @@ export class CodeAgentRuntime {
     const scope = this.resolveCodeScope(params.scopePath || "Code");
     const task = await this.state.startTask({
       type: "code",
-      adapter: "code-runtime",
+      runtime: "code-runtime",
       message: instruction,
       scopePath: scope.relativePath,
       accessMode: params.accessMode || "confirm",

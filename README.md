@@ -1,11 +1,8 @@
 # AI Workspace
 
-AI Workspace is a server-centered workspace app for chat, notes, PDFs, search,
-and code tasks.
+AI Workspace is a server-centered workspace app for chat, notes, PDFs, search, and code tasks.
 
-The goal is not to run a thin client on top of another AI server. The goal is
-to make AI Workspace own its workspace server, runtime configuration, sessions,
-tools, approvals, file APIs, search context, and code-task loop.
+**Architecture Note**: AI Workspace directly absorbs the Hermes core runtime natively. It is not an adapter or bridge structure connecting to an external Hermes server. Instead, it natively implements the same robust model/provider/auth/session/tool/mcp/approval/runtime systems directly inside AI Workspace, overlaid by the workspace, notes, search, and code project layers.
 
 ## Product Shape
 

@@ -373,8 +373,7 @@ async function workspaceInfo() {
     agent: {
       engine: "workspace-agent",
       statePath: ".ai-workspace",
-      adapters: ["ai-workspace-runtime"],
-      runtimes: ["chat", "models", "sessions", "code-agent"],
+      runtimes: ["ai-workspace-runtime", "chat", "models", "sessions", "code-agent"],
       taskEndpoint: "/api/agent/tasks",
       approvalEndpoint: "/api/agent/approvals",
       codeTaskEndpoint: "/api/agent/code-task",

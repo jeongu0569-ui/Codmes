@@ -154,7 +154,7 @@ struct AgentTaskSummary: Codable, Identifiable, Hashable {
     let status: String?
     let createdAt: String?
     let updatedAt: String?
-    let adapter: String?
+    let runtime: String?
     let sessionId: String?
     let scopePath: String?
     let message: String?
