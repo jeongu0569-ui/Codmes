@@ -240,9 +240,20 @@ export class CodeAgentRuntime {
       throw Object.assign(new Error("Only 'git' commands are allowed in this runtime."), { status: 400 });
     }
 
+    // Block shell metacharacters and multi-command injections
+    const metacharacters = /[;&|`$\n\r<>]/;
+    if (metacharacters.test(command)) {
+      throw Object.assign(new Error("Security block: Shell metacharacters are not allowed in git commands."), { status: 400 });
+    }
+
     // Strong Approval Policy
     const isPush = /\bpush\b/.test(command);
-    const isForcePush = /\bpush\b/.test(command) && (/\s(--force|-f)\b/.test(command) || command.endsWith(" -f") || command.endsWith(" --force"));
+    const isForcePush = /\bpush\b/.test(command) && (
+      /\s(--force|-f|--force-with-lease)\b/.test(command) || 
+      command.endsWith(" -f") || 
+      command.endsWith(" --force") ||
+      command.endsWith(" --force-with-lease")
+    );
 
     if (isPush) {
       if (params.gitPushApproved !== true && params.dangerApproved !== true) {
@@ -332,8 +343,9 @@ export class CodeAgentRuntime {
   }
 
   async generateAutomaticPatch(taskId, params = {}) {
-    if (!this.hermes) {
-      throw Object.assign(new Error("Automatic patch generation requires Hermes configuration."), { status: 400 });
+    // TODO: Bypassing legacy HermesLiveClient to use unified ChatRuntime or LLMRuntime interface directly
+    if (!this.hermes || !this.hermes.hermesServerUrl) {
+      throw Object.assign(new Error("Automatic patch generation requires a configured chat backend."), { status: 503 });
     }
     const task = await this.state.readTask(requireTaskId(taskId));
     if (task.type !== "code") {

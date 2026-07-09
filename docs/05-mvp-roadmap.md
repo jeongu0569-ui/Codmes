@@ -199,6 +199,7 @@ Status: in progress.
 - Task memory accumulation. Done at the server level: code tasks now maintain a
   bounded `taskMemory` summary with read files, proposed files, changed files,
   executed commands, check summaries, failure logs, next steps, and notes.
+- Git command execution integration. Done: Integrated `runGitCommand` executing `git status`, `git diff`, `git add`, `git commit`, and `git push` safely inside code tasks with strict metacharacter injection blocking and force-push approval policies.
 - Apple client Code Agent panel. First pass done: the Code browser can create
   inspect tasks for the current Code folder, list/load recent code tasks, show
   task memory, show the latest proposed/git diff artifact, approve/apply an

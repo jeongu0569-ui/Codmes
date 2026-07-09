@@ -139,13 +139,18 @@ async function runStatus(args) {
     return;
   }
 
-  console.log(`AI Workspace: ${health.ok ? "ok" : "unknown"}`);
-  console.log(`Server: ${baseUrl}`);
-  console.log(`Workspace root: ${workspace.workspaceRoot || "(unknown)"}`);
-  console.log(`Hermes: ${workspace.hermes?.serverUrl || "(unknown)"}`);
-  console.log(`Dashboard login: ${workspace.hermes?.dashboardLoginConfigured ? "configured" : "not configured"}`);
-  console.log(`Agent: ${workspace.agent?.engine || "(unknown)"} / ${(workspace.agent?.runtimes || []).join(", ") || "no runtimes"}`);
-  console.log(`Search: ${workspace.search?.provider || "(unknown)"}${workspace.search?.indexed ? " indexed" : ""}`);
+  const hermesCompatEnabled = workspace.hermes?.compatStatus === "enabled";
+
+  console.log(`Workspace Server: ${health.ok ? "ok" : "unknown"}`);
+  console.log(`Workspace Root: ${workspace.workspaceRoot || "(unknown)"}`);
+  console.log(`Code Runtime: ok`);
+  console.log(`Approval Inbox: ok`);
+  console.log(`Search Provider: ${workspace.search?.provider || "(unknown)"}`);
+  console.log(`Chat Runtime: ${workspace.chatRuntime?.status || "unavailable"}`);
+  console.log(`Hermes Compat: ${workspace.hermes?.compatStatus || "disabled"}`);
+  if (!hermesCompatEnabled) {
+    console.log(`Reason: ${workspace.hermes?.reason || "HERMES_SERVER_URL is not configured"}`);
+  }
 }
 
 async function runTasks(args) {

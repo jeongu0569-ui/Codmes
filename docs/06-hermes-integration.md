@@ -64,13 +64,15 @@ Internally, `/api/live` now routes through the Workspace Agent Engine:
 client WS /api/live
   -> WorkspaceAgentEngine
   -> ChatRuntime
+  -> ChatBackend (Interface)
+  -> HermesCompatChatBackend (Implementation)
   -> HermesLiveClient (compat)
   -> Hermes /api/ws
 ```
 
 The server-side adapter layer was completely refactored. `HermesAgentAdapter` has been removed. Live connection, model lookup, and session history management are now handled by isolated runtime modules (`ChatRuntime`, `ModelRuntime`, and `SessionRuntime`) backed by the compatibility layer `hermes-compat.mjs`.
 
-If `HERMES_SERVER_URL` is omitted, the runtimes fall back to a local offline mode to keep core workspace operations active. Outgoing events still use
+To isolate the legacy system, `ChatRuntime` defines a clean `ChatBackend` interface. Live requests are routed through `HermesCompatChatBackend`, ensuring that the core engine is decoupled from the specific communication protocol. If `HERMES_SERVER_URL` is omitted, the runtimes fall back to a local offline mode to keep core workspace operations active. Outgoing events still use
 `kind: "hermes.event"` for Apple client compatibility, and carry
 engine/adapter identity as well.
 

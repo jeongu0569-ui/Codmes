@@ -125,6 +125,7 @@ Current implemented files:
 
 ```text
 .ai-workspace/sessions/events.jsonl
+.ai-workspace/sessions/<sessionId>.json
 .ai-workspace/approvals/events.jsonl
 .ai-workspace/approvals/approval-<timestamp>-<uuid>.json
 .ai-workspace/tasks/events.jsonl
@@ -157,6 +158,23 @@ The workspace-wide configuration (default model, custom providers, and credentia
       "label": "My Anthropic Key"
     }
   ]
+}
+```
+
+## Workspace-Owned Sessions
+
+Workspace sessions are saved under `.ai-workspace/sessions/<sessionId>.json` so that session history remains active and persistent across chat engines:
+
+```json
+{
+  "id": "session-uuid",
+  "title": "Code task discussion",
+  "model": "anthropic/claude-3-5-sonnet",
+  "preview": "",
+  "updatedAt": "2026-07-09T02:00:00Z",
+  "source": "workspace",
+  "runtime": "chat-runtime",
+  "isActive": true
 }
 ```
 

@@ -450,6 +450,18 @@ test("code agent runtime executes git commands with safety approvals", async () 
     runtime.runGitCommand(taskId, { approved: true, gitPushApproved: true, command: "git push -f" }),
     /force-push/
   );
+
+  // 6. git push --force-with-lease 실행 시 danger 승인이 없을 때 실패
+  await assert.rejects(
+    runtime.runGitCommand(taskId, { approved: true, gitPushApproved: true, command: "git push --force-with-lease" }),
+    /force-push/
+  );
+
+  // 7. shell injection 문자열 차단 실패 확인
+  await assert.rejects(
+    runtime.runGitCommand(taskId, { approved: true, command: "git status && rm -rf /" }),
+    /Shell metacharacters/
+  );
 });
 
 

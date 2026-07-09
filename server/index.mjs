@@ -323,6 +323,7 @@ async function handleRequest(req, res) {
 }
 
 async function workspaceInfo() {
+  const hasHermes = Boolean(HERMES_SERVER_URL);
   return {
     rootName: path.basename(WORKSPACE_ROOT),
     workspaceRoot: WORKSPACE_ROOT,
@@ -332,8 +333,14 @@ async function workspaceInfo() {
       path: folder
     })),
     hermes: {
-      serverUrl: HERMES_SERVER_URL,
-      dashboardLoginConfigured: Boolean(HERMES_DASHBOARD_USERNAME && HERMES_DASHBOARD_PASSWORD)
+      serverUrl: HERMES_SERVER_URL || "",
+      dashboardLoginConfigured: Boolean(HERMES_DASHBOARD_USERNAME && HERMES_DASHBOARD_PASSWORD),
+      compatStatus: hasHermes ? "enabled" : "disabled",
+      reason: hasHermes ? "" : "HERMES_SERVER_URL is not configured"
+    },
+    chatRuntime: {
+      status: hasHermes ? "ok" : "unavailable",
+      reason: hasHermes ? "" : "HERMES_SERVER_URL is not configured"
     },
     agent: {
       engine: "workspace-agent",

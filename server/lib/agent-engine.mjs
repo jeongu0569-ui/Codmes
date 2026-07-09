@@ -26,11 +26,10 @@ export class WorkspaceAgentEngine extends EventEmitter {
     this.config = config;
     this.compat = compat;
     
-    this.chatRuntime = new ChatRuntime({ hermesCompat: compat });
-    this.modelRuntime = new ModelRuntime({ hermesCompat: compat });
-    this.sessionRuntime = new SessionRuntime({ hermesCompat: compat });
-    
     this.state = new WorkspaceAgentStateStore(config.workspaceRoot);
+    this.chatRuntime = new ChatRuntime({ hermesCompat: compat });
+    this.modelRuntime = new ModelRuntime({ hermesCompat: compat, stateStore: this.state });
+    this.sessionRuntime = new SessionRuntime({ hermesCompat: compat, stateStore: this.state });
     this.codeRuntime = new CodeAgentRuntime({
       workspaceRoot: config.workspaceRoot,
       stateStore: this.state,
@@ -64,6 +63,18 @@ export class WorkspaceAgentEngine extends EventEmitter {
   async createSession(params = {}) {
     await this.state.ensure();
     const result = await this.chatRuntime.createSession(params);
+    const sessionObj = {
+      id: result.sessionId,
+      title: params.title || `Session ${new Date().toLocaleDateString()}`,
+      model: params.model || this.config.model?.default || "unknown",
+      preview: "",
+      updatedAt: new Date().toISOString(),
+      source: "workspace",
+      runtime: "chat-runtime",
+      isActive: true
+    };
+    await this.state.writeSession(sessionObj);
+
     await this.state.recordSessionEvent({
       type: "session.create",
       adapter: this.compat?.name || "hermes-live",
@@ -428,6 +439,43 @@ export class WorkspaceAgentStateStore {
       at: new Date().toISOString(),
       ...definedFields(event)
     });
+  }
+
+  async writeSession(session) {
+    await this.ensure();
+    const filePath = path.join(this.root, "sessions", `${session.id}.json`);
+    await fs.writeFile(filePath, JSON.stringify(session, null, 2), "utf8");
+  }
+
+  async readSession(sessionId) {
+    await this.ensure();
+    const filePath = path.join(this.root, "sessions", `${sessionId}.json`);
+    try {
+      const data = await fs.readFile(filePath, "utf8");
+      return JSON.parse(data);
+    } catch {
+      return null;
+    }
+  }
+
+  async listWorkspaceSessions() {
+    await this.ensure();
+    const dirPath = path.join(this.root, "sessions");
+    try {
+      const files = await fs.readdir(dirPath);
+      const sessions = [];
+      for (const file of files) {
+        if (file.endsWith(".json")) {
+          try {
+            const data = await fs.readFile(path.join(dirPath, file), "utf8");
+            sessions.push(JSON.parse(data));
+          } catch {}
+        }
+      }
+      return sessions.sort((a, b) => new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0));
+    } catch {
+      return [];
+    }
   }
 
   async recordAgentEvent(event) {
