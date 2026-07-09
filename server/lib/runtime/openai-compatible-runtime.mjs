@@ -199,6 +199,20 @@ export class OpenAICompatibleRuntime extends EventEmitter {
     const activeTools = [...WORKSPACE_TOOL_DEFINITIONS];
 
     if (config.mcpServers) {
+      const enabledMcpNames = new Set(
+        config.mcpServers
+          .filter((mcp) => mcp.enabled !== false)
+          .map((mcp) => mcp.name)
+      );
+      // Stop any running MCP clients that were disabled or removed
+      for (const [name, client] of this.mcpClients.entries()) {
+        if (!enabledMcpNames.has(name)) {
+          try {
+            client.stop();
+          } catch {}
+        }
+      }
+
       for (const mcp of config.mcpServers) {
         if (mcp.enabled !== false) {
           try {
@@ -246,7 +260,7 @@ export class OpenAICompatibleRuntime extends EventEmitter {
       const text = await response.text().catch(() => "");
       throw Object.assign(
         new Error(`Model request failed: ${response.status} ${text.slice(0, 500)}`),
-        { status: 502 }
+        { status: response.status }
       );
     }
 
@@ -309,10 +323,18 @@ export class OpenAICompatibleRuntime extends EventEmitter {
 
       const mcp = config.mcpServers?.find((s) => s.name === mcpName);
       if (!mcp) {
+        const client = this.mcpClients.get(mcpName);
+        if (client) {
+          try { client.stop(); } catch {}
+        }
         const errorMsg = `MCP server '${mcpName}' not found.`;
         return { ok: false, error: errorMsg };
       }
       if (mcp.enabled === false) {
+        const client = this.mcpClients.get(mcpName);
+        if (client) {
+          try { client.stop(); } catch {}
+        }
         const errorMsg = `MCP server '${mcpName}' is disabled.`;
         return { ok: false, error: errorMsg };
       }
@@ -433,7 +455,9 @@ export class OpenAICompatibleRuntime extends EventEmitter {
     let client = this.mcpClients.get(mcpConfig.name);
     if (!client) {
       const { McpClient } = await import("./mcp-client.mjs");
-      client = new McpClient(mcpConfig.name, mcpConfig.command, mcpConfig.args || []);
+      client = new McpClient(mcpConfig.name, mcpConfig.command, mcpConfig.args || [], {
+        workspaceRoot: this.workspaceRoot
+      });
       this.mcpClients.set(mcpConfig.name, client);
     }
     if (client.status !== "running") {

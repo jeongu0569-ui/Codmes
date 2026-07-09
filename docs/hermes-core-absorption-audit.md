@@ -40,3 +40,108 @@ This document audits the absorption state of the Hermes core runtime inside AI W
 ### Phase 2: Skills & Security (Planned)
 - [ ] Add generic approval hooks schema to config.yaml.
 - [ ] Implement skill loading path configurations.
+
+---
+
+## Test Verification Results
+
+All 44 unit and integration tests successfully pass:
+```text
+TAP version 13
+# Subtest: workspace agent engine resolves context and records task state
+ok 1 - workspace agent engine resolves context and records task state
+# Subtest: workspace agent engine records live tool events under workspace state
+ok 2 - workspace agent engine records live tool events under workspace state
+# Subtest: workspace agent engine persists streamed assistant replies into sessions
+ok 3 - workspace agent engine persists streamed assistant replies into sessions
+# Subtest: workspace agent state creates the unified state directory shape
+ok 4 - workspace agent state creates the unified state directory shape
+# Subtest: workspace agent state lists task summaries
+ok 5 - workspace agent state lists task summaries
+# Subtest: workspace agent state records and resolves approval inbox items
+ok 6 - workspace agent state records and resolves approval inbox items
+# Subtest: parseGitCommand preserves quotes and partitions tokens correctly
+ok 7 - parseGitCommand preserves quotes and partitions tokens correctly
+# Subtest: LLMRuntime availability follows chat runtime backend availability
+ok 8 - LLMRuntime availability follows chat runtime backend availability
+# Subtest: normalizePatchResponse handles canonical, array, and write-op forms
+ok 9 - normalizePatchResponse handles canonical, array, and write-op forms
+# Subtest: code agent runtime inspects a Code project and records artifacts
+ok 10 - code agent runtime inspects a Code project and records artifacts
+# Subtest: code agent runtime rejects a proposed patch without changing files
+ok 11 - code agent runtime rejects a proposed patch without changing files
+# Subtest: code agent runtime can run approved checks immediately after applying a patch
+ok 12 - code agent runtime can run approved checks immediately after applying a patch
+# Subtest: code agent runtime rejects non-Code scopes
+ok 13 - code agent runtime rejects non-Code scopes
+# Subtest: code agent runtime generates automatic patches using mock LLM server
+ok 14 - code agent runtime generates automatic patches using mock LLM server
+# Subtest: code agent runtime executes git commands with safety approvals
+ok 15 - code agent runtime executes git commands with safety approvals
+# Subtest: attaches a short note inline
+ok 16 - attaches a short note inline
+# Subtest: folder context lists files and recommends rag
+ok 17 - folder context lists files and recommends rag
+# Subtest: pdf context is metadata only
+ok 18 - pdf context is metadata only
+# Subtest: rejects context path traversal
+ok 19 - rejects context path traversal
+# Subtest: normalizes workspace-relative paths
+ok 20 - normalizes workspace-relative paths
+# Subtest: rejects absolute and traversal paths
+ok 21 - rejects absolute and traversal paths
+# Subtest: resolved paths stay inside workspace root
+ok 22 - resolved paths stay inside workspace root
+# Subtest: maps root keys to folder names
+ok 23 - maps root keys to folder names
+# Subtest: renders fenced code with shiki markup
+ok 24 - renders fenced code with shiki markup
+# Subtest: escapes raw html in markdown
+ok 25 - escapes raw html in markdown
+# Subtest: drops unsafe link protocols
+ok 26 - drops unsafe link protocols
+# Subtest: returns complete html document
+ok 27 - returns complete html document
+# Subtest: renders standalone code documents with shiki
+ok 28 - renders standalone code documents with shiki
+# Subtest: OpenAI-compatible runtime streams chat completions from AI Workspace config
+ok 29 - OpenAI-compatible runtime streams chat completions from AI Workspace config
+# Subtest: OpenAI-compatible runtime reports setup when no model is selected
+ok 30 - OpenAI-compatible runtime reports setup when no model is selected
+# Subtest: OpenAI-compatible runtime executes workspace search tool calls
+ok 31 - OpenAI-compatible runtime executes workspace search tool calls
+# Subtest: OpenAI-compatible runtime executes fallback provider chain on error
+ok 32 - OpenAI-compatible runtime executes fallback provider chain on error
+# Subtest: OpenAI-compatible runtime filters tools using disabledTools config
+ok 33 - OpenAI-compatible runtime filters tools using disabledTools config
+# Subtest: OpenAI-compatible runtime exposes MCP tools and executes them via stdio JSON-RPC
+ok 34 - OpenAI-compatible runtime exposes MCP tools and executes them via stdio JSON-RPC
+# Subtest: McpClient server crash handling and timeout error
+ok 35 - McpClient server crash handling and timeout error
+# Subtest: OpenAI-compatible runtime fallback conditions separation
+ok 36 - OpenAI-compatible runtime fallback conditions separation
+# Subtest: SessionRuntime rename, export, and prune
+ok 37 - SessionRuntime rename, export, and prune
+# Subtest: OpenAI-compatible runtime fallback event condition mapping
+ok 38 - OpenAI-compatible runtime fallback event condition mapping
+# Subtest: McpClient lifecycle: initialize, list, call, idle-timeout, and logs
+ok 39 - McpClient lifecycle: initialize, list, call, idle-timeout, and logs
+# Subtest: searches workspace text files within scope
+ok 40 - searches workspace text files within scope
+# Subtest: does not search outside the requested scope
+ok 41 - does not search outside the requested scope
+# Subtest: reports fallback search status
+ok 42 - reports fallback search status
+# Subtest: encodes server text frames
+ok 43 - encodes server text frames
+# Subtest: decodes masked client text frames
+ok 44 - decodes masked client text frames
+1..44
+# tests 44
+# suites 0
+# pass 44
+# fail 0
+# cancelled 0
+# skipped 0
+# todo 0
+```

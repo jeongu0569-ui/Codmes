@@ -443,3 +443,130 @@ test("SessionRuntime rename, export, and prune", async () => {
   const emptySession = await stateStore.readSession(emptySessionId);
   assert.equal(emptySession, null);
 });
+
+test("OpenAI-compatible runtime fallback event condition mapping", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "aiw-openai-runtime-fallback-cond-"));
+  await setDefaultModel(root, "openai-api", "gpt-5.5");
+  await setCredentialValue(root, "openai-api", "AIW_OPENAI_API_KEY", "primary-key");
+  await setCredentialValue(root, "lmstudio", "AIW_LM_API_KEY", "fallback-key");
+
+  await writeRuntimeConfig(root, {
+    defaultModel: { provider: "openai-api", model: "gpt-5.5" },
+    fallbackChain: ["lmstudio:local-model"]
+  });
+
+  const conditions = [
+    { status: 429, expected: "rate_limit" },
+    { status: 401, expected: "auth_error" },
+    { status: 504, expected: "network_error" },
+    { status: 404, expected: "model_unavailable" },
+    { status: 503, expected: "provider_unavailable" }
+  ];
+
+  for (const cond of conditions) {
+    let fallbackEvent = null;
+    const runtime = new OpenAICompatibleRuntime({
+      workspaceRoot: root,
+      fetchImpl: async () => {
+        return {
+          ok: false,
+          status: cond.status,
+          text: async () => "Mock Error"
+        };
+      }
+    });
+
+    runtime.on("event", (e) => {
+      if (e.type === "fallback.attempt") {
+        fallbackEvent = e;
+      }
+    });
+
+    try {
+      await runtime.submitPrompt({ sessionId: "session-fallback-cond", message: "테스트" });
+    } catch {
+      // fine
+    }
+
+    assert.ok(fallbackEvent, `Fallback event should be emitted for status ${cond.status}`);
+    assert.equal(fallbackEvent.condition, cond.expected);
+  }
+});
+
+test("McpClient lifecycle: initialize, list, call, idle-timeout, and logs", async () => {
+  const { McpClient } = await import("./mcp-client.mjs");
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "aiw-mcp-lifecycle-"));
+
+  const mockMcpScript = `
+import readline from "readline";
+
+const rl = readline.createInterface({
+  input: process.stdin,
+  output: process.stdout,
+  terminal: false
+});
+
+rl.on("line", (line) => {
+  if (!line.trim()) return;
+  const req = JSON.parse(line);
+  if (req.method === "initialize") {
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0",
+      id: req.id,
+      result: {
+        protocolVersion: "2024-11-05",
+        capabilities: { tools: {} },
+        serverInfo: { name: "mock-lifecycle", version: "1.0.0" }
+      }
+    }) + "\\n");
+  } else if (req.method === "tools/list") {
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0",
+      id: req.id,
+      result: {
+        tools: [{ name: "test_tool", description: "A test tool" }]
+      }
+    }) + "\\n");
+  } else if (req.method === "tools/call") {
+    process.stderr.write("mcp log test\\n");
+    process.stdout.write(JSON.stringify({
+      jsonrpc: "2.0",
+      id: req.id,
+      result: { content: [{ type: "text", text: "hello " + req.params.arguments.val }] }
+    }) + "\\n");
+  }
+});
+`;
+
+  const serverPath = path.join(root, "mock-server.mjs");
+  await fs.writeFile(serverPath, mockMcpScript, "utf8");
+
+  const client = new McpClient("lifecycle", "node", [serverPath], {
+    workspaceRoot: root,
+    idleTimeoutMs: 100
+  });
+
+  await client.start();
+  assert.equal(client.status, "running");
+
+  const tools = await client.listTools();
+  assert.equal(tools.length, 1);
+  assert.equal(tools[0].name, "test_tool");
+
+  const res = await client.callTool("test_tool", { val: "world" });
+  assert.deepEqual(res.content, [{ type: "text", text: "hello world" }]);
+
+  const logFile = path.join(root, ".ai-workspace", "tool-logs", "mcp-lifecycle.stderr.log");
+  const logContent = await fs.readFile(logFile, "utf8");
+  assert.match(logContent, /mcp log test/);
+
+  await new Promise((resolve) => setTimeout(resolve, 200));
+  assert.equal(client.status, "stopped");
+
+  const res2 = await client.callTool("test_tool", { val: "lazy" });
+  assert.equal(client.status, "running");
+  assert.deepEqual(res2.content, [{ type: "text", text: "hello lazy" }]);
+
+  client.stop();
+  assert.equal(client.status, "stopped");
+});

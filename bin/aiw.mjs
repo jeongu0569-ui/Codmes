@@ -1436,8 +1436,11 @@ async function runDoctor(args) {
     const config = await readRuntimeConfig(root);
     if (config.mcpServers?.length) {
       for (const mcp of config.mcpServers) {
+        const { executableExists } = await import("../server/lib/runtime/mcp-client.mjs");
+        const exists = await executableExists(mcp.command);
+        const existsStr = exists ? "\x1b[32mfound\x1b[0m" : "\x1b[31mnot found\x1b[0m";
         const status = mcp.enabled !== false ? "\x1b[32mENABLED\x1b[0m" : "\x1b[31mDISABLED\x1b[0m";
-        console.log(`   - MCP Server \x1b[36m${mcp.name}\x1b[0m: ${status} (Command: ${mcp.command})`);
+        console.log(`   - MCP Server \x1b[36m${mcp.name}\x1b[0m: ${status} (Command: ${mcp.command} [${existsStr}])`);
       }
     } else {
       console.log(`   [INFO] No MCP servers registered.`);
