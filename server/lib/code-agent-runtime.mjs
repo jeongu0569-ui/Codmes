@@ -1,11 +1,13 @@
 import fs from "node:fs/promises";
-import { execFile } from "node:child_process";
+import { exec, execFile } from "node:child_process";
+import { createHash, randomUUID } from "node:crypto";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileKind, joinWorkspacePath, resolveWorkspacePath } from "./path-utils.mjs";
 import { searchWorkspace } from "./search-service.mjs";
 
 const execFileAsync = promisify(execFile);
+const execAsync = promisify(exec);
 
 const IGNORED_DIRS = new Set([
   ".git",
@@ -29,6 +31,8 @@ const TEXT_EXTENSIONS = new Set([
   ".cs", ".rb", ".php", ".html", ".css", ".json", ".yaml", ".yml", ".toml",
   ".sh", ".ps1", ".md", ".txt", ".xml", ".sql"
 ]);
+
+const PATCH_CONTENT_LIMIT = 2 * 1024 * 1024;
 
 export class CodeAgentRuntime {
   constructor({ workspaceRoot, stateStore }) {
@@ -115,6 +119,268 @@ export class CodeAgentRuntime {
       });
       throw error;
     }
+  }
+
+  async runChecks(taskId, params = {}) {
+    if (params.approved !== true) {
+      throw Object.assign(new Error("Code task check execution requires approved: true."), { status: 428 });
+    }
+    const task = await this.state.readTask(requireTaskId(taskId));
+    if (task.type !== "code") {
+      throw Object.assign(new Error("Only code tasks can run code checks."), { status: 400 });
+    }
+    const scope = this.resolveCodeScope(task.scopePath || params.scopePath || "Code");
+    const commands = resolveCheckCommands(task, params);
+    if (!commands.length) {
+      throw Object.assign(new Error("No check commands were provided or detected."), { status: 400 });
+    }
+    await this.state.recordToolLog({
+      type: "code.checks.start",
+      taskId: task.id,
+      scopePath: scope.relativePath,
+      commands
+    });
+    const startedAt = new Date().toISOString();
+    const results = [];
+    for (const command of commands) {
+      const result = await runShellCommand(scope.absolutePath, command, params);
+      results.push(result);
+      await this.state.recordToolLog({
+        type: "code.check.command",
+        taskId: task.id,
+        scopePath: scope.relativePath,
+        command,
+        exitCode: result.exitCode,
+        durationMs: result.durationMs,
+        ok: result.ok
+      });
+    }
+    const finishedAt = new Date().toISOString();
+    const allPassed = results.every((result) => result.ok);
+    const checkRun = {
+      id: `check-${Date.now()}`,
+      approved: true,
+      startedAt,
+      finishedAt,
+      scopePath: scope.relativePath,
+      commands,
+      allPassed,
+      results
+    };
+    const checks = [...(Array.isArray(task.checks) ? task.checks : []), checkRun];
+    const git = await this.inspectGit(scope.absolutePath);
+    const diffRef = await this.state.writeDiff(task.id, git.diff || "");
+    const updated = await this.state.finishTask(task.id, {
+      status: allPassed ? "checked" : "check_failed",
+      checks,
+      git: {
+        ...(task.git || {}),
+        isRepository: git.isRepository,
+        root: git.root,
+        status: git.status,
+        diffStat: git.diffStat,
+        diffRef
+      }
+    });
+    await this.state.recordDecision({
+      type: "code.checks.result",
+      taskId: task.id,
+      scopePath: scope.relativePath,
+      summary: allPassed ? "All code checks passed." : "One or more code checks failed.",
+      commands: commands.join("; ")
+    });
+    await this.state.recordToolLog({
+      type: "code.checks.complete",
+      taskId: task.id,
+      scopePath: scope.relativePath,
+      allPassed
+    });
+    return {
+      ok: allPassed,
+      engine: "workspace-agent",
+      runtime: "code-agent",
+      taskId: task.id,
+      status: updated.status,
+      scopePath: scope.relativePath,
+      checkRun,
+      git: updated.git
+    };
+  }
+
+  async proposePatch(taskId, params = {}) {
+    const task = await this.state.readTask(requireTaskId(taskId));
+    if (task.type !== "code") {
+      throw Object.assign(new Error("Only code tasks can propose patches."), { status: 400 });
+    }
+    const scope = this.resolveCodeScope(task.scopePath || params.scopePath || "Code");
+    const changes = await this.resolveProposedChanges(scope, params.changes);
+    if (!changes.length) {
+      throw Object.assign(new Error("Patch proposal requires at least one change."), { status: 400 });
+    }
+    const proposalId = `patch-${Date.now()}-${randomUUID().slice(0, 8)}`;
+    const diff = buildUnifiedDiff(changes);
+    const diffRef = await this.state.writeDiff(task.id, diff, proposalId);
+    const proposal = {
+      id: proposalId,
+      status: "proposed",
+      approved: false,
+      createdAt: new Date().toISOString(),
+      scopePath: scope.relativePath,
+      summary: stringValue(params.summary) || summarizePatchChanges(changes),
+      diffRef,
+      changes: changes.map((change) => ({
+        operation: change.operation,
+        path: change.path,
+        existed: change.existed,
+        oldHash: change.oldHash,
+        newHash: change.newHash,
+        oldSize: change.oldSize,
+        newSize: change.newSize,
+        content: change.newContent
+      }))
+    };
+    const proposals = [...(Array.isArray(task.patchProposals) ? task.patchProposals : []), proposal];
+    const updated = await this.state.finishTask(task.id, {
+      status: "patch_proposed",
+      patchProposals: proposals,
+      proposedChanges: proposal.changes.map(({ content, ...metadata }) => metadata)
+    });
+    await this.state.recordToolLog({
+      type: "code.patch.propose",
+      taskId: task.id,
+      proposalId,
+      scopePath: scope.relativePath,
+      files: proposal.changes.map((change) => change.path),
+      diffRef
+    });
+    const approvalRequest = {
+      type: "approval.request",
+      category: "code.patch.apply",
+      taskId: task.id,
+      proposalId,
+      scopePath: scope.relativePath,
+      summary: proposal.summary,
+      diffRef
+    };
+    await this.state.recordToolLog(approvalRequest);
+    await this.state.recordDecision({
+      type: "code.patch.proposed",
+      taskId: task.id,
+      proposalId,
+      scopePath: scope.relativePath,
+      summary: proposal.summary,
+      diffRef
+    });
+    return {
+      ok: true,
+      engine: "workspace-agent",
+      runtime: "code-agent",
+      taskId: task.id,
+      status: updated.status,
+      scopePath: scope.relativePath,
+      proposal: {
+        id: proposal.id,
+        status: proposal.status,
+        summary: proposal.summary,
+        diffRef,
+        changes: proposal.changes.map(({ content, ...metadata }) => metadata)
+      },
+      approvalRequired: true,
+      approvalRequest
+    };
+  }
+
+  async applyPatch(taskId, params = {}) {
+    if (params.approved !== true) {
+      throw Object.assign(new Error("Code patch apply requires approved: true."), { status: 428 });
+    }
+    const task = await this.state.readTask(requireTaskId(taskId));
+    if (task.type !== "code") {
+      throw Object.assign(new Error("Only code tasks can apply patches."), { status: 400 });
+    }
+    const proposals = Array.isArray(task.patchProposals) ? task.patchProposals : [];
+    const proposal = findPatchProposal(proposals, params.proposalId);
+    if (!proposal) {
+      throw Object.assign(new Error("Patch proposal was not found."), { status: 404 });
+    }
+    if (proposal.status !== "proposed") {
+      throw Object.assign(new Error(`Patch proposal is already ${proposal.status}.`), { status: 409 });
+    }
+    const scope = this.resolveCodeScope(proposal.scopePath || task.scopePath || params.scopePath || "Code");
+    await this.state.recordToolLog({
+      type: "code.patch.apply.start",
+      taskId: task.id,
+      proposalId: proposal.id,
+      scopePath: scope.relativePath
+    });
+    const targets = [];
+    for (const change of proposal.changes || []) {
+      const target = resolveCodeChangePath(this.workspaceRoot, scope, change.path);
+      await assertCurrentContent(target.absolutePath, change);
+      targets.push({ change, target });
+    }
+    const filesChanged = [];
+    for (const { change, target } of targets) {
+      if (change.operation === "delete") {
+        await fs.rm(target.absolutePath, { force: false });
+      } else {
+        await fs.mkdir(path.dirname(target.absolutePath), { recursive: true });
+        await fs.writeFile(target.absolutePath, String(change.content ?? ""), "utf8");
+      }
+      filesChanged.push(target.relativePath);
+    }
+    const appliedAt = new Date().toISOString();
+    const patchedProposals = proposals.map((item) => item.id === proposal.id
+      ? {
+          ...item,
+          status: "applied",
+          approved: true,
+          appliedAt,
+          filesChanged
+        }
+      : item);
+    const git = await this.inspectGit(scope.absolutePath);
+    const diffRef = await this.state.writeDiff(task.id, git.diff || "", `after-${proposal.id}`);
+    const updated = await this.state.finishTask(task.id, {
+      status: "patched",
+      patchProposals: patchedProposals,
+      filesChanged: [...new Set([...(task.filesChanged || []), ...filesChanged])],
+      git: {
+        ...(task.git || {}),
+        isRepository: git.isRepository,
+        root: git.root,
+        status: git.status,
+        diffStat: git.diffStat,
+        diffRef
+      }
+    });
+    await this.state.recordDecision({
+      type: "code.patch.applied",
+      taskId: task.id,
+      proposalId: proposal.id,
+      scopePath: scope.relativePath,
+      summary: `Applied ${filesChanged.length} file change(s).`,
+      diffRef
+    });
+    await this.state.recordToolLog({
+      type: "code.patch.apply.complete",
+      taskId: task.id,
+      proposalId: proposal.id,
+      scopePath: scope.relativePath,
+      filesChanged,
+      diffRef
+    });
+    return {
+      ok: true,
+      engine: "workspace-agent",
+      runtime: "code-agent",
+      taskId: task.id,
+      status: updated.status,
+      scopePath: scope.relativePath,
+      proposalId: proposal.id,
+      filesChanged,
+      git: updated.git
+    };
   }
 
   resolveCodeScope(scopePath) {
@@ -214,6 +480,56 @@ export class CodeAgentRuntime {
     };
   }
 
+  async resolveProposedChanges(scope, inputChanges) {
+    if (!Array.isArray(inputChanges)) {
+      throw Object.assign(new Error("Patch proposal requires changes[]."), { status: 400 });
+    }
+    const changes = [];
+    for (const rawChange of inputChanges) {
+      const change = rawChange || {};
+      const operation = normalizePatchOperation(change);
+      const target = resolveCodeChangePath(this.workspaceRoot, scope, change.path);
+      const old = await readPatchTarget(target.absolutePath, operation);
+      let newContent = "";
+      if (operation === "delete") {
+        if (!old.exists) {
+          throw Object.assign(new Error(`Cannot delete missing file: ${target.relativePath}`), { status: 404 });
+        }
+        newContent = "";
+      } else if (operation === "replace") {
+        if (!old.exists) {
+          throw Object.assign(new Error(`Cannot replace text in missing file: ${target.relativePath}`), { status: 404 });
+        }
+        newContent = replaceText(old.content, change);
+      } else {
+        if (operation === "create" && old.exists) {
+          throw Object.assign(new Error(`Cannot create an existing file: ${target.relativePath}`), { status: 409 });
+        }
+        if (typeof change.content !== "string") {
+          throw Object.assign(new Error(`Patch change for ${target.relativePath} requires string content.`), { status: 400 });
+        }
+        newContent = change.content;
+      }
+      assertPatchSize(target.relativePath, newContent);
+      const oldContent = old.exists ? old.content : "";
+      if (operation !== "delete" && old.exists && oldContent === newContent) {
+        throw Object.assign(new Error(`Patch change does not modify file: ${target.relativePath}`), { status: 400 });
+      }
+      changes.push({
+        operation,
+        path: target.relativePath,
+        existed: old.exists,
+        oldContent,
+        newContent,
+        oldHash: sha256(oldContent),
+        newHash: operation === "delete" ? "" : sha256(newContent),
+        oldSize: Buffer.byteLength(oldContent, "utf8"),
+        newSize: operation === "delete" ? 0 : Buffer.byteLength(newContent, "utf8")
+      });
+    }
+    return changes;
+  }
+
   buildInitialPlan({ instruction, scope, inspection, search, git }) {
     const relevantFiles = search.results.map((item) => item.path);
     const steps = [
@@ -234,8 +550,8 @@ export class CodeAgentRuntime {
       {
         id: "patch",
         title: "Apply patches after approval",
-        status: "blocked_on_approval",
-        detail: "The initial CodeAgentRuntime is inspect-only; patch execution will be added behind the same task id."
+        status: "ready",
+        detail: "Use patch proposal APIs to create a diff first, then apply it only after approval."
       },
       {
         id: "verify",
@@ -255,8 +571,8 @@ export class CodeAgentRuntime {
       instruction,
       steps,
       risks: [
-        "Patch/test execution is not enabled in this first runtime pass.",
-        "Detected check commands are suggestions only and were not run automatically."
+        "Patch application and check execution require explicit approval.",
+        "Detected check commands are suggestions only and are not run automatically."
       ]
     };
   }
@@ -342,6 +658,53 @@ function suggestedCheckCommands(packageInfo, markers) {
   return [...new Set(commands)].slice(0, 8);
 }
 
+function resolveCheckCommands(task, params) {
+  const customCommands = Array.isArray(params.commands)
+    ? params.commands.map((item) => String(item || "").trim()).filter(Boolean)
+    : [];
+  if (customCommands.length) {
+    if (params.allowCustomCommands !== true) {
+      throw Object.assign(new Error("Custom check commands require allowCustomCommands: true."), { status: 428 });
+    }
+    return customCommands.slice(0, 8);
+  }
+  return (task.inspection?.suggestedCheckCommands || []).map((item) => String(item || "").trim()).filter(Boolean).slice(0, 8);
+}
+
+async function runShellCommand(cwd, command, params) {
+  const started = Date.now();
+  const timeoutMs = clampNumber(params.timeoutMs, 1000, 300000, 60000);
+  try {
+    const { stdout, stderr } = await execAsync(command, {
+      cwd,
+      timeout: timeoutMs,
+      maxBuffer: 4 * 1024 * 1024,
+      env: {
+        ...process.env,
+        CI: process.env.CI || "1"
+      }
+    });
+    return {
+      command,
+      ok: true,
+      exitCode: 0,
+      durationMs: Date.now() - started,
+      stdout: truncateOutput(stdout),
+      stderr: truncateOutput(stderr)
+    };
+  } catch (error) {
+    return {
+      command,
+      ok: false,
+      exitCode: Number.isInteger(error?.code) ? error.code : 1,
+      signal: error?.signal || "",
+      durationMs: Date.now() - started,
+      stdout: truncateOutput(error?.stdout || ""),
+      stderr: truncateOutput(error?.stderr || error?.message || "")
+    };
+  }
+}
+
 async function runGit(cwd, args) {
   try {
     const { stdout, stderr } = await execFileAsync("git", args, {
@@ -388,6 +751,144 @@ function requireInstruction(value) {
   const text = String(value || "").trim();
   if (!text) throw Object.assign(new Error("Missing code task instruction."), { status: 400 });
   return text;
+}
+
+function requireTaskId(value) {
+  const text = String(value || "").trim();
+  if (!text) throw Object.assign(new Error("Missing task id."), { status: 400 });
+  return text;
+}
+
+function normalizePatchOperation(change) {
+  const operation = String(change.operation || change.type || "").trim().toLowerCase();
+  if (operation === "delete" || change.delete === true) return "delete";
+  if (operation === "replace" || typeof change.find === "string") return "replace";
+  if (operation === "create") return "create";
+  return "write";
+}
+
+function resolveCodeChangePath(workspaceRoot, scope, inputPath) {
+  const raw = String(inputPath || "").trim();
+  if (!raw) throw Object.assign(new Error("Patch change requires a file path."), { status: 400 });
+  const candidate = raw.replace(/\\/g, "/").startsWith("Code/")
+    ? raw
+    : joinWorkspacePath(scope.relativePath, raw);
+  const target = resolveWorkspacePath(workspaceRoot, candidate);
+  if (target.relativePath !== scope.relativePath && !target.relativePath.startsWith(scope.relativePath + "/")) {
+    throw Object.assign(new Error("Patch changes must stay inside the code task scope."), { status: 400 });
+  }
+  return target;
+}
+
+async function readPatchTarget(absolutePath, operation) {
+  try {
+    const stat = await fs.stat(absolutePath);
+    if (stat.isDirectory()) {
+      throw Object.assign(new Error("Patch target cannot be a folder."), { status: 400 });
+    }
+    if (stat.size > PATCH_CONTENT_LIMIT) {
+      throw Object.assign(new Error("Patch target is too large for text patching."), { status: 413 });
+    }
+    return {
+      exists: true,
+      content: await fs.readFile(absolutePath, "utf8")
+    };
+  } catch (error) {
+    if (error?.code === "ENOENT") {
+      if (operation === "replace" || operation === "delete") {
+        throw Object.assign(new Error("Patch target was not found."), { status: 404 });
+      }
+      return { exists: false, content: "" };
+    }
+    throw error;
+  }
+}
+
+function replaceText(content, change) {
+  const find = String(change.find ?? "");
+  if (!find) throw Object.assign(new Error("Replace patch requires a non-empty find value."), { status: 400 });
+  const replace = String(change.replace ?? "");
+  if (!content.includes(find)) {
+    throw Object.assign(new Error("Replace patch could not find the requested text."), { status: 404 });
+  }
+  return change.replaceAll === true
+    ? content.split(find).join(replace)
+    : content.replace(find, replace);
+}
+
+function assertPatchSize(relativePath, content) {
+  const size = Buffer.byteLength(String(content || ""), "utf8");
+  if (size > PATCH_CONTENT_LIMIT) {
+    throw Object.assign(new Error(`Patch content is too large: ${relativePath}`), { status: 413 });
+  }
+}
+
+async function assertCurrentContent(absolutePath, change) {
+  let currentExists = true;
+  let currentContent = "";
+  try {
+    const stat = await fs.stat(absolutePath);
+    if (stat.isDirectory()) {
+      throw Object.assign(new Error("Patch target cannot be a folder."), { status: 400 });
+    }
+    if (stat.size > PATCH_CONTENT_LIMIT) {
+      throw Object.assign(new Error("Patch target is too large for text patching."), { status: 413 });
+    }
+    currentContent = await fs.readFile(absolutePath, "utf8");
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    currentExists = false;
+  }
+  if (Boolean(change.existed) !== currentExists) {
+    throw Object.assign(new Error(`Patch target changed since proposal: ${change.path}`), { status: 409 });
+  }
+  const currentHash = sha256(currentContent);
+  if (currentHash !== change.oldHash) {
+    throw Object.assign(new Error(`Patch target content changed since proposal: ${change.path}`), { status: 409 });
+  }
+}
+
+function findPatchProposal(proposals, proposalId) {
+  const id = String(proposalId || "").trim();
+  if (id) return proposals.find((proposal) => proposal.id === id) || null;
+  return [...proposals].reverse().find((proposal) => proposal.status === "proposed") || null;
+}
+
+function buildUnifiedDiff(changes) {
+  return changes.map((change) => {
+    const oldLines = splitDiffLines(change.oldContent);
+    const newLines = splitDiffLines(change.operation === "delete" ? "" : change.newContent);
+    const oldName = change.existed ? `a/${change.path}` : "/dev/null";
+    const newName = change.operation === "delete" ? "/dev/null" : `b/${change.path}`;
+    return [
+      `--- ${oldName}`,
+      `+++ ${newName}`,
+      `@@ -1,${oldLines.length} +1,${newLines.length} @@`,
+      ...oldLines.map((line) => `-${line}`),
+      ...newLines.map((line) => `+${line}`)
+    ].join("\n");
+  }).join("\n\n") + "\n";
+}
+
+function splitDiffLines(content) {
+  const text = String(content || "");
+  if (!text) return [];
+  return text.endsWith("\n") ? text.slice(0, -1).split("\n") : text.split("\n");
+}
+
+function summarizePatchChanges(changes) {
+  return `Proposed ${changes.length} change(s): ${changes.map((change) => `${change.operation} ${change.path}`).join(", ")}`;
+}
+
+function sha256(value) {
+  return createHash("sha256").update(String(value || ""), "utf8").digest("hex");
+}
+
+function truncateOutput(value) {
+  const text = String(value || "");
+  const max = 100000;
+  if (text.length <= max) return text;
+  return text.slice(0, max) + `\n[truncated ${text.length - max} chars]`;
 }
 
 function stringValue(value) {

@@ -24,7 +24,10 @@ status. It also reports the active workspace agent engine capabilities:
     "statePath": ".ai-workspace",
     "adapters": ["hermes-live"],
     "runtimes": ["code-agent"],
-    "codeTaskEndpoint": "/api/agent/code-task"
+    "taskEndpoint": "/api/agent/tasks",
+    "codeTaskEndpoint": "/api/agent/code-task",
+    "codePatchEndpoint": "/api/agent/code-task/:id/patches",
+    "codeChecksEndpoint": "/api/agent/code-task/:id/checks"
   }
 }
 ```
@@ -219,13 +222,42 @@ docsearch-mcp / vector index
 
 ## Workspace Agent
 
+### `GET /api/agent/tasks`
+
+Lists workspace-owned task summaries from `.ai-workspace/tasks`.
+
+```text
+GET /api/agent/tasks?type=code&limit=50
+```
+
+Response:
+
+```json
+{
+  "tasks": [
+    {
+      "id": "task-...",
+      "type": "code",
+      "status": "checked",
+      "scopePath": "Code/my-app",
+      "message": "Change the greeting renderer",
+      "summary": "Code task prepared for Code/my-app. ..."
+    }
+  ]
+}
+```
+
+### `GET /api/agent/tasks/:id`
+
+Returns the full task record from `.ai-workspace/tasks/:id.json`.
+
 ### `POST /api/agent/code-task`
 
 Starts the first Codex-style code task loop inside the Workspace Agent Engine.
-The current implementation is inspect-only: it reads the selected `Code/`
+This creates a workspace-owned code task. It reads the selected `Code/`
 project, searches relevant text files, collects git status/diff information,
-creates a task record, writes tool/decision logs, and returns an initial plan.
-It does not patch files or run tests yet.
+detects suggested check commands, creates a task record, writes tool/decision
+logs, and returns an initial plan. It does not modify files by itself.
 
 Request:
 
@@ -280,6 +312,197 @@ Side effects under the workspace root:
 ```
 
 The endpoint rejects scopes outside `Code/`.
+
+### `POST /api/agent/code-task/:id/patches`
+
+Creates a proposed patch for an existing code task. This endpoint writes a diff
+artifact and updates the task record, but it does not change project files.
+
+Safety rule:
+
+```text
+proposal only; no file writes happen here
+```
+
+Supported change forms:
+
+```json
+{
+  "changes": [
+    {
+      "path": "src/index.js",
+      "find": "return 'hello';",
+      "replace": "return 'hello workspace';"
+    },
+    {
+      "operation": "create",
+      "path": "src/new-file.js",
+      "content": "export const ready = true;\n"
+    },
+    {
+      "operation": "write",
+      "path": "README.md",
+      "content": "# Updated README\n"
+    },
+    {
+      "operation": "delete",
+      "path": "src/old-file.js"
+    }
+  ]
+}
+```
+
+Paths may be either project-relative, such as `src/index.js`, or full
+workspace-relative paths under the task scope, such as
+`Code/my-app/src/index.js`. Changes outside the original code task scope are
+rejected.
+
+Response:
+
+```json
+{
+  "ok": true,
+  "engine": "workspace-agent",
+  "runtime": "code-agent",
+  "taskId": "task-...",
+  "status": "patch_proposed",
+  "proposal": {
+    "id": "patch-...",
+    "status": "proposed",
+    "summary": "Proposed 1 change(s): replace Code/my-app/src/index.js",
+    "diffRef": ".ai-workspace/diffs/task-...-patch-....diff",
+    "changes": [
+      {
+        "operation": "replace",
+        "path": "Code/my-app/src/index.js",
+        "oldHash": "...",
+        "newHash": "..."
+      }
+    ]
+  },
+  "approvalRequired": true,
+  "approvalRequest": {
+    "type": "approval.request",
+    "category": "code.patch.apply",
+    "proposalId": "patch-..."
+  }
+}
+```
+
+Side effects:
+
+```text
+.ai-workspace/tasks/task-....json
+.ai-workspace/tool-logs/tool-events.jsonl
+.ai-workspace/decisions/events.jsonl
+.ai-workspace/diffs/task-...-patch-....diff
+```
+
+### `POST /api/agent/code-task/:id/patches/:proposalId/apply`
+
+Applies an approved patch proposal. This is the first file mutation step in the
+Code Runtime.
+
+Safety rules:
+
+```text
+approved: true is required
+the proposal must still be in status=proposed
+the target file content must match the proposal's oldHash
+the target path must stay inside the original Code task scope
+```
+
+Request:
+
+```json
+{
+  "approved": true
+}
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "engine": "workspace-agent",
+  "runtime": "code-agent",
+  "taskId": "task-...",
+  "status": "patched",
+  "proposalId": "patch-...",
+  "filesChanged": ["Code/my-app/src/index.js"],
+  "git": {
+    "isRepository": true,
+    "status": " M src/index.js",
+    "diffRef": ".ai-workspace/diffs/task-...-after-patch-....diff"
+  }
+}
+```
+
+If the file changed after proposal creation, the endpoint returns a conflict and
+does not write the patch. This avoids applying stale edits over user changes.
+
+### `POST /api/agent/code-task/:id/checks`
+
+Runs verification commands for an existing code task and appends the results to
+the same task record. This is the first shell/test execution step in the
+Codex-style loop.
+
+Safety rule:
+
+```text
+approved: true is required
+```
+
+Without explicit approval the server returns an error and does not run a shell
+command. If `commands` is omitted, the runtime uses the task's detected
+`inspection.suggestedCheckCommands`.
+
+Request using detected commands:
+
+```json
+{
+  "approved": true,
+  "timeoutMs": 60000
+}
+```
+
+Request using custom commands:
+
+```json
+{
+  "approved": true,
+  "allowCustomCommands": true,
+  "commands": ["npm run test", "npm run build"]
+}
+```
+
+Response:
+
+```json
+{
+  "ok": true,
+  "engine": "workspace-agent",
+  "runtime": "code-agent",
+  "taskId": "task-...",
+  "status": "checked",
+  "checkRun": {
+    "allPassed": true,
+    "results": [
+      {
+        "command": "npm run test",
+        "ok": true,
+        "exitCode": 0,
+        "stdout": "..."
+      }
+    ]
+  }
+}
+```
+
+The task is updated to `checked` when all commands pass and `check_failed` when
+any command fails. The runtime also refreshes the task's git status/diff
+artifact after running checks.
 
 ## Hermes Proxy
 
@@ -468,6 +691,27 @@ Respond to an approval:
     "approved": true
   }
 }
+```
+
+Run a Code Runtime command through the same live bridge:
+
+```json
+{
+  "id": "5",
+  "command": "code.task.create",
+  "params": {
+    "scopePath": "Code/my-app",
+    "instruction": "Change the greeting renderer"
+  }
+}
+```
+
+Patch and check commands mirror the REST endpoints:
+
+```json
+{ "id": "6", "command": "code.patch.propose", "params": { "taskId": "task-...", "changes": [] } }
+{ "id": "7", "command": "code.patch.apply", "params": { "taskId": "task-...", "proposalId": "patch-...", "approved": true } }
+{ "id": "8", "command": "code.checks.run", "params": { "taskId": "task-...", "approved": true } }
 ```
 
 Server responses use:

@@ -199,13 +199,16 @@ The client should show diffs and approvals before users trust automated code
 changes.
 
 The code agent loop lives behind the same `WorkspaceAgentEngine` interface
-instead of being bolted directly to the client. The first `CodeAgentRuntime`
-implementation is inspect-only: it scans a `Code/` project, searches relevant
-files, detects package/test commands, records git status and diff output, and
-writes a task plan. A coding task is recorded under `.ai-workspace/tasks`, tool
-activity under `.ai-workspace/tool-logs`, decisions under
-`.ai-workspace/decisions`, and produced or captured diffs under
-`.ai-workspace/diffs`.
+instead of being bolted directly to the client. `CodeAgentRuntime` scans a
+`Code/` project, searches relevant files, detects package/test commands,
+records git status and diff output, and writes a task plan. It also supports
+the first approved edit loop: proposed patches are stored as diff artifacts
+without modifying files, and only an approved proposal can be applied. Approved
+check commands can then run inside the code task scope.
 
-Later patch/test execution should extend this runtime rather than adding a
-parallel code path.
+A coding task is recorded under `.ai-workspace/tasks`, tool activity under
+`.ai-workspace/tool-logs`, decisions under `.ai-workspace/decisions`, and
+produced or captured diffs under `.ai-workspace/diffs`.
+
+Future automatic code generation should extend this runtime rather than adding
+a parallel code path.

@@ -115,10 +115,23 @@ session/config actions, and live tool events. Future code tasks can attach
 patches, diffs, test output, approvals, and decisions to the same task id.
 
 The first non-Hermes runtime is `CodeAgentRuntime`. It does not call Hermes and
-does not patch files yet. It starts a workspace-owned code task, inspects a
-`Code/` project, searches relevant files, records git status/diff output, and
-writes an initial plan under the same `.ai-workspace` state tree. This proves
-that the Workspace Agent Engine can host more than the Hermes live adapter.
+does not replace Hermes model/provider/auth/session behavior. It starts a
+workspace-owned code task, inspects a `Code/` project, searches relevant files,
+records git status/diff output, and writes an initial plan under the same
+`.ai-workspace` state tree.
+
+It now also owns the first approved code-workflow primitives:
+
+- propose a patch and store the diff/task metadata without touching files
+- emit/return an `approval.request`-shaped record for future client UI
+- apply a proposal only when `approved: true` is supplied and the target file
+  hash still matches the proposal
+- run approved verification commands and append stdout, stderr, exit code,
+  duration, and refreshed git diff information to the same task
+
+This proves that the Workspace Agent Engine can host more than the Hermes live
+adapter while still leaving Hermes responsible for the general chat/model/MCP
+layer.
 
 ## Why Workspace Server Should Bridge Hermes
 

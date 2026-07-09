@@ -142,10 +142,61 @@ curl -X POST http://127.0.0.1:8787/api/agent/code-task \
   }'
 ```
 
-이 API는 현재 파일을 수정하지 않는다. 대신 `Code/` 아래 프로젝트를 읽고,
-관련 파일 검색, git status/diff 수집, 추천 테스트 명령 탐지, 초기 plan 생성을
-수행한 뒤 `.ai-workspace/tasks`, `.ai-workspace/tool-logs`,
-`.ai-workspace/decisions`, `.ai-workspace/diffs`에 작업 기록을 남긴다.
+이 API는 파일을 수정하지 않는다. 대신 `Code/` 아래 프로젝트를 읽고, 관련 파일
+검색, git status/diff 수집, 추천 테스트 명령 탐지, 초기 plan 생성을 수행한 뒤
+`.ai-workspace/tasks`, `.ai-workspace/tool-logs`, `.ai-workspace/decisions`,
+`.ai-workspace/diffs`에 작업 기록을 남긴다.
+
+응답의 `taskId`를 사용하면 승인 기반 patch/check 흐름을 이어갈 수 있다.
+
+Patch 제안:
+
+```bash
+TASK_ID="task-..."
+
+curl -X POST "http://127.0.0.1:8787/api/agent/code-task/$TASK_ID/patches" \
+  -H 'content-type: application/json' \
+  --data '{
+    "changes": [
+      {
+        "path": "src/index.js",
+        "find": "return '\''hello'\'';",
+        "replace": "return '\''hello workspace'\'';"
+      }
+    ]
+  }'
+```
+
+이 단계에서는 실제 파일이 바뀌지 않는다. `.ai-workspace/diffs` 아래에 제안 diff가
+저장되고, task JSON에는 `patchProposals[]`가 추가된다.
+
+Patch 적용:
+
+```bash
+PROPOSAL_ID="patch-..."
+
+curl -X POST "http://127.0.0.1:8787/api/agent/code-task/$TASK_ID/patches/$PROPOSAL_ID/apply" \
+  -H 'content-type: application/json' \
+  --data '{
+    "approved": true
+  }'
+```
+
+`approved: true`가 없으면 서버는 `428`로 거절하고 파일을 수정하지 않는다. 적용
+시점에 대상 파일 내용이 제안 당시의 hash와 다르면 충돌로 처리한다.
+
+Check 실행:
+
+```bash
+curl -X POST "http://127.0.0.1:8787/api/agent/code-task/$TASK_ID/checks" \
+  -H 'content-type: application/json' \
+  --data '{
+    "approved": true
+  }'
+```
+
+명령 실행도 `approved: true`가 필요하다. `commands`를 생략하면 inspect 단계에서
+탐지한 `inspection.suggestedCheckCommands`를 사용한다.
 
 작은 파일 업로드 확인:
 

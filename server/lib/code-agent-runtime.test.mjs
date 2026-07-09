@@ -27,7 +27,7 @@ test("code agent runtime inspects a Code project and records artifacts", async (
   assert.ok(result.inspection.suggestedCheckCommands.includes("npm run test"));
   assert.ok(result.search.resultCount >= 1);
   assert.equal(result.plan.steps[0].status, "done");
-  assert.equal(result.plan.steps[2].status, "blocked_on_approval");
+  assert.equal(result.plan.steps[2].status, "ready");
 
   const task = JSON.parse(await fs.readFile(
     path.join(root, ".ai-workspace", "tasks", `${result.taskId}.json`),
@@ -44,6 +44,58 @@ test("code agent runtime inspects a Code project and records artifacts", async (
 
   const decisions = await fs.readFile(path.join(root, ".ai-workspace", "decisions", "events.jsonl"), "utf8");
   assert.match(decisions, /code.inspect.plan/);
+
+  await assert.rejects(
+    () => runtime.runChecks(result.taskId, {}),
+    /approved: true/
+  );
+
+  const patch = await runtime.proposePatch(result.taskId, {
+    changes: [{
+      path: "src/index.js",
+      find: "return 'hello';",
+      replace: "return 'hello workspace';"
+    }]
+  });
+  assert.equal(patch.status, "patch_proposed");
+  assert.equal(patch.approvalRequired, true);
+  assert.equal(patch.proposal.changes[0].path, "Code/demo-app/src/index.js");
+  assert.match(patch.proposal.diffRef, /\.diff$/);
+  assert.equal(
+    await fs.readFile(path.join(root, "Code", "demo-app", "src", "index.js"), "utf8"),
+    "export function greeting() {\n  return 'hello';\n}\n"
+  );
+
+  await assert.rejects(
+    () => runtime.applyPatch(result.taskId, { proposalId: patch.proposal.id }),
+    /approved: true/
+  );
+
+  const applied = await runtime.applyPatch(result.taskId, {
+    proposalId: patch.proposal.id,
+    approved: true
+  });
+  assert.equal(applied.status, "patched");
+  assert.deepEqual(applied.filesChanged, ["Code/demo-app/src/index.js"]);
+  assert.equal(
+    await fs.readFile(path.join(root, "Code", "demo-app", "src", "index.js"), "utf8"),
+    "export function greeting() {\n  return 'hello workspace';\n}\n"
+  );
+
+  const check = await runtime.runChecks(result.taskId, { approved: true });
+  assert.equal(check.runtime, "code-agent");
+  assert.equal(check.status, "checked");
+  assert.equal(check.checkRun.allPassed, true);
+  assert.equal(check.checkRun.results[0].exitCode, 0);
+
+  const checkedTask = JSON.parse(await fs.readFile(
+    path.join(root, ".ai-workspace", "tasks", `${result.taskId}.json`),
+    "utf8"
+  ));
+  assert.equal(checkedTask.status, "checked");
+  assert.equal(checkedTask.patchProposals[0].status, "applied");
+  assert.equal(checkedTask.checks.length, 1);
+  assert.match(checkedTask.checks[0].results[0].stdout, /test ok/);
 });
 
 test("code agent runtime rejects non-Code scopes", async () => {
@@ -67,8 +119,7 @@ async function fixtureCodeWorkspace() {
   await fs.writeFile(path.join(project, "package.json"), JSON.stringify({
     name: "demo-app",
     scripts: {
-      test: "node --test",
-      lint: "eslint ."
+      test: "node -e \"console.log('test ok')\""
     }
   }, null, 2) + "\n", "utf8");
   await fs.writeFile(path.join(project, "src", "index.js"), "export function greeting() {\n  return 'hello';\n}\n", "utf8");

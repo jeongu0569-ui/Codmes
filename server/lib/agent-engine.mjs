@@ -161,6 +161,34 @@ export class WorkspaceAgentEngine extends EventEmitter {
     return await this.codeRuntime.inspectTask(params);
   }
 
+  async runCodeTaskChecks(taskId, params = {}) {
+    return await this.codeRuntime.runChecks(taskId, params);
+  }
+
+  async proposeCodeTaskPatch(taskId, params = {}) {
+    const result = await this.codeRuntime.proposePatch(taskId, params);
+    if (result.approvalRequest) {
+      this.emit("event", {
+        engine: "workspace-agent",
+        adapter: "code-agent",
+        ...result.approvalRequest
+      });
+    }
+    return result;
+  }
+
+  async applyCodeTaskPatch(taskId, params = {}) {
+    return await this.codeRuntime.applyPatch(taskId, params);
+  }
+
+  async listTasks(params = {}) {
+    return await this.state.listTasks(params);
+  }
+
+  async readTask(taskId) {
+    return await this.state.readTask(taskId);
+  }
+
   async flush() {
     await Promise.allSettled([...this.eventWrites]);
   }
@@ -326,9 +354,10 @@ export class WorkspaceAgentStateStore {
     return { path: ".ai-workspace/decisions/events.jsonl", record };
   }
 
-  async writeDiff(taskId, content) {
+  async writeDiff(taskId, content, label = "") {
     await this.ensure();
-    const fileName = `${safeArtifactName(taskId)}.diff`;
+    const suffix = label ? `-${safeArtifactName(label)}` : "";
+    const fileName = `${safeArtifactName(taskId)}${suffix}.diff`;
     const filePath = path.join(this.root, "diffs", fileName);
     await fs.writeFile(filePath, String(content || ""), "utf8");
     return `.ai-workspace/diffs/${fileName}`;
@@ -337,6 +366,29 @@ export class WorkspaceAgentStateStore {
   async readTask(taskId) {
     const text = await fs.readFile(this.taskPath(taskId), "utf8");
     return JSON.parse(text);
+  }
+
+  async listTasks(options = {}) {
+    await this.ensure();
+    const type = String(options.type || "").trim();
+    const limit = clampNumber(options.limit, 1, 200, 50);
+    let entries = [];
+    try {
+      entries = await fs.readdir(path.join(this.root, "tasks"), { withFileTypes: true });
+    } catch {
+      return { tasks: [] };
+    }
+    const tasks = [];
+    for (const entry of entries) {
+      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
+      try {
+        const task = JSON.parse(await fs.readFile(path.join(this.root, "tasks", entry.name), "utf8"));
+        if (type && task.type !== type) continue;
+        tasks.push(summarizeTask(task));
+      } catch {}
+    }
+    tasks.sort((a, b) => String(b.updatedAt || b.createdAt || "").localeCompare(String(a.updatedAt || a.createdAt || "")));
+    return { tasks: tasks.slice(0, limit) };
   }
 
   async writeTask(task) {
@@ -364,4 +416,25 @@ function definedFields(value) {
 
 function safeArtifactName(value) {
   return String(value || "artifact").replace(/[^a-zA-Z0-9_.-]/g, "-");
+}
+
+function summarizeTask(task) {
+  return {
+    id: task.id,
+    type: task.type,
+    status: task.status,
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt,
+    adapter: task.adapter,
+    sessionId: task.sessionId,
+    scopePath: task.scopePath,
+    message: task.message,
+    summary: task.plan?.summary || task.result?.summary || task.error || ""
+  };
+}
+
+function clampNumber(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, Math.floor(number)));
 }

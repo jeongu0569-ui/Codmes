@@ -77,6 +77,31 @@ test("workspace agent state creates the unified state directory shape", async ()
   }
 });
 
+test("workspace agent state lists task summaries", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "agent-state-list-"));
+  const state = new WorkspaceAgentStateStore(root);
+  const codeTask = await state.startTask({
+    type: "code",
+    status: "started",
+    message: "change renderer",
+    scopePath: "Code/demo"
+  });
+  await state.finishTask(codeTask.id, {
+    status: "inspected",
+    plan: { summary: "Code task prepared." }
+  });
+  await state.startTask({
+    type: "chat",
+    message: "hello"
+  });
+
+  const listed = await state.listTasks({ type: "code" });
+  assert.equal(listed.tasks.length, 1);
+  assert.equal(listed.tasks[0].id, codeTask.id);
+  assert.equal(listed.tasks[0].summary, "Code task prepared.");
+  assert.equal(listed.tasks[0].scopePath, "Code/demo");
+});
+
 class FakeAgentAdapter extends EventEmitter {
   constructor() {
     super();

@@ -161,16 +161,33 @@ Status: in progress.
   - records task, decision, tool log, and diff artifacts under `.ai-workspace`
 - Git operation visibility. First read-only status/diff capture is done.
 - Diff artifacts. First captured git diff is written to `.ai-workspace/diffs`.
+- Workspace task history API. Done with `GET /api/agent/tasks` and
+  `GET /api/agent/tasks/:id`.
+- Approved patch proposal/apply flow. Done at the server level:
+  - `POST /api/agent/code-task/:id/patches` creates a proposed diff artifact
+    and task record without modifying files.
+  - `POST /api/agent/code-task/:id/patches/:proposalId/apply` requires
+    `approved: true`, verifies that file hashes still match the proposal, then
+    writes files and refreshes git diff/status.
+- Approved check execution. Done with
+  `POST /api/agent/code-task/:id/checks`; the server refuses to run shell
+  commands unless the request includes `approved: true`.
+- Check output persistence. Done: command stdout/stderr, exit codes, duration,
+  and refreshed git diff refs are appended to the task record.
 
 Remaining:
 
 - Diff viewer in the Apple client.
-- Approval UI for code task patch/test execution.
+- Approval UI for code task patch/check execution.
 - Codex-style work loop:
   - inspect files. Initial server pass done.
   - plan
-  - patch
-  - shell/test
+  - patch. Server-side proposal/apply flow done; automatic LLM-authored patch
+    generation is still pending.
+  - shell/test. Approved check execution is done; patch-triggered test
+    orchestration is still pending.
   - collect diff
-  - request approval when needed
-  - write task/decision/tool logs under `.ai-workspace`
+  - request approval when needed. Server event/response contract exists; Apple
+    UI is still pending.
+  - write task/decision/tool logs under `.ai-workspace`. Initial server pass
+    done.

@@ -143,6 +143,15 @@ async function handleLiveCommand(engine, message) {
   if (command === "code.task.create" || command === "code.inspect") {
     return await engine.inspectCodeTask(params);
   }
+  if (command === "code.checks.run") {
+    return await engine.runCodeTaskChecks(String(params.taskId || ""), params);
+  }
+  if (command === "code.patch.propose") {
+    return await engine.proposeCodeTaskPatch(String(params.taskId || ""), params);
+  }
+  if (command === "code.patch.apply") {
+    return await engine.applyCodeTaskPatch(String(params.taskId || ""), params);
+  }
   throw Object.assign(new Error(`Unknown live command: ${command}`), { status: 400 });
 }
 
@@ -234,8 +243,27 @@ async function handleRequest(req, res) {
     if (req.method === "POST" && url.pathname === "/api/search") {
       return sendJson(res, await runSearch(req));
     }
+    if (req.method === "GET" && url.pathname === "/api/agent/tasks") {
+      return sendJson(res, await listAgentTasks(url));
+    }
+    const taskMatch = url.pathname.match(/^\/api\/agent\/tasks\/([^/]+)$/);
+    if (taskMatch && req.method === "GET") {
+      return sendJson(res, await readAgentTask(taskMatch[1]));
+    }
     if (req.method === "POST" && url.pathname === "/api/agent/code-task") {
       return sendJson(res, await createCodeTask(req), 201);
+    }
+    const codeChecksMatch = url.pathname.match(/^\/api\/agent\/code-task\/([^/]+)\/checks$/);
+    if (codeChecksMatch && req.method === "POST") {
+      return sendJson(res, await runCodeTaskChecks(codeChecksMatch[1], req));
+    }
+    const codePatchProposeMatch = url.pathname.match(/^\/api\/agent\/code-task\/([^/]+)\/patches$/);
+    if (codePatchProposeMatch && req.method === "POST") {
+      return sendJson(res, await proposeCodeTaskPatch(codePatchProposeMatch[1], req), 201);
+    }
+    const codePatchApplyMatch = url.pathname.match(/^\/api\/agent\/code-task\/([^/]+)\/patches\/([^/]+)\/apply$/);
+    if (codePatchApplyMatch && req.method === "POST") {
+      return sendJson(res, await applyCodeTaskPatch(codePatchApplyMatch[1], codePatchApplyMatch[2], req));
     }
     if (req.method === "POST" && url.pathname === "/api/render/markdown") {
       return sendJson(res, await renderMarkdown(req));
@@ -271,7 +299,10 @@ async function workspaceInfo() {
       statePath: ".ai-workspace",
       adapters: ["hermes-live"],
       runtimes: ["code-agent"],
-      codeTaskEndpoint: "/api/agent/code-task"
+      taskEndpoint: "/api/agent/tasks",
+      codeTaskEndpoint: "/api/agent/code-task",
+      codePatchEndpoint: "/api/agent/code-task/:id/patches",
+      codeChecksEndpoint: "/api/agent/code-task/:id/checks"
     },
     search: searchStatus(WORKSPACE_ROOT)
   };
@@ -497,6 +528,60 @@ async function createCodeTask(req) {
   const engine = createAgentEngine();
   try {
     return await engine.inspectCodeTask(body);
+  } finally {
+    engine.close();
+  }
+}
+
+async function listAgentTasks(url) {
+  const engine = createAgentEngine();
+  try {
+    return await engine.listTasks({
+      type: url.searchParams.get("type") || "",
+      limit: url.searchParams.get("limit") || ""
+    });
+  } finally {
+    engine.close();
+  }
+}
+
+async function readAgentTask(taskId) {
+  const engine = createAgentEngine();
+  try {
+    return await engine.readTask(decodeURIComponent(taskId));
+  } finally {
+    engine.close();
+  }
+}
+
+async function runCodeTaskChecks(taskId, req) {
+  const body = await readJsonBody(req);
+  const engine = createAgentEngine();
+  try {
+    return await engine.runCodeTaskChecks(decodeURIComponent(taskId), body);
+  } finally {
+    engine.close();
+  }
+}
+
+async function proposeCodeTaskPatch(taskId, req) {
+  const body = await readJsonBody(req);
+  const engine = createAgentEngine();
+  try {
+    return await engine.proposeCodeTaskPatch(decodeURIComponent(taskId), body);
+  } finally {
+    engine.close();
+  }
+}
+
+async function applyCodeTaskPatch(taskId, proposalId, req) {
+  const body = await readJsonBody(req);
+  const engine = createAgentEngine();
+  try {
+    return await engine.applyCodeTaskPatch(decodeURIComponent(taskId), {
+      ...body,
+      proposalId: decodeURIComponent(proposalId)
+    });
   } finally {
     engine.close();
   }

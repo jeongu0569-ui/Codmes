@@ -151,6 +151,10 @@ search
 git.diff_ref
 plan
 decision_ref
+checks
+patch_proposals
+proposed_changes
+files_changed
 ```
 
 This is intentionally small. It does not yet replace Hermes conversation
@@ -175,14 +179,75 @@ plan.steps
 decision_ref
 ```
 
-Future patch/test task records should add:
+When code checks are executed, the task also stores:
 
 ```text
-workspace_scope
-changed_files
-diff_refs
-test_commands
-test_results
-approval_refs
-decision_refs
+checks[]
+- id
+- approved
+- started_at
+- finished_at
+- scope_path
+- commands
+- all_passed
+- results[]
+  - command
+  - ok
+  - exit_code
+  - duration_ms
+  - stdout
+  - stderr
 ```
+
+The task status becomes `checked` when all commands pass and `check_failed`
+when any command exits non-zero.
+
+When a code patch is proposed, the task also stores:
+
+```text
+patch_proposals[]
+- id
+- status: proposed | applied
+- approved
+- created_at
+- applied_at
+- scope_path
+- summary
+- diff_ref
+- changes[]
+  - operation: write | create | replace | delete
+  - path
+  - existed
+  - old_hash
+  - new_hash
+  - old_size
+  - new_size
+  - content
+
+proposed_changes[]
+- operation
+- path
+- existed
+- old_hash
+- new_hash
+- old_size
+- new_size
+```
+
+`patch_proposals[].changes[].content` is kept so the server can apply the
+approved proposal later without trusting the client to resend the same patch.
+The client-facing response omits `content` and only returns metadata plus the
+diff artifact reference.
+
+When an approved patch is applied, the task stores:
+
+```text
+files_changed[]
+git.status
+git.diff_stat
+git.diff_ref
+```
+
+The task status becomes `patch_proposed` after a proposal and `patched` after
+the approved proposal is applied. Check execution can then move it to `checked`
+or `check_failed`.
