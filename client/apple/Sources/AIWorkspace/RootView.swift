@@ -3,6 +3,7 @@ import SwiftUI
 struct RootView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @State private var selection: WorkspaceSection? = .chat
+    @State private var selectedPluginSurfaceId: String?
     @State private var sidebarMenuExpanded = false
     @State private var isChatPanelVisible = false
     @State private var chatPanelDragX: CGFloat = 0
@@ -17,11 +18,29 @@ struct RootView: View {
             HStack(spacing: 0) {
                 if isMacSidebarVisible {
                     VStack(spacing: 0) {
-                        List(visibleWorkspaceSections, selection: $selection) { section in
-                            Label(section.rawValue, systemImage: section.systemImage)
-                                .tag(section)
+                        ScrollView {
+                            VStack(spacing: 4) {
+                                ForEach(visibleWorkspaceSections) { section in
+                                    surfaceButton(
+                                        title: section.rawValue,
+                                        systemImage: section.systemImage,
+                                        isSelected: selectedPluginSurfaceId == nil && selectedSection == section
+                                    ) {
+                                        selectSection(section)
+                                    }
+                                }
+                                ForEach(store.enabledPluginSurfaces) { surface in
+                                    surfaceButton(
+                                        title: surface.title,
+                                        systemImage: surface.systemImage,
+                                        isSelected: selectedPluginSurfaceId == surface.id
+                                    ) {
+                                        selectPluginSurface(surface)
+                                    }
+                                }
+                            }
+                            .padding(10)
                         }
-                        .navigationTitle("Workspace")
 
                         Divider()
 
@@ -46,7 +65,7 @@ struct RootView: View {
                         }
                         .help(isMacSidebarVisible ? "Hide sidebar" : "Show sidebar")
 
-                        if selectedSection != .chat {
+                        if activeSurfaceId != "chat" {
                             Button {
                                 isChatPanelVisible.toggle()
                             } label: {
@@ -70,8 +89,8 @@ struct RootView: View {
             WorkspaceSettingsView(isPresented: $showingSettings)
                 .environmentObject(store)
         }
-        .task(id: selectedSection) {
-            store.activeChatSurface = selectedSection.runtimeSurfaceId
+        .task(id: activeSurfaceTaskKey) {
+            store.activeChatSurface = activeSurfaceId
             await autoRefreshVisibleFileTree()
         }
         #else
@@ -83,6 +102,27 @@ struct RootView: View {
         selection ?? .chat
     }
 
+    private var selectedPluginSurface: WorkspaceSurface? {
+        guard let selectedPluginSurfaceId else { return nil }
+        return store.workspaceSurfaces.first { $0.id == selectedPluginSurfaceId }
+    }
+
+    private var activeSurfaceId: String {
+        selectedPluginSurface?.id ?? selectedSection.runtimeSurfaceId
+    }
+
+    private var activeSurfaceTitle: String {
+        selectedPluginSurface?.title ?? selectedSection.rawValue
+    }
+
+    private var activeSurfaceIcon: String {
+        selectedPluginSurface?.systemImage ?? selectedSection.systemImage
+    }
+
+    private var activeSurfaceTaskKey: String {
+        activeSurfaceId
+    }
+
     private var visibleWorkspaceSections: [WorkspaceSection] {
         WorkspaceSection.allCases.filter { section in
             store.surfaceEnabled(section.runtimeSurfaceId)
@@ -92,7 +132,7 @@ struct RootView: View {
     @ViewBuilder
     private var detailView: some View {
         #if os(macOS)
-        if selectedSection != .chat && isChatPanelVisible {
+        if activeSurfaceId != "chat" && isChatPanelVisible {
             HSplitView {
                 primaryDetailView
                     .frame(minWidth: 0)
@@ -104,7 +144,7 @@ struct RootView: View {
             primaryDetailView
         }
         #else
-        if selectedSection == .chat {
+        if activeSurfaceId == "chat" {
             primaryDetailView
         } else {
             iOSSwipeChatContainer {
@@ -143,8 +183,8 @@ struct RootView: View {
             WorkspaceSettingsView(isPresented: $showingSettings)
                 .environmentObject(store)
         }
-        .task(id: selectedSection) {
-            store.activeChatSurface = selectedSection.runtimeSurfaceId
+        .task(id: activeSurfaceTaskKey) {
+            store.activeChatSurface = activeSurfaceId
             await autoRefreshVisibleFileTree()
         }
     }
@@ -153,12 +193,11 @@ struct RootView: View {
         VStack(spacing: 0) {
             iOSTopBar
             Divider()
-            switch selectedSection {
-            case .chat:
+            if activeSurfaceId == "chat" {
                 ChatHomeView(showsHeader: false)
-            case .notes, .code:
+            } else {
                 iOSSwipeChatContainer {
-                    FilePreviewView()
+                    primaryDetailView
                 }
             }
         }
@@ -178,7 +217,7 @@ struct RootView: View {
             .contentShape(Rectangle())
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(selectedSection.rawValue)
+                Text(activeSurfaceTitle)
                     .font(.headline.weight(.semibold))
                 HStack(spacing: 6) {
                     Circle()
@@ -227,9 +266,9 @@ struct RootView: View {
                     }
                 } label: {
                     HStack(spacing: 10) {
-                        Image(systemName: selectedSection.systemImage)
+                        Image(systemName: activeSurfaceIcon)
                             .frame(width: 20)
-                        Text(selectedSection.rawValue)
+                        Text(activeSurfaceTitle)
                             .font(.headline.weight(.semibold))
                         Spacer()
                         Image(systemName: "chevron.down")
@@ -265,6 +304,29 @@ struct RootView: View {
                                 .contentShape(RoundedRectangle(cornerRadius: 8))
                                 .background(
                                     selectedSection == section ? Color.secondary.opacity(0.12) : Color.clear,
+                                    in: RoundedRectangle(cornerRadius: 8)
+                                )
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        ForEach(store.enabledPluginSurfaces) { surface in
+                            Button {
+                                selectPluginSurfaceFromSidebar(surface)
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: surface.systemImage)
+                                        .frame(width: 20)
+                                    Text(surface.title)
+                                    Spacer()
+                                }
+                                .font(.subheadline.weight(.medium))
+                                .padding(.horizontal, 12)
+                                .padding(.vertical, 9)
+                                .foregroundStyle(selectedPluginSurfaceId == surface.id ? .primary : .secondary)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .contentShape(RoundedRectangle(cornerRadius: 8))
+                                .background(
+                                    selectedPluginSurfaceId == surface.id ? Color.secondary.opacity(0.12) : Color.clear,
                                     in: RoundedRectangle(cornerRadius: 8)
                                 )
                             }
@@ -336,12 +398,19 @@ struct RootView: View {
     }
 
     private func selectSectionFromSidebar(_ section: WorkspaceSection) {
-        selection = section
+        selectSection(section)
         withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
             sidebarMenuExpanded = false
         }
         if section == .chat {
             closeSidebar()
+        }
+    }
+
+    private func selectPluginSurfaceFromSidebar(_ surface: WorkspaceSurface) {
+        selectPluginSurface(surface)
+        withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
+            sidebarMenuExpanded = false
         }
     }
 
@@ -500,6 +569,18 @@ struct RootView: View {
     }
     #endif
 
+    private func selectSection(_ section: WorkspaceSection) {
+        selectedPluginSurfaceId = nil
+        selection = section
+        store.activeChatSurface = section.runtimeSurfaceId
+    }
+
+    private func selectPluginSurface(_ surface: WorkspaceSurface) {
+        selectedPluginSurfaceId = surface.id
+        selection = nil
+        store.activeChatSurface = surface.id
+    }
+
     private func autoRefreshVisibleFileTree() async {
         while !Task.isCancelled {
             try? await Task.sleep(nanoseconds: 3_000_000_000)
@@ -519,12 +600,80 @@ struct RootView: View {
     private var primaryDetailView: some View {
         switch selectedSection {
         case .chat:
-            ChatHomeView()
+            if let selectedPluginSurface {
+                PluginSurfaceView(surface: selectedPluginSurface)
+            } else {
+                ChatHomeView()
+            }
         case .notes:
             FileSectionView(title: "Notes", root: "notes")
         case .code:
             FileSectionView(title: "Code", root: "code")
         }
+    }
+
+    private func surfaceButton(title: String, systemImage: String, isSelected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                Image(systemName: systemImage)
+                    .frame(width: 20)
+                Text(title)
+                    .lineLimit(1)
+                Spacer()
+            }
+            .font(.callout.weight(.medium))
+            .padding(.horizontal, 12)
+            .padding(.vertical, 9)
+            .foregroundStyle(isSelected ? .primary : .secondary)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+            .background(isSelected ? Color.secondary.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct PluginSurfaceView: View {
+    let surface: WorkspaceSurface
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 12) {
+                Image(systemName: surface.systemImage)
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 32, height: 32)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(surface.title)
+                        .font(.title2.weight(.semibold))
+                    Text(surface.description?.isEmpty == false ? surface.description! : "Plugin surface")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            Text("Open the chat panel to use this surface with its own prompt and tool mode.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+
+            if let prompt = surface.prompt, !prompt.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Surface prompt")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(prompt)
+                        .font(.body)
+                        .textSelection(.enabled)
+                }
+                .padding(12)
+                .background(.quaternary.opacity(0.16), in: RoundedRectangle(cornerRadius: 8))
+            }
+
+            Spacer()
+        }
+        .padding(24)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(.background)
     }
 }
 

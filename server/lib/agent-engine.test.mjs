@@ -397,11 +397,38 @@ test("chat surface prompt auto-routes to code when current context is code", asy
   assert.match(runtime.lastPrompt.currentCodeTaskId, /^task-/);
 });
 
+test("chat surface router can use an LLM classifier for ambiguous prompts", async () => {
+  const previous = process.env.CODMES_SURFACE_ROUTER;
+  process.env.CODMES_SURFACE_ROUTER = "llm";
+  try {
+    const root = await fixtureWorkspace();
+    const runtime = new FakeAgentRuntime({ classifierResult: "notes" });
+    const engine = new WorkspaceAgentEngine({ workspaceRoot: root }, runtime);
+
+    const session = await engine.createSession({
+      surface: "chat",
+      provider: "custom",
+      model: "demo-model"
+    });
+    await engine.submitPrompt({
+      sessionId: session.sessionId,
+      message: "이 내용 좀 정리해줘",
+      surface: "chat"
+    });
+
+    assert.equal(runtime.lastPrompt.surface, "notes");
+  } finally {
+    if (previous === undefined) delete process.env.CODMES_SURFACE_ROUTER;
+    else process.env.CODMES_SURFACE_ROUTER = previous;
+  }
+});
+
 class FakeAgentRuntime extends EventEmitter {
-  constructor() {
+  constructor(options = {}) {
     super();
     this.name = "fake-agent";
     this.lastPrompt = null;
+    this.classifierResult = options.classifierResult || null;
   }
 
   async connect() {}
@@ -439,6 +466,10 @@ class FakeAgentRuntime extends EventEmitter {
   async setAccessMode() {}
 
   async setReasoning() {}
+
+  async classifySurface() {
+    return this.classifierResult;
+  }
 
   close() {}
 }

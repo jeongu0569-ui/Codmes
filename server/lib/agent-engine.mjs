@@ -157,7 +157,7 @@ export class WorkspaceAgentEngine extends EventEmitter {
   async submitPrompt(params = {}) {
     await this.state.ensure();
     const priorSession = params.sessionId ? await this.state.readSession(params.sessionId) : null;
-    const routedSurface = inferSurfaceForPrompt(params, priorSession);
+    const routedSurface = await inferSurfaceForPrompt(params, priorSession, this.runtime);
     params = {
       ...params,
       surface: routedSurface
@@ -1125,7 +1125,7 @@ function workspaceRuntimeNotConfiguredReply(params = {}) {
   };
 }
 
-function inferSurfaceForPrompt(params = {}, priorSession = null) {
+async function inferSurfaceForPrompt(params = {}, priorSession = null, runtime = null) {
   const sessionSurface = String(priorSession?.surface || "").trim().toLowerCase();
   if (sessionSurface && sessionSurface !== "chat") return sessionSurface;
   const explicitSurface = String(params.surface || "").trim().toLowerCase();
@@ -1151,6 +1151,15 @@ function inferSurfaceForPrompt(params = {}, priorSession = null) {
     || /노트|문서|pdf|검색|자료|정리|요약|파일\s*설명|이\s*파일|현재\s*파일|폴더/.test(text)
   ) {
     return "notes";
+  }
+
+  if ((explicitSurface === "chat" || sessionSurface === "chat" || (!explicitSurface && !sessionSurface))
+    && process.env.CODMES_SURFACE_ROUTER === "llm"
+    && typeof runtime?.classifySurface === "function") {
+    try {
+      const classified = await runtime.classifySurface(params);
+      if (classified) return classified;
+    } catch {}
   }
 
   return explicitSurface || sessionSurface || null;

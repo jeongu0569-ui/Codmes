@@ -330,6 +330,12 @@ final class WorkspaceStore: ObservableObject {
         return workspaceSurfaces.first { $0.id == surfaceId }?.isEnabled ?? true
     }
 
+    var enabledPluginSurfaces: [WorkspaceSurface] {
+        workspaceSurfaces.filter { surface in
+            surface.kind == "plugin" && surface.isEnabled
+        }
+    }
+
     func currentPath(for root: String) -> String {
         root == "code" ? codePath : notesPath
     }

@@ -186,11 +186,13 @@ The core recall set (`tool_discovery`, `conversation_search`,
 custom modes cannot remove these tools. The global/admin runtime
 `disabledTools` list remains the one place that can block them.
 
-Default Chat also has a conservative pre-model surface router. It preserves
-explicit client/user surface selection, but can route obvious code-file context
-to `code` and document/PDF/folder context to `notes`. The planned richer version
-is a hybrid router: quick local rules for obvious cases, then a small classifier
-model for ambiguous prompts.
+Default Chat also has a pre-model surface router. It preserves explicit
+client/user surface selection, but can route obvious code-file context to `code`
+and document/PDF/folder context to `notes`. By default this is conservative and
+rule-based. If `CODMES_SURFACE_ROUTER=llm` is set, ambiguous Chat prompts can be
+sent through a small classifier request using the configured model; the
+classifier returns a surface id such as `chat`, `notes`, `code`, or a plugin
+surface id.
 
 Code-surface tools route through `CodeAgentRuntime`. Mutating or command-running
 tools are approval-gated by the tool mode and approval inbox.

@@ -56,6 +56,58 @@ export class OpenAICompatibleRuntime extends EventEmitter {
     };
   }
 
+  async classifySurface(params = {}) {
+    const surfaces = (await loadSurfaces(this.workspaceRoot)).filter((surface) => surface.enabled !== false);
+    const ids = new Set(surfaces.map((surface) => surface.id));
+    if (!ids.size) return null;
+
+    const selection = await this.resolveModelSelection(params);
+    if (selection.apiMode === "codex_responses" || selection.provider.id === "openai-codex") {
+      return null;
+    }
+
+    const surfaceLines = surfaces
+      .map((surface) => `- ${surface.id}: ${surface.title}${surface.description ? ` — ${surface.description}` : ""}`)
+      .join("\n");
+    const contextRequest = params.contextRequest
+      ? JSON.stringify(params.contextRequest)
+      : "{}";
+    const body = {
+      model: selection.model,
+      stream: false,
+      temperature: 0,
+      max_tokens: 16,
+      messages: [
+        {
+          role: "system",
+          content: [
+            "Classify the user's request into exactly one Codmes surface id.",
+            "Return only the id, with no punctuation or explanation.",
+            "Prefer chat when uncertain.",
+            surfaceLines
+          ].join("\n")
+        },
+        {
+          role: "user",
+          content: `Message: ${params.message || params.prompt || ""}\nContext: ${contextRequest}`
+        }
+      ]
+    };
+    const response = await this.fetch(`${selection.baseUrl}/chat/completions`, {
+      method: "POST",
+      headers: {
+        authorization: selection.apiKey ? `Bearer ${selection.apiKey}` : "",
+        "content-type": "application/json"
+      },
+      body: JSON.stringify(body)
+    });
+    if (!response.ok) return null;
+    const data = await response.json().catch(() => null);
+    const raw = String(data?.choices?.[0]?.message?.content || "").trim().toLowerCase();
+    const id = raw.replace(/[^a-z0-9_-]+/g, "");
+    return ids.has(id) ? id : null;
+  }
+
   async createSession(params = {}) {
     const sessionId = params.sessionId || `session-${new Date().toISOString().replace(/[:.]/g, "-")}-${randomUUID()}`;
     this.sessions.set(sessionId, {
