@@ -370,6 +370,33 @@ test("code surface prompt auto-creates and links a current code task", async () 
   assert.equal(storedSession.activeCodeTaskId, runtime.lastPrompt.currentCodeTaskId);
 });
 
+test("chat surface prompt auto-routes to code when current context is code", async () => {
+  const root = await fixtureWorkspace();
+  await fs.mkdir(path.join(root, "Code", "demo"), { recursive: true });
+  await fs.writeFile(path.join(root, "Code", "demo", "main.swift"), "print(\"hi\")");
+  const runtime = new FakeAgentRuntime();
+  const engine = new WorkspaceAgentEngine({ workspaceRoot: root }, runtime);
+
+  const session = await engine.createSession({
+    surface: "chat",
+    provider: "custom",
+    model: "demo-model"
+  });
+  await engine.submitPrompt({
+    sessionId: session.sessionId,
+    message: "이 파일 설명해줘",
+    surface: "chat",
+    contextRequest: {
+      scopeType: "current",
+      scopePath: "Code/demo/main.swift",
+      activePath: "Code/demo/main.swift"
+    }
+  });
+
+  assert.equal(runtime.lastPrompt.surface, "code");
+  assert.match(runtime.lastPrompt.currentCodeTaskId, /^task-/);
+});
+
 class FakeAgentRuntime extends EventEmitter {
   constructor() {
     super();

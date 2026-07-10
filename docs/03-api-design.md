@@ -485,6 +485,10 @@ surfaces such as `notes` and `code` can be disabled in client settings, while
 plugin surfaces can be added without hard-coding a new enum in every runtime
 path.
 
+The server also reads plugin-declared surface manifests from
+`.codmes/plugins/<plugin-id>/surface.json`. User overrides stored through the API
+win over manifest defaults.
+
 ### `GET /api/surfaces`
 
 Returns the effective surface registry:

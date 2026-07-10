@@ -866,8 +866,16 @@ struct RenderedMarkdownWebView: NSViewRepresentable {
         context.coordinator.height = $height
         if context.coordinator.currentHTML != html {
             context.coordinator.currentHTML = html
-            webView.loadHTMLString(html, baseURL: nil)
+            webView.loadHTMLString(nonScrollingHTML(html), baseURL: nil)
         }
+    }
+
+    private func nonScrollingHTML(_ value: String) -> String {
+        let style = "<style>html,body{overflow:visible!important;} body{height:auto!important;}</style>"
+        if value.contains("</head>") {
+            return value.replacingOccurrences(of: "</head>", with: "\(style)</head>")
+        }
+        return "\(style)\n\(value)"
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {

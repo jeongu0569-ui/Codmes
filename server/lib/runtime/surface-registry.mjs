@@ -42,8 +42,23 @@ export async function ensureSurfaceRegistryDir(workspaceRoot) {
 }
 
 export async function loadSurfaces(workspaceRoot) {
+  const manifests = await readPluginSurfaceManifests(workspaceRoot);
   const overrides = await readSurfaceOverrides(workspaceRoot);
   const byId = new Map(DEFAULT_SURFACES.map((surface) => [surface.id, { ...surface }]));
+  for (const manifest of manifests) {
+    if (!manifest?.id) continue;
+    byId.set(manifest.id, {
+      id: manifest.id,
+      title: titleFromId(manifest.id),
+      kind: "plugin",
+      icon: "square.grid.2x2",
+      enabled: true,
+      removable: true,
+      order: 1000,
+      description: "",
+      ...pickSurfaceFields(manifest, {})
+    });
+  }
   for (const [id, override] of Object.entries(overrides)) {
     if (!override || typeof override !== "object") continue;
     const base = byId.get(id) || {
@@ -64,6 +79,33 @@ export async function loadSurfaces(workspaceRoot) {
   }
   return Array.from(byId.values())
     .sort((a, b) => (a.order ?? 1000) - (b.order ?? 1000) || a.title.localeCompare(b.title));
+}
+
+async function readPluginSurfaceManifests(workspaceRoot) {
+  const pluginsDir = path.join(workspaceRoot, ".codmes", "plugins");
+  let entries = [];
+  try {
+    entries = await fs.readdir(pluginsDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const manifests = [];
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const file = path.join(pluginsDir, entry.name, "surface.json");
+    try {
+      const parsed = JSON.parse(await fs.readFile(file, "utf8"));
+      const id = normalizeSurfaceId(parsed.id || entry.name);
+      if (!id) continue;
+      manifests.push({
+        ...parsed,
+        id,
+        pluginId: String(parsed.pluginId || entry.name),
+        kind: "plugin"
+      });
+    } catch {}
+  }
+  return manifests;
 }
 
 export async function saveSurfaceOverride(workspaceRoot, surfaceId, config = {}) {

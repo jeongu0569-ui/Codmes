@@ -46,6 +46,8 @@ final class WorkspaceStore: ObservableObject {
     @Published var runtimeProviders: [RuntimeProviderOption] = []
     @Published var runtimeProviderModels: [String: [String]] = [:]
     @Published var runtimeModelSetupMessage = ""
+    @Published var workspaceSurfaces: [WorkspaceSurface] = []
+    @Published var surfaceSetupMessage = ""
 
     private let liveClient = LiveChatClient()
     private var activeActivityLineId: UUID?
@@ -127,6 +129,8 @@ final class WorkspaceStore: ObservableObject {
             let codeTree = try await api.tree(root: "code", path: codePath)
             notes = notesTree.children
             code = codeTree.children
+            connectionStep = "Loading surfaces"
+            await refreshSurfaces()
             connectionStep = "Loading runtime metadata"
             await refreshHermesMetadata()
             connectionStep = "Loading pending approvals"
@@ -166,6 +170,96 @@ final class WorkspaceStore: ObservableObject {
             runtimeModelSetupMessage = ""
         } catch {
             runtimeModelSetupMessage = error.localizedDescription
+        }
+    }
+
+    func refreshSurfaces() async {
+        guard let api else { return }
+        do {
+            workspaceSurfaces = try await api.surfaces()
+            surfaceSetupMessage = ""
+        } catch {
+            surfaceSetupMessage = error.localizedDescription
+        }
+    }
+
+    func setSurfaceEnabled(_ surface: WorkspaceSurface, enabled: Bool) async {
+        guard let api else { return }
+        do {
+            _ = try await api.updateSurface(
+                id: surface.id,
+                body: SurfaceUpdateBody(
+                    title: nil,
+                    kind: nil,
+                    icon: nil,
+                    description: nil,
+                    prompt: nil,
+                    root: nil,
+                    pluginId: nil,
+                    enabled: enabled,
+                    removable: nil,
+                    order: nil,
+                    remove: nil
+                )
+            )
+            await refreshSurfaces()
+        } catch {
+            surfaceSetupMessage = error.localizedDescription
+        }
+    }
+
+    func addPluginSurface(id: String, title: String, prompt: String) async {
+        guard let api else { return }
+        let trimmedId = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedId.isEmpty else {
+            surfaceSetupMessage = "Surface id is required."
+            return
+        }
+        do {
+            _ = try await api.updateSurface(
+                id: trimmedId,
+                body: SurfaceUpdateBody(
+                    title: title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? trimmedId : title,
+                    kind: "plugin",
+                    icon: "square.grid.2x2",
+                    description: prompt.trimmingCharacters(in: .whitespacesAndNewlines),
+                    prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines),
+                    root: nil,
+                    pluginId: trimmedId,
+                    enabled: true,
+                    removable: true,
+                    order: nil,
+                    remove: nil
+                )
+            )
+            await refreshSurfaces()
+        } catch {
+            surfaceSetupMessage = error.localizedDescription
+        }
+    }
+
+    func removeSurface(_ surface: WorkspaceSurface) async {
+        guard let api else { return }
+        do {
+            _ = try await api.updateSurface(
+                id: surface.id,
+                body: SurfaceUpdateBody(
+                    title: nil,
+                    kind: nil,
+                    icon: nil,
+                    description: nil,
+                    prompt: nil,
+                    root: nil,
+                    pluginId: nil,
+                    enabled: nil,
+                    removable: nil,
+                    order: nil,
+                    remove: true
+                )
+            )
+            await refreshSurfaces()
+        } catch {
+            surfaceSetupMessage = error.localizedDescription
         }
     }
 
@@ -228,6 +322,12 @@ final class WorkspaceStore: ObservableObject {
 
     func items(for root: String) -> [WorkspaceItem] {
         root == "code" ? code : notes
+    }
+
+    func surfaceEnabled(_ surfaceId: String) -> Bool {
+        if surfaceId == "chat" { return true }
+        guard !workspaceSurfaces.isEmpty else { return true }
+        return workspaceSurfaces.first { $0.id == surfaceId }?.isEnabled ?? true
     }
 
     func currentPath(for root: String) -> String {

@@ -160,6 +160,16 @@ surfaces can register their own title, icon, prompt hint, and tool mode. A
 university-specific surface such as `kongju-university` should therefore be a
 new surface entry plus tool-mode/plugin configuration, not a hard-coded app tab.
 
+Plugin surface manifests are loaded from:
+
+```text
+<Workspace>/.codmes/plugins/<plugin-id>/surface.json
+```
+
+The manifest can define `id`, `title`, `description`, `prompt`, `icon`, and
+ordering metadata. The `prompt` is injected as a surface-specific runtime hint,
+while actual tool access remains controlled by the surface/tool-mode registry.
+
 When the right-side/global chat panel is opened while the user is in another
 surface, the chat request should carry that surface id. The server then applies
 the matching prompt policy and tool mode:
@@ -175,6 +185,12 @@ The core recall set (`tool_discovery`, `conversation_search`,
 `conversation_read`, `memory_search`) is mandatory for all surfaces. Surface
 custom modes cannot remove these tools. The global/admin runtime
 `disabledTools` list remains the one place that can block them.
+
+Default Chat also has a conservative pre-model surface router. It preserves
+explicit client/user surface selection, but can route obvious code-file context
+to `code` and document/PDF/folder context to `notes`. The planned richer version
+is a hybrid router: quick local rules for obvious cases, then a small classifier
+model for ambiguous prompts.
 
 Code-surface tools route through `CodeAgentRuntime`. Mutating or command-running
 tools are approval-gated by the tool mode and approval inbox.

@@ -144,6 +144,42 @@ struct SearchResponse: Codable {
     let results: [Result]
 }
 
+struct WorkspaceSurfacesResponse: Codable {
+    let surfaces: [WorkspaceSurface]
+}
+
+struct WorkspaceSurface: Codable, Identifiable, Hashable {
+    let id: String
+    let title: String
+    let kind: String?
+    let icon: String?
+    let enabled: Bool?
+    let removable: Bool?
+    let order: Int?
+    let description: String?
+    let prompt: String?
+    let root: String?
+    let pluginId: String?
+
+    var isEnabled: Bool { enabled ?? true }
+    var canRemove: Bool { removable ?? true }
+    var systemImage: String { icon?.isEmpty == false ? icon! : "square.grid.2x2" }
+}
+
+struct SurfaceUpdateBody: Encodable {
+    let title: String?
+    let kind: String?
+    let icon: String?
+    let description: String?
+    let prompt: String?
+    let root: String?
+    let pluginId: String?
+    let enabled: Bool?
+    let removable: Bool?
+    let order: Int?
+    let remove: Bool?
+}
+
 struct AgentTasksResponse: Codable {
     let tasks: [AgentTaskSummary]
 }

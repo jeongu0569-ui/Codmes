@@ -40,3 +40,23 @@ test("surface registry can disable built-in surfaces and add plugin surfaces", a
   assert.equal(mode.enabledTools.includes("tool_discovery"), true);
   assert.equal(mode.enabledTools.includes("conversation_search"), true);
 });
+
+test("surface registry loads plugin surface manifests", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "codmes-surfaces-"));
+  const pluginDir = path.join(root, ".codmes", "plugins", "kongju-university");
+  await fs.mkdir(pluginDir, { recursive: true });
+  await fs.writeFile(path.join(pluginDir, "surface.json"), JSON.stringify({
+    id: "kongju-university",
+    title: "공주대학교",
+    description: "University-specific workflow surface.",
+    prompt: "Use university portal and campus-specific tools when available.",
+    order: 80
+  }));
+
+  const surfaces = await loadSurfaces(root);
+  const plugin = surfaces.find((surface) => surface.id === "kongju-university");
+  assert.equal(plugin?.title, "공주대학교");
+  assert.equal(plugin?.kind, "plugin");
+  assert.equal(plugin?.pluginId, "kongju-university");
+  assert.equal(plugin?.prompt, "Use university portal and campus-specific tools when available.");
+});

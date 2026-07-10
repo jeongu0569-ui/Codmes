@@ -14,6 +14,7 @@ import {
   executeWorkspaceTool,
   WORKSPACE_TOOL_DEFINITIONS
 } from "./workspace-tools.mjs";
+import { loadSurfaces } from "./surface-registry.mjs";
 
 const OPENAI_COMPATIBLE_DEFAULTS = {
   "openai-api": "https://api.openai.com/v1",
@@ -1028,13 +1029,17 @@ export class OpenAICompatibleRuntime extends EventEmitter {
 
   async buildSystemPrompt(params) {
     const context = params.context?.workspaceContext || params.context || {};
+    const surface = await this.surfaceForPrompt(params.surface || "chat");
     const parts = [
       "You are Codmes's built-in assistant.",
       "Answer in the same language as the user's latest message.",
       "Use provided workspace context when relevant, but do not expose it as raw metadata.",
-      ...surfacePolicyLines(params.surface || "chat"),
+      ...surfacePolicyLines(surface?.id || params.surface || "chat"),
       ...recallToolPolicyLines()
     ];
+    if (surface?.prompt) {
+      parts.push(`Surface prompt: ${surface.prompt}`);
+    }
 
     const workspace = context.workspace || {};
     if (params.sessionSummary?.content) {
@@ -1139,6 +1144,15 @@ export class OpenAICompatibleRuntime extends EventEmitter {
     }
 
     return parts.join("\n");
+  }
+
+  async surfaceForPrompt(surfaceId) {
+    try {
+      const surfaces = await loadSurfaces(this.workspaceRoot);
+      return surfaces.find((surface) => surface.id === surfaceId) || null;
+    } catch {
+      return null;
+    }
   }
 
   async resolveModelSelection(params = {}) {

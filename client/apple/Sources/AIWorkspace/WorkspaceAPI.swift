@@ -287,6 +287,17 @@ struct WorkspaceAPI {
         let _: EmptyResponse = try await post("/api/model/default", body: body)
     }
 
+    func surfaces() async throws -> [WorkspaceSurface] {
+        let response: WorkspaceSurfacesResponse = try await get("/api/surfaces")
+        return response.surfaces
+    }
+
+    func updateSurface(id: String, body: SurfaceUpdateBody) async throws -> WorkspaceSurface {
+        var components = try components("/api/surfaces/\(id)")
+        components.percentEncodedPath = "/api/surfaces/\(id.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? id)"
+        return try await request(components, method: "POST", body: body)
+    }
+
     func hermesSessions() async throws -> [HermesSessionSummary] {
         let data = try await dataRequest(try components("/api/sessions"))
         let object = try JSONSerialization.jsonObject(with: data)

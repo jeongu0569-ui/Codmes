@@ -17,7 +17,7 @@ struct RootView: View {
             HStack(spacing: 0) {
                 if isMacSidebarVisible {
                     VStack(spacing: 0) {
-                        List(WorkspaceSection.allCases, selection: $selection) { section in
+                        List(visibleWorkspaceSections, selection: $selection) { section in
                             Label(section.rawValue, systemImage: section.systemImage)
                                 .tag(section)
                         }
@@ -81,6 +81,12 @@ struct RootView: View {
 
     private var selectedSection: WorkspaceSection {
         selection ?? .chat
+    }
+
+    private var visibleWorkspaceSections: [WorkspaceSection] {
+        WorkspaceSection.allCases.filter { section in
+            store.surfaceEnabled(section.runtimeSurfaceId)
+        }
     }
 
     @ViewBuilder
@@ -241,7 +247,7 @@ struct RootView: View {
 
                 if sidebarMenuExpanded {
                     VStack(spacing: 2) {
-                        ForEach(WorkspaceSection.allCases) { section in
+                        ForEach(visibleWorkspaceSections) { section in
                             Button {
                                 selectSectionFromSidebar(section)
                             } label: {
@@ -621,6 +627,8 @@ struct WorkspaceSettingsView: View {
                     .background(.quaternary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
 
                     RuntimeModelSettingsView()
+
+                    SurfaceSettingsView()
                 }
                 .padding(18)
             }
@@ -636,6 +644,118 @@ struct WorkspaceSettingsView: View {
                 }
             }
         }
+    }
+}
+
+private struct SurfaceSettingsView: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @State private var pluginId = ""
+    @State private var pluginTitle = ""
+    @State private var pluginPrompt = ""
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Surfaces")
+                        .font(.headline)
+                    Text("Choose which work modes appear in the client. Plugin surfaces can provide their own prompt and tool mode.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    Task { await store.refreshSurfaces() }
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .buttonStyle(.plain)
+            }
+
+            ForEach(store.workspaceSurfaces) { surface in
+                surfaceRow(surface)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Add plugin surface")
+                    .font(.subheadline.weight(.semibold))
+                TextField("kongju-university", text: $pluginId)
+                    .textFieldStyle(.roundedBorder)
+                    #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    #endif
+                TextField("공주대학교", text: $pluginTitle)
+                    .textFieldStyle(.roundedBorder)
+                TextField("Prompt hint for this surface", text: $pluginPrompt, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(2...4)
+                Button {
+                    let id = pluginId
+                    let title = pluginTitle
+                    let prompt = pluginPrompt
+                    Task {
+                        await store.addPluginSurface(id: id, title: title, prompt: prompt)
+                        if store.surfaceSetupMessage.isEmpty {
+                            pluginId = ""
+                            pluginTitle = ""
+                            pluginPrompt = ""
+                        }
+                    }
+                } label: {
+                    Label("Add Surface", systemImage: "plus")
+                }
+                .buttonStyle(.bordered)
+            }
+
+            if !store.surfaceSetupMessage.isEmpty {
+                Text(store.surfaceSetupMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(14)
+        .background(.quaternary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+        .task {
+            await store.refreshSurfaces()
+        }
+    }
+
+    private func surfaceRow(_ surface: WorkspaceSurface) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: surface.systemImage)
+                .frame(width: 20)
+                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(surface.title)
+                    .font(.callout.weight(.medium))
+                Text(surface.description?.isEmpty == false ? surface.description! : surface.id)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+            Spacer()
+            Toggle("", isOn: Binding(
+                get: { surface.isEnabled },
+                set: { enabled in
+                    Task { await store.setSurfaceEnabled(surface, enabled: enabled) }
+                }
+            ))
+            .labelsHidden()
+            .disabled(surface.id == "chat")
+            if surface.canRemove {
+                Button(role: .destructive) {
+                    Task { await store.removeSurface(surface) }
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 6)
     }
 }
 

@@ -51,6 +51,8 @@ Implemented:
   The token is stored in Keychain first; the old UserDefaults value is used only
   as a migration/fallback path.
 - workspace status loading
+- Surface settings for enabling/hiding built-in modes and adding lightweight
+  plugin surfaces.
 - Notes root listing
 - Code root listing
 - recursive Notes and Code folder navigation

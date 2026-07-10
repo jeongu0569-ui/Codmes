@@ -156,6 +156,12 @@ export class WorkspaceAgentEngine extends EventEmitter {
 
   async submitPrompt(params = {}) {
     await this.state.ensure();
+    const priorSession = params.sessionId ? await this.state.readSession(params.sessionId) : null;
+    const routedSurface = inferSurfaceForPrompt(params, priorSession);
+    params = {
+      ...params,
+      surface: routedSurface
+    };
     const context = await this.resolveContext(params);
     const task = await this.state.startTask({
       type: params.taskType || "chat",
@@ -169,7 +175,6 @@ export class WorkspaceAgentEngine extends EventEmitter {
       reasoningEffort: params.reasoningEffort
     });
     try {
-      const priorSession = params.sessionId ? await this.state.readSession(params.sessionId) : null;
       const history = this.sessionRuntime.promptHistory(priorSession);
       const memoryResults = await this.searchRelevantMemory(params, priorSession);
       const codeTaskContext = await this.ensureCodeSurfaceTask(params, priorSession, context);
@@ -187,7 +192,7 @@ export class WorkspaceAgentEngine extends EventEmitter {
         history,
         sessionSummary: priorSession?.summary || null,
         memoryResults,
-        surface: priorSession?.surface || params.surface || null,
+        surface: params.surface || priorSession?.surface || null,
         folderId: priorSession?.folderId || params.folderId || null,
         projectId: priorSession?.projectId || params.projectId || null,
         codeRuntime: this.codeRuntime,
@@ -717,7 +722,7 @@ export class WorkspaceAgentEngine extends EventEmitter {
   }
 
   async ensureCodeSurfaceTask(params, session, context = {}) {
-    const surface = session?.surface || params.surface || "";
+    const surface = params.surface || session?.surface || "";
     if (surface !== "code") return null;
     const existingTaskId = params.codeTaskId || session?.activeCodeTaskId || "";
     if (existingTaskId) {
@@ -1118,6 +1123,37 @@ function workspaceRuntimeNotConfiguredReply(params = {}) {
       "Configure a provider with `codmes auth` and select a model with `codmes model set-default`."
     ].join("\n")
   };
+}
+
+function inferSurfaceForPrompt(params = {}, priorSession = null) {
+  const sessionSurface = String(priorSession?.surface || "").trim().toLowerCase();
+  if (sessionSurface && sessionSurface !== "chat") return sessionSurface;
+  const explicitSurface = String(params.surface || "").trim().toLowerCase();
+  if (explicitSurface && explicitSurface !== "chat") return explicitSurface;
+
+  const text = String(params.message || params.prompt || "").toLowerCase();
+  const contextScope = String(params.contextRequest?.scopeType || "").toLowerCase();
+  const activePath = String(params.contextRequest?.activePath || params.contextRequest?.scopePath || "").toLowerCase();
+
+  if (
+    activePath.startsWith("code/")
+    || /\.(js|ts|tsx|jsx|swift|py|java|c|cc|cpp|h|hpp|rs|go|rb|php|sh|zsh|css|html|json|yaml|yml)$/.test(activePath)
+    || /코드|버그|에러|빌드|테스트|리팩터|수정|구현|커밋|푸시|diff|patch|git|xcode|npm|함수|클래스|파일\s*고쳐/.test(text)
+  ) {
+    return "code";
+  }
+
+  if (
+    contextScope === "folder"
+    || contextScope === "workspace"
+    || contextScope === "pdf"
+    || /\.(md|markdown|pdf|txt|rtf|docx?)$/.test(activePath)
+    || /노트|문서|pdf|검색|자료|정리|요약|파일\s*설명|이\s*파일|현재\s*파일|폴더/.test(text)
+  ) {
+    return "notes";
+  }
+
+  return explicitSurface || sessionSurface || null;
 }
 
 function safeArtifactName(value) {
