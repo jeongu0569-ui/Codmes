@@ -9,7 +9,7 @@ struct AIWorkspaceApp: App {
 
     var body: some Scene {
         #if os(macOS)
-        WindowGroup {
+        WindowGroup(id: "ai-workspace-main-window-v2") {
             rootView
         }
         .windowStyle(.titleBar)
@@ -41,41 +41,15 @@ struct AIWorkspaceApp: App {
 private func activateMacAppWindow() {
     NSApp.setActivationPolicy(.regular)
     DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-        if let window = NSApp.windows.first {
+        let window = NSApp.windows
+            .filter({ $0.isVisible && $0.styleMask.contains(.titled) })
+            .max(by: { $0.frame.width * $0.frame.height < $1.frame.width * $1.frame.height })
+        if let window {
             window.styleMask.insert(.resizable)
             window.minSize = NSSize(width: 640, height: 420)
-            window.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-            fitWindowToVisibleScreen(window)
-            window.makeKeyAndOrderFront(nil)
         }
+        window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-    }
-}
-
-@MainActor
-private func fitWindowToVisibleScreen(_ window: NSWindow) {
-    guard let visibleFrame = window.screen?.visibleFrame ?? NSScreen.main?.visibleFrame else { return }
-    var frame = window.frame
-    let maxWidth = visibleFrame.width * 0.92
-    let maxHeight = visibleFrame.height * 0.90
-    var changed = false
-
-    if frame.width > maxWidth {
-        frame.size.width = maxWidth
-        changed = true
-    }
-    if frame.height > maxHeight {
-        frame.size.height = maxHeight
-        changed = true
-    }
-    if frame.minX < visibleFrame.minX || frame.maxX > visibleFrame.maxX
-        || frame.minY < visibleFrame.minY || frame.maxY > visibleFrame.maxY {
-        frame.origin.x = visibleFrame.midX - frame.width / 2
-        frame.origin.y = visibleFrame.midY - frame.height / 2
-        changed = true
-    }
-    if changed {
-        window.setFrame(frame, display: true)
     }
 }
 #endif

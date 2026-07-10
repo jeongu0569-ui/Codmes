@@ -12,6 +12,7 @@
 		182914B2EEE94CCEB66C0433 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2C7EC532D8964FC2B78C9C43 /* Models.swift */; };
 		366FEBDCA8B64981A2D1586B /* FileSectionView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F506A7A90DC499192582AC9 /* FileSectionView.swift */; };
 		3E8DC8B1723C4A2FA10A1594 /* WorkspaceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29CB2E54F6EF47EEA71CC126 /* WorkspaceStore.swift */; };
+		3FA1A001A0B14A6F9B99C001 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FA1A000A0B14A6F9B99C001 /* KeychainStore.swift */; };
 		99A0E6B3E90E492CBD0DD601 /* ApprovalsInboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99A0E6B3E90E492CBD0DD600 /* ApprovalsInboxView.swift */; };
 
 		43FBD23C9D0E4947AA3E9A42 /* LiveChatClient.swift in Sources */ = {isa = PBXBuildFile; fileRef = 73779B0EDE9A4F3B9DFC6517 /* LiveChatClient.swift */; };
@@ -27,6 +28,7 @@
 		ED59859B6FF64593824B30A9 /* AIWorkspaceApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = B976F60DF13B494FABD55609 /* AIWorkspaceApp.swift */; };
 		EE28A7064EBA4B50AFDDD034 /* ChatHomeView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8708198D47F24EFCA25FA2FF /* ChatHomeView.swift */; };
 		F29F27586DE64EA98831454D /* WorkspaceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 29CB2E54F6EF47EEA71CC126 /* WorkspaceStore.swift */; };
+		3FA1A002A0B14A6F9B99C001 /* KeychainStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3FA1A000A0B14A6F9B99C001 /* KeychainStore.swift */; };
 		99A0E6B3E90E492CBD0DD602 /* ApprovalsInboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 99A0E6B3E90E492CBD0DD600 /* ApprovalsInboxView.swift */; };
 
 		F31DF70215D54266A71EBB1F /* WorkspaceAPI.swift in Sources */ = {isa = PBXBuildFile; fileRef = 14787F32F0304A32B7916672 /* WorkspaceAPI.swift */; };
@@ -37,6 +39,7 @@
 		14787F32F0304A32B7916672 /* WorkspaceAPI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceAPI.swift; sourceTree = "<group>"; };
 		21FD49723DF6427A8FAD2A1B /* iOS-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "iOS-Info.plist"; sourceTree = "<group>"; };
 		29CB2E54F6EF47EEA71CC126 /* WorkspaceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceStore.swift; sourceTree = "<group>"; };
+		3FA1A000A0B14A6F9B99C001 /* KeychainStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeychainStore.swift; sourceTree = "<group>"; };
 		99A0E6B3E90E492CBD0DD600 /* ApprovalsInboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalsInboxView.swift; sourceTree = "<group>"; };
 
 		2C7EC532D8964FC2B78C9C43 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
@@ -78,6 +81,7 @@
 				8708198D47F24EFCA25FA2FF /* ChatHomeView.swift */,
 				4F506A7A90DC499192582AC9 /* FileSectionView.swift */,
 				5241C0E1854D4E939201DB3F /* HeaderView.swift */,
+				3FA1A000A0B14A6F9B99C001 /* KeychainStore.swift */,
 				73779B0EDE9A4F3B9DFC6517 /* LiveChatClient.swift */,
 				2C7EC532D8964FC2B78C9C43 /* Models.swift */,
 				CC742CBD01884A2190D55DA2 /* RootView.swift */,
@@ -197,6 +201,7 @@
 				EE28A7064EBA4B50AFDDD034 /* ChatHomeView.swift in Sources */,
 				7B972FFE56D7499B83ACAAEE /* FileSectionView.swift in Sources */,
 				0A45D103ADE640998C377118 /* HeaderView.swift in Sources */,
+				3FA1A001A0B14A6F9B99C001 /* KeychainStore.swift in Sources */,
 				82D33833400243A1BA45C06B /* LiveChatClient.swift in Sources */,
 				182914B2EEE94CCEB66C0433 /* Models.swift in Sources */,
 				C053B1D066564AAF9EB163CF /* RootView.swift in Sources */,
@@ -215,6 +220,7 @@
 				79EA66C9DB23470A813D2399 /* ChatHomeView.swift in Sources */,
 				366FEBDCA8B64981A2D1586B /* FileSectionView.swift in Sources */,
 				E879AE0FECD14F2A802E6117 /* HeaderView.swift in Sources */,
+				3FA1A002A0B14A6F9B99C001 /* KeychainStore.swift in Sources */,
 				43FBD23C9D0E4947AA3E9A42 /* LiveChatClient.swift in Sources */,
 				B15EE4FF94EB4FFDB66F99E3 /* Models.swift in Sources */,
 				DC869511E1264A16B71CDAFA /* RootView.swift in Sources */,

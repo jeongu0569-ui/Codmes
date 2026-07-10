@@ -186,13 +186,20 @@ struct ChatHomeView: View {
     }
 
     private var sessionToolbar: some View {
+        ViewThatFits(in: .horizontal) {
+            sessionToolbarRow(compactLayout: usesCompactSessionToolbar)
+            sessionToolbarRow(compactLayout: true)
+        }
+    }
+
+    private func sessionToolbarRow(compactLayout: Bool) -> some View {
         HStack(spacing: 8) {
             Button {
                 showingSessionManager = true
             } label: {
                 HStack(spacing: 6) {
                     Image(systemName: "clock.arrow.circlepath")
-                    if !usesCompactSessionToolbar {
+                    if !compactLayout {
                         Text("History")
                     }
                 }
@@ -209,10 +216,10 @@ struct ChatHomeView: View {
                 .frame(width: 1, height: 22)
 
             projectMenu
-                .frame(maxWidth: usesCompactSessionToolbar ? 116 : 170, alignment: .trailing)
+                .frame(maxWidth: compactLayout ? 104 : 170, alignment: .trailing)
 
             sessionMenu
-                .frame(maxWidth: usesCompactSessionToolbar ? 136 : 230, alignment: .trailing)
+                .frame(maxWidth: compactLayout ? 126 : 230, alignment: .trailing)
 
             Button {
                 store.prepareNewChat()

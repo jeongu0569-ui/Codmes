@@ -9,34 +9,56 @@ struct RootView: View {
     @State private var isSidebarVisible = false
     @State private var sidebarDragX: CGFloat = 0
     @State private var showingSettings = false
+    @State private var isMacSidebarVisible = true
 
     var body: some View {
         #if os(macOS)
-        NavigationSplitView {
-            List(WorkspaceSection.allCases, selection: $selection) { section in
-                Label(section.rawValue, systemImage: section.systemImage)
-                    .tag(section)
-            }
-            .navigationTitle("Workspace")
-            .safeAreaInset(edge: .bottom) {
-                ServerStatusView()
-                    .padding(12)
-            }
-        } detail: {
-            detailView
-                .toolbar {
-                    #if os(macOS)
-                    if selectedSection != .chat {
-                        Button {
-                            isChatPanelVisible.toggle()
-                        } label: {
-                            Image(systemName: isChatPanelVisible ? "sidebar.right" : "bubble.right")
+        GeometryReader { proxy in
+            HStack(spacing: 0) {
+                if isMacSidebarVisible {
+                    VStack(spacing: 0) {
+                        List(WorkspaceSection.allCases, selection: $selection) { section in
+                            Label(section.rawValue, systemImage: section.systemImage)
+                                .tag(section)
                         }
-                        .help(isChatPanelVisible ? "Hide chat panel" : "Show chat panel")
+                        .navigationTitle("Workspace")
+
+                        Divider()
+
+                        ScrollView {
+                            ServerStatusView()
+                                .padding(12)
+                        }
+                        .frame(maxHeight: min(240, proxy.size.height * 0.38))
                     }
-                    #endif
+                    .frame(width: min(240, max(180, proxy.size.width * 0.22)))
+
+                    Divider()
                 }
+
+                detailView
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .toolbar {
+                        Button {
+                            isMacSidebarVisible.toggle()
+                        } label: {
+                            Image(systemName: "sidebar.left")
+                        }
+                        .help(isMacSidebarVisible ? "Hide sidebar" : "Show sidebar")
+
+                        if selectedSection != .chat {
+                            Button {
+                                isChatPanelVisible.toggle()
+                            } label: {
+                                Image(systemName: isChatPanelVisible ? "sidebar.right" : "bubble.right")
+                            }
+                            .help(isChatPanelVisible ? "Hide chat panel" : "Show chat panel")
+                        }
+                    }
+            }
+            .frame(width: proxy.size.width, height: proxy.size.height)
         }
+        .frame(minWidth: 640, idealWidth: 1120, minHeight: 420, idealHeight: 740)
         .task(id: selectedSection) {
             await autoRefreshVisibleFileTree()
         }
