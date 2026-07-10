@@ -154,14 +154,6 @@ struct RootView: View {
                 iOSSwipeChatContainer {
                     FilePreviewView()
                 }
-            case .search:
-                iOSSwipeChatContainer {
-                    SearchView()
-                }
-            case .approvals:
-                iOSSwipeChatContainer {
-                    ApprovalsInboxView()
-                }
             }
         }
         .background(.background)
@@ -342,7 +334,7 @@ struct RootView: View {
         withAnimation(.spring(response: 0.22, dampingFraction: 0.9)) {
             sidebarMenuExpanded = false
         }
-        if section == .chat || section == .search || section == .approvals {
+        if section == .chat {
             closeSidebar()
         }
     }
@@ -442,7 +434,7 @@ struct RootView: View {
                 .frame(width: panelWidth + 15)
                 .frame(maxHeight: .infinity)
                 .offset(x: chatPanelOffset(panelWidth: panelWidth))
-                .highPriorityGesture(chatPanelGesture(panelWidth: panelWidth))
+                .simultaneousGesture(chatPanelGesture(panelWidth: panelWidth))
 
                 if !isChatPanelVisible && !isSidebarVisible {
                     Color.clear
@@ -467,6 +459,10 @@ struct RootView: View {
         DragGesture(minimumDistance: 12)
             .onChanged { value in
                 guard !isSidebarVisible else { return }
+                guard abs(value.translation.width) > abs(value.translation.height) * 1.35 else {
+                    chatPanelDragX = 0
+                    return
+                }
                 if isChatPanelVisible {
                     chatPanelDragX = min(panelWidth + 15, max(0, value.translation.width))
                 } else {
@@ -475,6 +471,10 @@ struct RootView: View {
             }
             .onEnded { value in
                 guard !isSidebarVisible else {
+                    chatPanelDragX = 0
+                    return
+                }
+                guard abs(value.translation.width) > abs(value.translation.height) * 1.35 else {
                     chatPanelDragX = 0
                     return
                 }
@@ -503,9 +503,7 @@ struct RootView: View {
                 await store.refreshTree(root: "notes")
             case .code:
                 await store.refreshTree(root: "code")
-            case .approvals:
-                await store.refreshApprovals()
-            case .chat, .search:
+            case .chat:
                 return
             }
         }
@@ -520,10 +518,6 @@ struct RootView: View {
             FileSectionView(title: "Notes", root: "notes")
         case .code:
             FileSectionView(title: "Code", root: "code")
-        case .search:
-            SearchView()
-        case .approvals:
-            ApprovalsInboxView()
         }
     }
 }

@@ -12,11 +12,14 @@ struct FileSectionView: View {
             #if os(macOS)
             HSplitView {
                 FileBrowserPane(title: title, root: root)
-                    .frame(minWidth: 0, idealWidth: 280)
+                    .frame(minWidth: 220, idealWidth: 280, maxWidth: 380)
+                    .frame(maxHeight: .infinity)
 
                 FilePreviewView()
                     .frame(minWidth: 0)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             #else
             VStack(spacing: 0) {
                 FileBrowserPane(title: title, root: root)
@@ -26,6 +29,7 @@ struct FileSectionView: View {
             }
             #endif
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(.background)
     }
 }
@@ -162,7 +166,9 @@ struct FileBrowserPane: View {
                     .tint(.secondary)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .fileImporter(isPresented: $isImportingFile, allowedContentTypes: [.item], allowsMultipleSelection: true) { result in
             switch result {
             case let .success(urls):
@@ -572,6 +578,7 @@ struct FilePreviewView: View {
                         .font(.system(.body, design: .monospaced))
                         .scrollContentBackground(.hidden)
                         .padding(16)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
                 } else {
                     ScrollView {
                         if file.kind == "markdown" {
@@ -591,11 +598,14 @@ struct FilePreviewView: View {
                                 .padding(20)
                         }
                     }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
             } else {
                 ContentUnavailableView("Select a file", systemImage: "doc.text.magnifyingglass", description: Text("Open a markdown or text file from the tree."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 }
 

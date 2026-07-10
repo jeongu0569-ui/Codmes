@@ -487,8 +487,6 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
     case chat = "Chat"
     case notes = "Notes"
     case code = "Code"
-    case search = "Search"
-    case approvals = "Approvals"
 
     var id: String { rawValue }
 
@@ -497,7 +495,6 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .chat: "chat"
         case .notes: "notes"
         case .code: "code"
-        case .search, .approvals: "chat"
         }
     }
 
@@ -506,8 +503,6 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
         case .chat: "message"
         case .notes: "doc.text"
         case .code: "chevron.left.forwardslash.chevron.right"
-        case .search: "magnifyingglass"
-        case .approvals: "checkmark.seal"
         }
     }
 }

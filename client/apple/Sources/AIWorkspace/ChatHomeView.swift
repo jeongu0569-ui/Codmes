@@ -515,25 +515,35 @@ struct MessageBubble: View {
     }
 
     private var messageRow: some View {
+        if line.role == "assistant" {
+            return AnyView(assistantMessageRow)
+        }
+        return AnyView(bubbledMessageRow)
+    }
+
+    private var assistantMessageRow: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            RichMarkdownView(markdown: line.text)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 4)
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var bubbledMessageRow: some View {
         HStack {
             if line.role == "user" {
                 Spacer(minLength: 52)
             }
 
             VStack(alignment: bubbleAlignment, spacing: 6) {
-                if line.role != "assistant" {
-                    Text(roleLabel)
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                if line.role == "assistant" {
-                    RichMarkdownView(markdown: line.text)
-                        .textSelection(.enabled)
-                } else {
-                    Text(line.text)
-                        .textSelection(.enabled)
-                        .multilineTextAlignment(line.role == "user" ? .trailing : .leading)
-                }
+                Text(roleLabel)
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Text(line.text)
+                    .textSelection(.enabled)
+                    .multilineTextAlignment(line.role == "user" ? .trailing : .leading)
                 if line.role == "approval", let state = line.approvalState {
                     approvalControls(state)
                 }

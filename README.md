@@ -22,9 +22,7 @@ Mac / iPhone / iPad
 └── Codmes App
     ├── Chat
     ├── Notes
-    ├── Code
-    ├── Search
-    └── Approvals
+    └── Code
 ```
 
 파일과 AI 실행은 서버가 담당하고 Apple 앱은 서버의 자료와 기능을 사용하는 원격 작업 화면입니다. 따라서 PDF와 코드 프로젝트 전체를 iPhone에 내려받지 않고도 서버에 보관한 상태로 열고 검색하는 구조를 목표로 합니다.
@@ -337,7 +335,7 @@ iOS 앱은 다음 구조입니다.
 - 기본 화면은 Chat
 - 왼쪽 버튼 또는 가장자리 제스처로 Workspace 메뉴 열기
 - Notes와 Code 파일 트리는 왼쪽 서랍에서 사용
-- Notes, Code, Search 화면에서 오른쪽 가장자리 제스처로 전역 Chat 패널 열기
+- Notes와 Code 화면에서 오른쪽 가장자리 제스처로 전역 Chat 패널 열기
 - 서버 주소와 토큰은 설정 화면에서 입력
 - 서버 토큰은 Apple Keychain에 저장
 

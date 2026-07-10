@@ -41,7 +41,6 @@ macOS.
 Chat
 Notes
 Code
-Search
 ```
 
 Implemented:
@@ -147,7 +146,7 @@ Implemented:
 - iOS Simulator build support
 - iOS device build support when the local Xcode signing team is configured
 - physical iPhone app installation has been verified with a local Personal Team
-- global chat side panel for Notes, Code, and Search. macOS shows a compact
+- global chat side panel for Notes and Code. macOS shows a compact
   right-side split panel; iOS reveals the same compact chat surface by swiping
   left from the right edge, closer to the Obsidian plugin side-panel feel.
 - iOS now uses a chat-first custom shell instead of `NavigationSplitView`.
@@ -282,7 +281,7 @@ Chat can be used in two places:
 Chat tab
   -> full-page ChatHomeView
 
-Notes / Code / Search toolbar chat button
+Notes / Code right-edge chat panel
   -> compact ChatHomeView
   -> macOS: right-side split panel
   -> iOS: right-edge swipe panel
