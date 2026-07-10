@@ -215,6 +215,17 @@ notes -> workspace/docsearch/read-note/file-metadata tools plus conversation/mem
 code  -> CodeAgentRuntime search/read/git/patch/check tools plus conversation/memory tools
 ```
 
+Surface registry endpoints:
+
+| Method | Path | Status | Auth | Client |
+|---|---|---:|---|---|
+| GET | `/api/surfaces` | implemented | token when configured | settings/navigation |
+| POST | `/api/surfaces/:surface` | implemented | token when configured | settings/plugins |
+
+`chat` is the default always-on surface. Built-in surfaces such as `notes` and
+`code` can be hidden with `enabled: false`; plugin surfaces can be added with a
+title, icon, prompt hint, and tool-mode fields.
+
 `tool_discovery` can temporarily expand safe tools for the current turn. It
 does not auto-enable approval-gated tools such as `apply_patch`,
 `run_checks`, or `run_git_command`.

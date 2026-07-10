@@ -287,6 +287,9 @@ test("OpenAI-compatible runtime filters tools by surface defaults", async () => 
   const chatTools = new Set(requests[0].tools.map((tool) => tool.function.name));
   const notesTools = new Set(requests[1].tools.map((tool) => tool.function.name));
   const codeTools = new Set(requests[2].tools.map((tool) => tool.function.name));
+  assert.match(requests[0].messages[0].content, /Surface mode: Chat/);
+  assert.match(requests[1].messages[0].content, /Surface mode: Notes/);
+  assert.match(requests[2].messages[0].content, /Surface mode: Code/);
 
   assert.equal(chatTools.has("conversation_search"), true);
   assert.equal(chatTools.has("memory_search"), true);

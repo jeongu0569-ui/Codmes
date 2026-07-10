@@ -492,6 +492,15 @@ enum WorkspaceSection: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
+    var runtimeSurfaceId: String {
+        switch self {
+        case .chat: "chat"
+        case .notes: "notes"
+        case .code: "code"
+        case .search, .approvals: "chat"
+        }
+    }
+
     var systemImage: String {
         switch self {
         case .chat: "message"

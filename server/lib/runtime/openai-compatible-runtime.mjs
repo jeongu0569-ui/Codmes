@@ -1032,6 +1032,7 @@ export class OpenAICompatibleRuntime extends EventEmitter {
       "You are Codmes's built-in assistant.",
       "Answer in the same language as the user's latest message.",
       "Use provided workspace context when relevant, but do not expose it as raw metadata.",
+      ...surfacePolicyLines(params.surface || "chat"),
       ...recallToolPolicyLines()
     ];
 
@@ -1761,6 +1762,29 @@ function recallToolPolicyLines() {
     "Recall policy: use conversation_search to find past sessions/messages and conversation_read only after conversation_search returns concrete sessionId/messageIds.",
     "Recall policy: do not treat memory_search results as exact transcripts; use conversation_read for exact wording and surrounding context."
   ];
+}
+
+function surfacePolicyLines(surface) {
+  switch (String(surface || "chat").toLowerCase()) {
+    case "code":
+      return [
+        "Surface mode: Code.",
+        "Prefer code-oriented planning, repository inspection, precise file reads, proposed patches, checks, git inspection, and approval-aware tool calls.",
+        "For code changes, inspect before editing, explain the plan briefly, propose or apply patches through the available Code tools, and verify with checks when appropriate."
+      ];
+    case "notes":
+      return [
+        "Surface mode: Notes.",
+        "Prefer note/document/PDF text search, file metadata, docsearch MCP when configured, and concise citations to workspace-relative paths.",
+        "For broad folder or document questions, search before answering instead of guessing from filenames alone."
+      ];
+    case "chat":
+    default:
+      return [
+        "Surface mode: Chat.",
+        "Use recall and tool discovery when the latest request appears to need a more specialized surface capability such as notes search or code tools."
+      ];
+  }
 }
 
 function isDocsearchTool(tool = {}) {

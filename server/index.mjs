@@ -437,6 +437,18 @@ async function handleRequest(req, res) {
     if (req.method === "POST" && url.pathname === "/api/render/code") {
       return sendJson(res, await renderCode(req));
     }
+    // --- Surface Registry Routes ---
+    if (req.method === "GET" && url.pathname === "/api/surfaces") {
+      const { loadSurfaces } = await import("./lib/runtime/surface-registry.mjs");
+      return sendJson(res, { surfaces: await loadSurfaces(WORKSPACE_ROOT) });
+    }
+    const surfaceRegistryMatch = url.pathname.match(/^\/api\/surfaces\/([^/]+)$/);
+    if (req.method === "POST" && surfaceRegistryMatch) {
+      const surface = decodeURIComponent(surfaceRegistryMatch[1]);
+      const body = await readJsonBody(req);
+      const { saveSurfaceOverride } = await import("./lib/runtime/surface-registry.mjs");
+      return sendJson(res, await saveSurfaceOverride(WORKSPACE_ROOT, surface, body));
+    }
     // --- Tool Mode & Surface Routes ---
     if (req.method === "GET" && url.pathname === "/api/tool-modes") {
       const { loadToolModes } = await import("./lib/runtime/tool-mode-registry.mjs");

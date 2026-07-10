@@ -95,8 +95,16 @@ export async function loadToolModes(workspaceRoot) {
   } catch {}
 
   const merged = {};
-  for (const surface of ["chat", "notes", "code"]) {
-    const defaultVal = DEFAULT_TOOL_MODES[surface];
+  const surfaceIds = Array.from(new Set([
+    ...Object.keys(DEFAULT_TOOL_MODES),
+    ...Object.keys(overrides)
+  ]));
+  for (const surface of surfaceIds) {
+    const defaultVal = DEFAULT_TOOL_MODES[surface] || {
+      mode: "custom",
+      enabledTools: [...CORE_RECALL_TOOLS],
+      requiresApproval: []
+    };
     const overrideVal = overrides[surface] || {};
     
     // Merge logic

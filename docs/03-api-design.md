@@ -478,6 +478,59 @@ The model does not receive every possible tool in every surface. The runtime
 loads a surface mode, filters the callable tool list, and can use
 `tool_discovery` to expand safe tools for only the current turn.
 
+## Surface Registry
+
+Surfaces are client-visible work modes. `chat` is the default surface. Built-in
+surfaces such as `notes` and `code` can be disabled in client settings, while
+plugin surfaces can be added without hard-coding a new enum in every runtime
+path.
+
+### `GET /api/surfaces`
+
+Returns the effective surface registry:
+
+```json
+{
+  "surfaces": [
+    {
+      "id": "chat",
+      "title": "Chat",
+      "kind": "core",
+      "icon": "message",
+      "enabled": true,
+      "removable": false,
+      "order": 10
+    },
+    {
+      "id": "kongju-university",
+      "title": "공주대학교",
+      "kind": "plugin",
+      "icon": "graduationcap",
+      "enabled": true,
+      "removable": true,
+      "order": 25
+    }
+  ]
+}
+```
+
+### `POST /api/surfaces/:surface`
+
+Stores a surface override or plugin surface entry. Core surfaces cannot be
+removed, but they can be hidden with `enabled: false`.
+
+```json
+{
+  "title": "공주대학교",
+  "kind": "plugin",
+  "icon": "graduationcap",
+  "enabled": true,
+  "order": 25,
+  "prompt": "Use university-specific tools and context.",
+  "enabledTools": ["tool_discovery", "conversation_search"]
+}
+```
+
 ### `GET /api/tool-modes`
 
 Returns the effective tool mode per surface:

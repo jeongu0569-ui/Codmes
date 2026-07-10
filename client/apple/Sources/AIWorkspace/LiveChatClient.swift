@@ -47,6 +47,7 @@ struct CreateSessionParams: Encodable {
     let model: String?
     let reasoningEffort: String?
     let accessMode: String?
+    let surface: String?
 }
 
 struct ResumeSessionParams: Encodable {
@@ -57,6 +58,7 @@ struct PromptSubmitParams: Encodable {
     let sessionId: String
     let message: String
     let contextRequest: ContextRequest?
+    let surface: String?
 }
 
 struct ApprovalRespondParams: Encodable {
@@ -112,10 +114,10 @@ actor LiveChatClient {
         _ = try await send(command: "connect", params: EmptyParams())
     }
 
-    func createSession(provider: String? = nil, model: String? = nil, reasoningEffort: String? = nil, accessMode: String = "confirm") async throws -> String {
+    func createSession(provider: String? = nil, model: String? = nil, reasoningEffort: String? = nil, accessMode: String = "confirm", surface: String? = nil) async throws -> String {
         let response = try await send(
             command: "session.create",
-            params: CreateSessionParams(provider: provider, model: model, reasoningEffort: reasoningEffort, accessMode: accessMode)
+            params: CreateSessionParams(provider: provider, model: model, reasoningEffort: reasoningEffort, accessMode: accessMode, surface: surface)
         )
         guard let sessionId = response.result?.sessionId else {
             throw LiveChatClientError.serverError("Runtime did not return a session id.")
@@ -130,10 +132,10 @@ actor LiveChatClient {
         )
     }
 
-    func submit(sessionId: String, message: String, contextRequest: ContextRequest? = nil) async throws {
+    func submit(sessionId: String, message: String, contextRequest: ContextRequest? = nil, surface: String? = nil) async throws {
         _ = try await send(
             command: "prompt.submit",
-            params: PromptSubmitParams(sessionId: sessionId, message: message, contextRequest: contextRequest)
+            params: PromptSubmitParams(sessionId: sessionId, message: message, contextRequest: contextRequest, surface: surface)
         )
     }
 

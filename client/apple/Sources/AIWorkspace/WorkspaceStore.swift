@@ -25,6 +25,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var chatAccessMode: ChatAccessMode = .confirm
     @Published var chatReasoningMode: ChatReasoningMode = .balanced
     @Published var chatContextScope: ChatContextScope = .currentFile
+    @Published var activeChatSurface = "chat"
     @Published var statusMessage = "Not connected"
     @Published var isWorkspaceConnected = false
     @Published var connectionDetail = "Enter the Workspace Server URL and connect."
@@ -921,7 +922,8 @@ final class WorkspaceStore: ObservableObject {
                 provider: selectedModel?.provider,
                 model: selectedModel?.model,
                 reasoningEffort: chatReasoningMode.effort,
-                accessMode: chatAccessMode.rawValue
+                accessMode: chatAccessMode.rawValue,
+                surface: activeChatSurface
             )
             liveSessionId = sessionId
             activeHermesSessionTitle = "New session"
@@ -985,7 +987,12 @@ final class WorkspaceStore: ObservableObject {
         activeActivityLineId = nil
         isChatTurnOpen = true
         do {
-            try await liveClient.submit(sessionId: liveSessionId, message: trimmed, contextRequest: chatContextRequest())
+            try await liveClient.submit(
+                sessionId: liveSessionId,
+                message: trimmed,
+                contextRequest: chatContextRequest(),
+                surface: activeChatSurface
+            )
             statusMessage = "Message sent"
         } catch {
             statusMessage = error.localizedDescription

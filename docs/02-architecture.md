@@ -153,6 +153,24 @@ The native runtime exposes surface-filtered tools:
 - Notes surface: `workspace_search`, `docsearch_search`, `read_note_file`, `read_file_metadata`.
 - Code surface: `search_project`, `read_project_file`, `inspect_git`, `get_git_diff`, `propose_patch`, `apply_patch`, `run_checks`, `run_git_command`.
 
+Surfaces are intended to behave like lightweight client plugins. `chat` is the
+default always-on surface. Built-in surfaces such as `notes` and `code` can be
+hidden by a client setting for users who do not need them, and future plugin
+surfaces can register their own title, icon, prompt hint, and tool mode. A
+university-specific surface such as `kongju-university` should therefore be a
+new surface entry plus tool-mode/plugin configuration, not a hard-coded app tab.
+
+When the right-side/global chat panel is opened while the user is in another
+surface, the chat request should carry that surface id. The server then applies
+the matching prompt policy and tool mode:
+
+- `chat`: general conversation, recall, memory, and tool discovery.
+- `notes`: note/document/PDF text search, file metadata, and docsearch MCP when configured.
+- `code`: code planning, project inspection, patch proposals, checks, git tools, and approvals.
+
+The dedicated Code Agent panel has been removed from the client direction. Code
+agent behavior belongs to the chat loop when the active surface is `code`.
+
 The core recall set (`tool_discovery`, `conversation_search`,
 `conversation_read`, `memory_search`) is mandatory for all surfaces. Surface
 custom modes cannot remove these tools. The global/admin runtime

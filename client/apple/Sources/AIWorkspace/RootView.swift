@@ -71,6 +71,7 @@ struct RootView: View {
                 .environmentObject(store)
         }
         .task(id: selectedSection) {
+            store.activeChatSurface = selectedSection.runtimeSurfaceId
             await autoRefreshVisibleFileTree()
         }
         #else
@@ -137,6 +138,7 @@ struct RootView: View {
                 .environmentObject(store)
         }
         .task(id: selectedSection) {
+            store.activeChatSurface = selectedSection.runtimeSurfaceId
             await autoRefreshVisibleFileTree()
         }
     }
