@@ -9,6 +9,7 @@
   },
   "scripts": {
     "start": "node server/index.mjs",
+    "runtime:bootstrap": "node scripts/bootstrap-runtime.mjs",
     "check": "node --check bin/aiw.mjs && node --check server/index.mjs && node --check server/lib/path-utils.mjs && node --test"
   },
   "engines": {

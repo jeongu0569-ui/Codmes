@@ -163,6 +163,7 @@ AI Workspace는 모든 대화를 매번 통째로 프롬프트에 넣지 않고 
 
 - Node.js 22 이상
 - npm
+- 모델/provider 설정 TUI를 위한 Python 3.11~3.13
 - macOS/iOS 앱 개발 시 Xcode
 - 실제 사용할 AI 모델 또는 OpenAI 호환 API 서버
 
@@ -172,13 +173,30 @@ AI Workspace는 모든 대화를 매번 통째로 프롬프트에 넣지 않고 
 cd /Users/user/Desktop/AI-Workspace-on-hermes
 npm install
 npm link
+npm run runtime:bootstrap
 ```
 
 `npm link` 이후 `aiw`와 긴 별칭인 `ai-workspace` 명령을 사용할 수 있습니다.
 
 ## 모델 설정
 
-AI Workspace는 모델과 인증 정보를 자체 Workspace 설정에 저장합니다.
+AI Workspace는 모델과 인증 정보를 자체 Workspace 설정에 저장합니다. 인자 없이
+`aiw model`을 실행하면 AI Workspace 안에 포함된 Hermes Agent 0.18.0의 MIT
+라이선스 모델 설정 코드를 사용해 provider, OAuth/API 인증, endpoint, 모델을
+순서대로 고르는 원본 TUI가 열립니다. 별도로 설치된 `hermes` 명령이나 Hermes
+서버를 실행하는 방식은 아닙니다.
+
+```bash
+aiw model
+```
+
+로컬 Ollama는 TUI의 `Ollama ▸`에서 `Ollama Local`을 선택합니다. 이 경로는
+`Ollama Cloud`와 분리되어 있고 API key를 요구하지 않으며, 서버의 `/api/tags`에서
+설치된 채팅 모델을 불러옵니다.
+
+처음 실행하기 전 `npm run runtime:bootstrap`은 저장소의 `.aiw-runtime`에
+프로젝트 전용 Python 환경을 만듭니다. 기존 Hermes 가상환경은 이전 설치에서
+옮겨오는 사용자를 위한 fallback일 뿐이며, 정상 설치 후에는 사용하지 않습니다.
 
 ```bash
 aiw provider list
@@ -200,15 +218,26 @@ aiw auth set lmstudio LM_BASE_URL http://127.0.0.1:1234/v1
 aiw model set-default lmstudio local-model
 ```
 
-Ollama의 OpenAI 호환 API를 Custom 프로바이더로 사용하는 예시:
+로컬 Ollama는 실행 중인 서버에서 설치 모델을 조회해 바로 설정할 수 있습니다.
 
 ```bash
-aiw auth set custom AIW_CUSTOM_BASE_URL http://127.0.0.1:11434/v1
-aiw auth set custom AIW_CUSTOM_API_KEY ollama-local
-aiw model set-default custom gemma4:e2b-mlx
+aiw ollama
+aiw ollama --model gemma4:e2b-mlx
+aiw ollama --model gemma4:e2b-mlx --serve
 ```
 
+Ollama 0.31.2의 `ollama launch` 통합 목록은 Ollama 자체에 고정되어 있어 현재
+`ollama launch aiw`는 인식되지 않습니다. 이를 문자 그대로 지원하려면 Ollama
+프로젝트에 AI Workspace 통합이 추가되어야 합니다. `aiw ollama`는 같은 목적을
+AI Workspace가 직접 제공하는 명령입니다.
+
 설정은 기본적으로 `<Workspace>/.ai-workspace/config/` 아래에 저장됩니다.
+
+Mac/iPhone/iPad 앱의 `Settings > Model & Provider`에서도 같은 서버 설정을
+관리할 수 있습니다. API key provider, endpoint, Ollama Local 모델 조회와 기본
+모델 선택은 GUI에서 바로 처리됩니다. OAuth provider의 브라우저/device-code
+로그인은 현재 서버 터미널의 `aiw model`을 사용하며, 후속 단계에서 OAuth 상태
+API를 추가할 예정입니다.
 
 ## 서버 실행
 
@@ -364,6 +393,7 @@ WebSocket과 raw 파일 URL은 token query를 사용할 수 있습니다. Apple 
 - [데이터 모델](docs/04-data-model.md)
 - [MVP 로드맵](docs/05-mvp-roadmap.md)
 - [런타임 이관 기록](docs/06-runtime-migration.md)
+- [내장 모델 설정 런타임](docs/13-vendored-model-runtime.md)
 - [Apple 클라이언트](docs/07-apple-client.md)
 - [실행 명령어](docs/08-run-commands.md)
 - [API 계약](docs/api-contract.md)

@@ -42,6 +42,9 @@ final class WorkspaceStore: ObservableObject {
     @Published var approvals: [WorkspaceApproval] = []
     @Published var isLoadingApprovals = false
     @Published var selectedApprovalDiffText = ""
+    @Published var runtimeProviders: [RuntimeProviderOption] = []
+    @Published var runtimeProviderModels: [String: [String]] = [:]
+    @Published var runtimeModelSetupMessage = ""
 
     private let liveClient = LiveChatClient()
     private var activeActivityLineId: UUID?
@@ -152,6 +155,51 @@ final class WorkspaceStore: ObservableObject {
             updateActiveSessionTitle()
         } catch {
             statusMessage = "Runtime metadata: \(error.localizedDescription)"
+        }
+    }
+
+    func refreshRuntimeProviders() async {
+        guard let api else { return }
+        do {
+            runtimeProviders = try await api.runtimeProviders()
+            runtimeModelSetupMessage = ""
+        } catch {
+            runtimeModelSetupMessage = error.localizedDescription
+        }
+    }
+
+    func discoverRuntimeModels(providerId: String) async {
+        guard let api else { return }
+        do {
+            let response = try await api.runtimeProviderModels(providerId: providerId)
+            runtimeProviderModels[providerId] = response.models
+            runtimeModelSetupMessage = response.models.isEmpty ? "No models found." : "Found \(response.models.count) model(s)."
+        } catch {
+            runtimeModelSetupMessage = error.localizedDescription
+        }
+    }
+
+    func saveRuntimeModelConfiguration(providerId: String, model: String, apiKey: String, baseUrl: String) async -> Bool {
+        guard let api else { return false }
+        do {
+            var values: [String: String] = [:]
+            if !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                values["apiKey"] = apiKey
+            }
+            if !baseUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                values["baseUrl"] = baseUrl
+            }
+            if !values.isEmpty {
+                try await api.updateRuntimeProviderAuth(providerId: providerId, values: values)
+            }
+            try await api.setRuntimeDefaultModel(provider: providerId, model: model, baseUrl: baseUrl)
+            runtimeModelSetupMessage = "Default model updated."
+            await refreshRuntimeProviders()
+            await refreshHermesMetadata()
+            return true
+        } catch {
+            runtimeModelSetupMessage = error.localizedDescription
+            return false
         }
     }
 

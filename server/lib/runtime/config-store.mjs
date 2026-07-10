@@ -32,6 +32,7 @@ export const BUILTIN_PROVIDERS = [
   { id: "minimax-oauth", name: "MiniMax OAuth", authType: "oauth_minimax", tab: "accounts", env: [], models: ["MiniMax-M3", "MiniMax-M2.7"] },
   { id: "minimax-cn", name: "MiniMax China", authType: "api_key", tab: "keys", env: ["AIW_MINIMAX_CN_API_KEY", "MINIMAX_CN_API_KEY"], baseUrlEnv: "MINIMAX_CN_BASE_URL", models: ["MiniMax-M3", "MiniMax-M2.7"] },
   { id: "ollama-cloud", name: "Ollama Cloud", authType: "api_key", tab: "keys", env: ["AIW_OLLAMA_API_KEY", "OLLAMA_API_KEY"], baseUrlEnv: "OLLAMA_BASE_URL", models: ["deepseek-v4-flash", "minimax-m2.5", "glm-4.7"] },
+  { id: "ollama-local", name: "Ollama Local", authType: "none", tab: "local", env: [], baseUrlEnv: "OLLAMA_HOST", defaultBaseUrl: "http://127.0.0.1:11434/v1", models: [] },
   { id: "arcee", name: "Arcee AI", authType: "api_key", tab: "keys", env: ["AIW_ARCEEAI_API_KEY", "ARCEEAI_API_KEY"], baseUrlEnv: "ARCEE_BASE_URL", models: ["trinity-large-thinking", "trinity-large-preview", "trinity-mini"] },
   { id: "gmi", name: "GMI Cloud", authType: "api_key", tab: "keys", env: ["AIW_GMI_API_KEY", "GMI_API_KEY"], baseUrlEnv: "GMI_BASE_URL", models: ["zai-org/GLM-5.1-FP8", "deepseek-ai/DeepSeek-V3.2", "openai/gpt-5.4"] },
   { id: "kilocode", name: "Kilo Code", authType: "api_key", tab: "keys", env: ["AIW_KILOCODE_API_KEY", "KILOCODE_API_KEY"], baseUrlEnv: "KILOCODE_BASE_URL", models: ["inclusionai/ling-2.6-1t", "inclusionai/ring-2.6-1t", "meta-llama/llama-3.1-70b-instruct"] },
@@ -71,6 +72,8 @@ export async function readRuntimeConfig(workspaceRoot) {
       defaultModel: parsed.model ? {
         provider: parsed.model.provider || null,
         model: parsed.model.default || null,
+        baseUrl: parsed.model.base_url || null,
+        apiMode: parsed.model.api_mode || null,
         id: (parsed.model.provider && parsed.model.default) ? `${parsed.model.provider}:${parsed.model.default}` : null,
         updatedAt: new Date().toISOString()
       } : null,
@@ -104,10 +107,13 @@ export async function writeRuntimeConfig(workspaceRoot, value) {
   const parsed = parseConfigYaml(existingContent);
   if (value.defaultModel) {
     parsed.model = {
+      ...(parsed.model || {}),
       default: value.defaultModel.model,
       provider: value.defaultModel.provider,
       fallback_chain: value.fallbackChain || parsed.model?.fallback_chain || []
     };
+    if (value.defaultModel.baseUrl !== undefined) parsed.model.base_url = value.defaultModel.baseUrl || "";
+    if (value.defaultModel.apiMode !== undefined) parsed.model.api_mode = value.defaultModel.apiMode || "";
   } else {
     parsed.model = null;
   }
@@ -216,6 +222,19 @@ export async function readCredentials(workspaceRoot) {
 
   const pool = authObj.credential_pool || {};
 
+  // Hermes-compatible custom endpoint setup stores the active endpoint on
+  // model.base_url. Expose it under the stable `custom` runtime provider so a
+  // model selected by the vendored TUI is immediately executable by AIW.
+  if (configObj.model?.provider === "custom" && configObj.model?.base_url) {
+    credentials.providers.custom = {
+      values: {
+        baseUrl: configObj.model.base_url,
+        BASE_URL: configObj.model.base_url,
+        AIW_CUSTOM_BASE_URL: configObj.model.base_url
+      }
+    };
+  }
+
   // Map credentials from auth.json credential_pool
   for (const [providerId, entries] of Object.entries(pool)) {
     if (!Array.isArray(entries) || entries.length === 0) continue;
@@ -260,6 +279,19 @@ export async function readCredentials(workspaceRoot) {
         values.baseUrl = cp.base_url;
         values.BASE_URL = cp.base_url;
         values.AIW_CUSTOM_BASE_URL = cp.base_url;
+      }
+
+      if (
+        configObj.model?.provider === "custom"
+        && cp.base_url
+        && cp.base_url === configObj.model?.base_url
+      ) {
+        credentials.providers.custom = {
+          values: {
+            ...(credentials.providers.custom?.values || {}),
+            ...values
+          }
+        };
       }
       if (cp.key_env) {
         const poolEntries = pool[providerId] || [];

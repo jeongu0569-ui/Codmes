@@ -29,6 +29,7 @@ import {
   BUILTIN_PROVIDERS,
   listCredentialStatus,
   listProviderRegistry,
+  readCredentials,
   readRuntimeConfig,
   removeCredentialValue,
   setCredentialValue,
@@ -353,6 +354,10 @@ async function handleRequest(req, res) {
     const customProviderDeleteMatch = url.pathname.match(/^\/api\/providers\/custom\/([^/]+)$/);
     if (customProviderDeleteMatch && req.method === "DELETE") {
       return sendJson(res, await deleteCustomProvider(customProviderDeleteMatch[1]));
+    }
+    const providerModelsMatch = url.pathname.match(/^\/api\/providers\/([^/]+)\/models$/);
+    if (providerModelsMatch && req.method === "GET") {
+      return sendJson(res, await discoverProviderModels(providerModelsMatch[1]));
     }
     if (req.method === "GET" && url.pathname === "/api/auth") {
       return sendJson(res, await listRuntimeAuth());
@@ -1120,6 +1125,48 @@ async function listRuntimeProviders() {
   };
 }
 
+async function discoverProviderModels(providerParam) {
+  const providerId = decodeURIComponent(providerParam);
+  const provider = BUILTIN_PROVIDERS.find((item) => item.id === providerId);
+  if (!provider) {
+    throw Object.assign(new Error(`Unknown provider: ${providerId}`), { status: 404 });
+  }
+
+  if (providerId === "ollama-local") {
+    const credentials = await readCredentials(WORKSPACE_ROOT);
+    const values = credentials.providers?.[providerId]?.values || {};
+    const configuredUrl = values.baseUrl || values.BASE_URL || values.OLLAMA_HOST || process.env.OLLAMA_HOST || provider.defaultBaseUrl;
+    const host = String(configuredUrl || "http://127.0.0.1:11434")
+      .replace(/\/v1\/?$/, "")
+      .replace(/\/$/, "");
+    let response;
+    try {
+      response = await fetch(`${host}/api/tags`, { signal: AbortSignal.timeout(5000) });
+    } catch (error) {
+      throw Object.assign(new Error(`Could not connect to Ollama at ${host}: ${error.message}`), { status: 502 });
+    }
+    if (!response.ok) {
+      throw Object.assign(new Error(`Ollama model discovery failed: ${response.status}`), { status: 502 });
+    }
+    const payload = await response.json();
+    const models = (payload.models || [])
+      .filter((item) => {
+        const capabilities = Array.isArray(item.capabilities) ? item.capabilities : [];
+        return capabilities.length === 0 || capabilities.some((capability) => ["completion", "tools", "thinking"].includes(capability));
+      })
+      .map((item) => item.model || item.name)
+      .filter(Boolean);
+    return { provider: providerId, source: "ollama", baseUrl: `${host}/v1`, models };
+  }
+
+  return {
+    provider: providerId,
+    source: "registry",
+    baseUrl: provider.defaultBaseUrl || null,
+    models: provider.models || []
+  };
+}
+
 async function listRuntimeAuth() {
   return {
     providers: await listCredentialStatus(WORKSPACE_ROOT)
@@ -1140,7 +1187,15 @@ async function updateDefaultModel(req) {
   if (!provider || !model) {
     throw Object.assign(new Error("provider and model are required."), { status: 400 });
   }
-  const defaultModel = await setDefaultModel(WORKSPACE_ROOT, provider, model);
+  const config = await readRuntimeConfig(WORKSPACE_ROOT);
+  const defaultModel = {
+    provider,
+    model,
+    id: `${provider}:${model}`,
+    baseUrl: body.baseUrl === undefined ? config.defaultModel?.baseUrl : String(body.baseUrl || ""),
+    apiMode: body.apiMode === undefined ? config.defaultModel?.apiMode : String(body.apiMode || "")
+  };
+  await writeRuntimeConfig(WORKSPACE_ROOT, { ...config, defaultModel });
   return { ok: true, defaultModel };
 }
 

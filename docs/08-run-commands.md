@@ -83,6 +83,8 @@ Expected runtime fields:
 ## Models / Providers / Auth
 
 ```bash
+npm run runtime:bootstrap
+aiw model
 aiw provider list
 aiw model list
 aiw model set-default openai-api gpt-5.4-mini
@@ -93,13 +95,13 @@ aiw auth set openai-api OPENAI_API_KEY sk-...
 Credential config is stored under:
 
 ```text
-<workspace>/.ai-workspace/config/credentials.json
+<workspace>/.ai-workspace/config/auth.json
 ```
 
 Runtime config is stored under:
 
 ```text
-<workspace>/.ai-workspace/config/runtime.json
+<workspace>/.ai-workspace/config/config.yaml
 ```
 
 Environment variables with the `AIW_` prefix are also detected where relevant:
@@ -138,6 +140,21 @@ aiw model set-default custom my-model
 aiw auth set custom AIW_CUSTOM_BASE_URL http://127.0.0.1:1234/v1
 aiw auth set custom AIW_CUSTOM_API_KEY local-dev-key
 ```
+
+Local Ollama shortcut:
+
+```bash
+aiw ollama
+aiw ollama --model gemma4:e2b-mlx
+```
+
+The interactive route is `aiw model` -> `Ollama` -> `Ollama Local`. It stores
+the dedicated `ollama-local` provider rather than disguising the server as a
+generic custom endpoint. The Apple Settings screen uses the same provider and
+model APIs.
+
+The literal `ollama launch aiw` integration must be added by Ollama upstream;
+the local `aiw ollama` command performs the equivalent AI Workspace setup.
 
 When the selected model supports OpenAI-compatible tool calls, AI Workspace
 filters tools by surface:

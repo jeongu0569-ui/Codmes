@@ -213,6 +213,9 @@ export function stringifyConfigYaml(content, { model, custom_providers, disabled
     if (model.base_url) {
       resultLines.push(`  base_url: ${model.base_url}`);
     }
+    if (model.api_mode) {
+      resultLines.push(`  api_mode: ${model.api_mode}`);
+    }
     if (model.fallback_chain && model.fallback_chain.length > 0) {
       resultLines.push("  fallback_chain:");
       for (const fc of model.fallback_chain) {
@@ -226,6 +229,8 @@ export function stringifyConfigYaml(content, { model, custom_providers, disabled
     for (const cp of custom_providers) {
       resultLines.push(`  - name: ${cp.name}`);
       if (cp.base_url) resultLines.push(`    base_url: ${cp.base_url}`);
+      if (cp.model) resultLines.push(`    model: ${cp.model}`);
+      if (cp.api_mode) resultLines.push(`    api_mode: ${cp.api_mode}`);
       if (cp.key_env) resultLines.push(`    key_env: ${cp.key_env}`);
     }
   }

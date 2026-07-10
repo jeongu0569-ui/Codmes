@@ -17,6 +17,7 @@ import {
   ensureRuntimeConfig,
   writeRuntimeConfig
 } from "../server/lib/runtime/config-store.mjs";
+import { createModelTuiLaunch } from "../server/lib/runtime/model-config-tui.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..");
@@ -59,6 +60,9 @@ async function main(argv) {
       return;
     case "model":
       await runModel(args);
+      return;
+    case "ollama":
+      await runOllama(args);
       return;
     case "provider":
       await runProvider(args);
@@ -113,6 +117,7 @@ Usage:
   aiw serve [--host 0.0.0.0] [--port 8787] [--root PATH]
   aiw status [--url URL] [--json]
   aiw model [list|set-default|show] [...]                (Interactive model picker if no subcommand)
+  aiw ollama [--model NAME] [--url URL] [--serve]       (Configure local Ollama)
   aiw provider [list] [...]                             (Interactive provider manager if no subcommand)
   aiw auth [list|set|remove] [...]                      (Interactive auth manager if no subcommand)
   aiw sessions [list|rename|export|prune|delete]        (Interactive session browser if no subcommand)
@@ -916,7 +921,7 @@ async function runProcess(command, args, options) {
 }
 
 async function runModel(args) {
-  const options = parseOptions(args, { boolean: ["help", "json"] });
+  const options = parseOptions(args, { boolean: ["help", "json", "refresh"] });
   const root = workspaceRoot(options);
 
   if (options.help) {
@@ -929,7 +934,7 @@ async function runModel(args) {
     if (!process.stdin.isTTY) {
       throw new Error("Interactive mode requires a TTY terminal. Run 'aiw model list' or 'aiw model set-default'.");
     }
-    await runModelInteractive(root);
+    await runModelInteractive(root, args);
     return;
   }
 
@@ -985,51 +990,79 @@ function printModelHelp() {
 `);
 }
 
-async function runModelInteractive(root) {
-  const config = await readRuntimeConfig(root);
-  const currentProviderId = config.defaultModel?.provider;
-  const currentModelName = config.defaultModel?.model;
+async function runModelInteractive(root, args = []) {
+  await ensureRuntimeConfig(root);
+  const upstreamArgs = args.filter((arg) => arg === "--refresh");
+  const launch = createModelTuiLaunch({
+    repoRoot: REPO_ROOT,
+    workspaceRoot: root,
+    args: upstreamArgs
+  });
+  await runProcess(launch.command, launch.args, {
+    cwd: launch.cwd,
+    env: launch.env,
+    stdio: "inherit",
+    resolveOnForwardedSignal: true,
+    notFoundMessage: "AI Workspace model configuration runtime was not found."
+  });
+}
 
-  const providers = listProviderRegistry();
-  const providerItems = providers.map((p) => `${p.name} (${p.id})`);
-  
-  let defaultProviderIndex = providers.findIndex((p) => p.id === currentProviderId);
-  if (defaultProviderIndex === -1) defaultProviderIndex = 0;
+async function runOllama(args) {
+  const options = parseOptions(args, { boolean: ["help", "serve", "json"] });
+  if (options.help) {
+    console.log(`Usage:
+  aiw ollama [--model NAME] [--url http://127.0.0.1:11434] [--root PATH]
+  aiw ollama --model gemma4:e2b-mlx --serve
 
-  const providerIndex = await interactiveSelect("Select a provider:", providerItems, defaultProviderIndex);
-  const selectedProvider = providers[providerIndex];
-
-  // List models for selected provider
-  const models = selectedProvider.models || [];
-  if (models.length === 0) {
-    console.log(`No curated models found for provider ${selectedProvider.name}.`);
-    const readlineInterface = readline.createInterface({
-      input: process.stdin,
-      output: process.stdout
-    });
-    const modelInput = await new Promise((resolve) => {
-      readlineInterface.question(`Enter model name: `, (answer) => {
-        readlineInterface.close();
-        resolve(answer.trim());
-      });
-    });
-    if (!modelInput) {
-      console.log("No model entered. Aborted.");
-      return;
-    }
-    const result = await setDefaultModel(root, selectedProvider.id, modelInput);
-    console.log(`Default model: ${result.provider}/${result.model}`);
+This is AI Workspace's equivalent of an Ollama launch integration. The literal
+\`ollama launch aiw\` command requires AI Workspace support in Ollama itself.
+`);
     return;
   }
 
-  let defaultModelIndex = models.indexOf(currentModelName);
-  if (defaultModelIndex === -1) defaultModelIndex = 0;
+  const root = workspaceRoot(options);
+  const ollamaUrl = trimTrailingSlash(stringOption(options.url) || process.env.OLLAMA_HOST || "http://127.0.0.1:11434");
+  const response = await fetch(`${ollamaUrl}/api/tags`);
+  if (!response.ok) throw new Error(`Ollama model discovery failed: ${response.status} ${response.statusText}`);
+  const payload = await response.json();
+  const models = (payload.models || []).map((item) => item.model || item.name).filter(Boolean);
+  if (!models.length) throw new Error("Ollama is running, but it has no installed models.");
 
-  const modelIndex = await interactiveSelect(`Select a model for ${selectedProvider.name}:`, models, defaultModelIndex);
-  const selectedModel = models[modelIndex];
+  let model = stringOption(options.model);
+  if (model && !models.includes(model)) {
+    throw new Error(`Ollama model '${model}' is not installed. Available: ${models.join(", ")}`);
+  }
+  if (!model) {
+    if (!process.stdin.isTTY) {
+      throw new Error("Choose an Ollama model with --model when stdin is not a TTY.");
+    }
+    const index = await interactiveSelect("Select a local Ollama model:", models, 0);
+    model = models[index];
+  }
 
-  const result = await setDefaultModel(root, selectedProvider.id, selectedModel);
-  console.log(`Default model: ${result.provider}/${result.model}`);
+  await ensureRuntimeConfig(root);
+  const openAiBaseUrl = `${ollamaUrl}/v1`;
+  const config = await readRuntimeConfig(root);
+  await writeRuntimeConfig(root, {
+    ...config,
+    defaultModel: {
+      provider: "ollama-local",
+      model,
+      baseUrl: openAiBaseUrl,
+      apiMode: "chat_completions"
+    }
+  });
+
+  const result = { workspaceRoot: root, provider: "ollama-local", model, baseUrl: openAiBaseUrl };
+  if (options.json) printJson(result);
+  else {
+    console.log(`Ollama model configured: ${model}`);
+    console.log(`Endpoint: ${openAiBaseUrl}`);
+  }
+
+  if (options.serve) {
+    await runServe(["--root", root]);
+  }
 }
 
 async function interactiveSelect(title, items, defaultIndex = 0) {

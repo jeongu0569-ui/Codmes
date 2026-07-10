@@ -364,6 +364,33 @@ struct HermesModelOption: Identifiable, Hashable {
     }
 }
 
+struct RuntimeProvidersResponse: Codable {
+    let providers: [RuntimeProviderOption]
+}
+
+struct RuntimeProviderOption: Codable, Identifiable, Hashable {
+    let id: String
+    let name: String
+    let authType: String
+    let env: [String]?
+    let baseUrlEnv: String?
+    let defaultBaseUrl: String?
+    let models: [String]?
+    let configured: Bool?
+    let isDefault: Bool?
+
+    var needsAPIKey: Bool { authType == "api_key" }
+    var isOAuth: Bool { authType.hasPrefix("oauth") }
+    var isLocalOllama: Bool { id == "ollama-local" }
+}
+
+struct RuntimeProviderModelsResponse: Codable {
+    let provider: String
+    let source: String
+    let baseUrl: String?
+    let models: [String]
+}
+
 struct WorkspaceApprovalsResponse: Codable {
     let approvals: [WorkspaceApproval]
 }

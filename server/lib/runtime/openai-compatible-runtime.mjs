@@ -18,6 +18,7 @@ const OPENAI_COMPATIBLE_DEFAULTS = {
   deepseek: "https://api.deepseek.com/v1",
   xai: "https://api.x.ai/v1",
   "ollama-cloud": "https://ollama.com/v1",
+  "ollama-local": "http://127.0.0.1:11434/v1",
   custom: ""
 };
 
@@ -1004,7 +1005,7 @@ export class OpenAICompatibleRuntime extends EventEmitter {
     }
 
     const apiKey = await this.resolveApiKey(provider);
-    if (provider.authType === "api_key" && !apiKey && provider.id !== "lmstudio") {
+    if (provider.authType === "api_key" && !apiKey && !["lmstudio", "custom"].includes(provider.id)) {
       throw Object.assign(
         new Error(`Provider '${providerId}' needs an API key. Run aiw auth set ${providerId} <KEY_NAME> <VALUE>.`),
         { status: 503, setupRequired: true }

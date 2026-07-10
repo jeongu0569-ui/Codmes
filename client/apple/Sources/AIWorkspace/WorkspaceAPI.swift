@@ -264,6 +264,29 @@ struct WorkspaceAPI {
         return extractHermesModels(from: object)
     }
 
+    func runtimeProviders() async throws -> [RuntimeProviderOption] {
+        let response: RuntimeProvidersResponse = try await get("/api/providers")
+        return response.providers
+    }
+
+    func runtimeProviderModels(providerId: String) async throws -> RuntimeProviderModelsResponse {
+        var components = try components("/api/providers/\(providerId)/models")
+        components.percentEncodedPath = "/api/providers/\(providerId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? providerId)/models"
+        return try await request(components)
+    }
+
+    func updateRuntimeProviderAuth(providerId: String, values: [String: String]) async throws {
+        var components = try components("/api/auth/\(providerId)")
+        components.percentEncodedPath = "/api/auth/\(providerId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? providerId)"
+        let _: EmptyResponse = try await request(components, method: "POST", body: ["values": values])
+    }
+
+    func setRuntimeDefaultModel(provider: String, model: String, baseUrl: String? = nil) async throws {
+        var body = ["provider": provider, "model": model]
+        if let baseUrl, !baseUrl.isEmpty { body["baseUrl"] = baseUrl }
+        let _: EmptyResponse = try await post("/api/model/default", body: body)
+    }
+
     func hermesSessions() async throws -> [HermesSessionSummary] {
         let data = try await dataRequest(try components("/api/sessions"))
         let object = try JSONSerialization.jsonObject(with: data)

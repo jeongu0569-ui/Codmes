@@ -5,6 +5,10 @@ HermesWorkspace/
 .hermes-workspace/
 coverage/
 .build/
+.aiw-runtime/
+*.egg-info/
+__pycache__/
+*.pyc
 client/apple/.build/
 client/apple/AIWorkspace.xcodeproj/project.xcworkspace/xcuserdata/
 client/apple/AIWorkspace.xcodeproj/xcuserdata/

@@ -72,6 +72,11 @@ test("workspace server protects APIs with AIW_SERVER_TOKEN and exposes managemen
 
     const providers = await fetchJson(`${baseUrl}/api/providers`, { token });
     assert.ok(providers.providers.some((provider) => provider.id === "custom"));
+    assert.ok(providers.providers.some((provider) => provider.id === "ollama-local"));
+
+    const openAiModels = await fetchJson(`${baseUrl}/api/providers/openai-api/models`, { token });
+    assert.equal(openAiModels.provider, "openai-api");
+    assert.ok(openAiModels.models.includes("gpt-5.4-mini"));
 
     const storedAuth = await fetchJson(`${baseUrl}/api/auth/custom`, {
       token,
