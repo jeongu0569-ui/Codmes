@@ -1409,7 +1409,7 @@ private struct RuntimeProviderConfigSettingsView: View {
                     }
                 }
 
-                if let session = activeOAuthSession {
+                if let session = activeOAuthSession, session.status != "approved" {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack {
                             Text("Status: \(session.status)")

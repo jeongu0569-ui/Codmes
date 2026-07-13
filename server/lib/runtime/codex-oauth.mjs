@@ -117,15 +117,20 @@ async function pollCodexOAuthLogin(session) {
     const tokens = await tokenResponse.json();
     const accessToken = String(tokens.access_token || "").trim();
     const refreshToken = String(tokens.refresh_token || "").trim();
+    const idToken = String(tokens.id_token || "").trim();
     if (!accessToken) {
       throw new Error("Codex OAuth token exchange did not return access_token.");
     }
+    const profile = extractTokenProfile(accessToken, idToken, tokens);
     session.credential = await appendProviderCredentialEntry(session.workspaceRoot, "openai-codex", {
-      label: `OpenAI Codex ${new Date().toISOString().slice(0, 10)}`,
+      label: profile.email || profile.accountId || `OpenAI Codex ${new Date().toISOString().slice(0, 10)}`,
       auth_type: "oauth",
       source: "manual:device_code",
       access_token: accessToken,
       refresh_token: refreshToken,
+      id_token: idToken,
+      account_email: profile.email,
+      account_id: profile.accountId,
       last_refresh: new Date().toISOString()
     });
     session.status = "approved";
@@ -150,6 +155,41 @@ function publicCodexOAuthSession(session) {
     credential: session.credential,
     error: session.error
   };
+}
+
+function extractTokenProfile(accessToken, idToken, tokens) {
+  const accessClaims = decodeJwtPayload(accessToken) || {};
+  const idClaims = decodeJwtPayload(idToken) || {};
+  const openaiAuth = accessClaims["https://api.openai.com/auth"] || idClaims["https://api.openai.com/auth"] || {};
+  return {
+    email: stringOrEmpty(tokens.email)
+      || stringOrEmpty(tokens.account_email)
+      || stringOrEmpty(idClaims.email)
+      || stringOrEmpty(accessClaims.email)
+      || stringOrEmpty(idClaims.preferred_username)
+      || stringOrEmpty(accessClaims.preferred_username),
+    accountId: stringOrEmpty(tokens.account_id)
+      || stringOrEmpty(openaiAuth.chatgpt_account_id)
+      || stringOrEmpty(idClaims.chatgpt_account_id)
+      || stringOrEmpty(accessClaims.chatgpt_account_id)
+      || stringOrEmpty(idClaims.account_id)
+      || stringOrEmpty(accessClaims.account_id)
+  };
+}
+
+function decodeJwtPayload(token) {
+  try {
+    const parts = String(token || "").split(".");
+    if (parts.length < 2) return null;
+    const padded = parts[1] + "=".repeat((4 - (parts[1].length % 4)) % 4);
+    return JSON.parse(Buffer.from(padded, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function stringOrEmpty(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : "";
 }
 
 function sleep(ms) {

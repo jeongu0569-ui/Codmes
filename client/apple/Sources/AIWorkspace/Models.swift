@@ -461,18 +461,18 @@ struct RuntimeCredentialEntry: Codable, Identifiable, Hashable {
 
     var displayName: String {
         if let email, !email.isEmpty { return email }
-        if let accountId, !accountId.isEmpty { return accountId }
         if let label, !label.isEmpty { return label }
+        if let accountId, !accountId.isEmpty { return "Account \(accountId.prefix(8))..." }
         return id
     }
 
     var detailLabel: String {
         var parts: [String] = []
-        if let accountId, !accountId.isEmpty, accountId != displayName {
-            parts.append(accountId)
-        }
         if let authType, !authType.isEmpty {
             parts.append(authType)
+        }
+        if let source, !source.isEmpty {
+            parts.append(source)
         }
         if active == true {
             parts.append("active")

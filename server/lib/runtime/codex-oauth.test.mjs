@@ -35,7 +35,8 @@ test("Codex OAuth login polls device flow and stores a new active credential", a
     if (url.endsWith("/oauth/token")) {
       return jsonResponse(200, {
         access_token: fakeJwt({ email: "codex@example.com", exp: 1893456000 }),
-        refresh_token: "refresh-token"
+        refresh_token: "refresh-token",
+        id_token: fakeJwt({ email: "joengu0569@gmail.com" })
       });
     }
     return jsonResponse(404, {});
@@ -58,11 +59,11 @@ test("Codex OAuth login polls device flow and stores a new active credential", a
   }
 
   assert.equal(finalSession.status, "approved");
-  assert.equal(finalSession.credential.email, "codex@example.com");
+  assert.equal(finalSession.credential.email, "joengu0569@gmail.com");
   const entries = await listProviderCredentialEntries(root, "openai-codex");
   assert.equal(entries.length, 1);
   assert.equal(entries[0].active, true);
-  assert.equal(entries[0].email, "codex@example.com");
+  assert.equal(entries[0].email, "joengu0569@gmail.com");
   assert.equal(calls.some((call) => call.url.endsWith("/oauth/token")), true);
 });
 

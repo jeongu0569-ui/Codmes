@@ -637,12 +637,19 @@ export async function removeCredentialValue(workspaceRoot, providerId, key = "")
 function sanitizeCredentialEntry(entry, index = 0) {
   const token = String(entry?.access_token || entry?.token || "").trim();
   const claims = decodeJwtPayload(token);
+  const idClaims = decodeJwtPayload(entry?.id_token);
   const openaiAuth = claims?.["https://api.openai.com/auth"] || {};
   const accountId = stringOrEmpty(openaiAuth.chatgpt_account_id)
+    || stringOrEmpty(idClaims?.["https://api.openai.com/auth"]?.chatgpt_account_id)
     || stringOrEmpty(claims?.chatgpt_account_id)
+    || stringOrEmpty(idClaims?.chatgpt_account_id)
     || stringOrEmpty(claims?.account_id);
-  const email = stringOrEmpty(claims?.email)
+  const email = stringOrEmpty(entry?.account_email)
+    || stringOrEmpty(entry?.email)
+    || stringOrEmpty(claims?.email)
+    || stringOrEmpty(idClaims?.email)
     || stringOrEmpty(claims?.preferred_username)
+    || stringOrEmpty(idClaims?.preferred_username)
     || stringOrEmpty(claims?.username);
   return {
     id: String(entry?.id || `credential-${index + 1}`),
