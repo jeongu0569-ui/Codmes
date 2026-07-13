@@ -137,7 +137,7 @@ struct RootView: View {
                 primaryDetailView
                     .frame(minWidth: 0)
                 Divider()
-                ChatHomeView(compact: true)
+                ChatHomeView(compact: true, onOpenModelSettings: openModelSettings)
                     .frame(minWidth: 320, idealWidth: 390, maxWidth: 460)
             }
         } else {
@@ -194,7 +194,7 @@ struct RootView: View {
             iOSTopBar
             Divider()
             if activeSurfaceId == "chat" {
-                ChatHomeView(showsHeader: false)
+                ChatHomeView(showsHeader: false, onOpenModelSettings: openModelSettings)
             } else {
                 iOSSwipeChatContainer {
                     primaryDetailView
@@ -500,7 +500,7 @@ struct RootView: View {
                     .contentShape(Rectangle())
                     .highPriorityGesture(chatPanelGesture(panelWidth: panelWidth))
 
-                    ChatHomeView(compact: true)
+                    ChatHomeView(compact: true, onOpenModelSettings: openModelSettings)
                         .frame(width: panelWidth)
                         .background(.regularMaterial)
                         .clipShape(RoundedRectangle(cornerRadius: 18))
@@ -581,6 +581,10 @@ struct RootView: View {
         store.activeChatSurface = surface.id
     }
 
+    private func openModelSettings() {
+        showingSettings = true
+    }
+
     private func autoRefreshVisibleFileTree() async {
         while !Task.isCancelled {
             try? await Task.sleep(nanoseconds: 3_000_000_000)
@@ -603,7 +607,7 @@ struct RootView: View {
             if let selectedPluginSurface {
                 PluginSurfaceView(surface: selectedPluginSurface)
             } else {
-                ChatHomeView()
+                ChatHomeView(onOpenModelSettings: openModelSettings)
             }
         case .notes:
             FileSectionView(title: "Notes", root: "notes")
@@ -1106,9 +1110,12 @@ private struct RuntimeModelSelectionSettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            modelVisibilitySettings
         }
         .task {
             await store.refreshRuntimeProviders()
+            await store.refreshHermesMetadata()
             if selectedProviderId.isEmpty {
                 if let current = await store.runtimeDefaultModel(),
                    let currentProvider = current.provider,
@@ -1122,6 +1129,62 @@ private struct RuntimeModelSelectionSettingsView: View {
                 }
             }
         }
+    }
+
+    private var modelVisibilitySettings: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Visible in Chat Picker")
+                        .font(.headline)
+                    Text("Hide providers or individual models from the chat input model menu without disconnecting them.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button("Reset") {
+                    store.resetModelVisibility()
+                }
+                .buttonStyle(.borderless)
+            }
+
+            if store.allHermesModelGroups.isEmpty {
+                Text("Connect to the server and refresh models to configure picker visibility.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 10) {
+                    ForEach(store.allHermesModelGroups) { group in
+                        VStack(alignment: .leading, spacing: 8) {
+                            Toggle(isOn: Binding(
+                                get: { store.isProviderVisible(group.id) },
+                                set: { store.setProviderVisible(group.id, visible: $0) }
+                            )) {
+                                Text(group.title)
+                                    .font(.subheadline.weight(.semibold))
+                            }
+                            ForEach(group.models) { item in
+                                Toggle(isOn: Binding(
+                                    get: { !store.hiddenModelIds.contains(item.id) },
+                                    set: { store.setModelVisible(item, visible: $0) }
+                                )) {
+                                    Text(item.model)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+                                .font(.caption)
+                                .padding(.leading, 18)
+                                .disabled(!store.isProviderVisible(group.id))
+                            }
+                        }
+                        .padding(10)
+                        .background(.quaternary.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            }
+        }
+        .padding(14)
+        .background(.quaternary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
     }
 
     private func refreshModelsForSelectedProvider() async {

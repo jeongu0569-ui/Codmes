@@ -51,6 +51,8 @@ final class WorkspaceStore: ObservableObject {
     @Published var runtimeModelSetupMessage = ""
     @Published var workspaceSurfaces: [WorkspaceSurface] = []
     @Published var surfaceSetupMessage = ""
+    @Published var hiddenModelProviderIds = WorkspaceStore.loadStringSet("codmes.hiddenModelProviderIds")
+    @Published var hiddenModelIds = WorkspaceStore.loadStringSet("codmes.hiddenModelIds")
 
     private let liveClient = LiveChatClient()
     private var activeActivityLineId: UUID?
@@ -163,8 +165,9 @@ final class WorkspaceStore: ObservableObject {
             hermesSessions = try await api.hermesSessions()
             conversationFolders = try await api.conversationFolders()
             if selectedHermesModelId.isEmpty {
-                selectedHermesModelId = hermesModels.first?.id ?? ""
+                selectedHermesModelId = visibleHermesModels.first?.id ?? hermesModels.first?.id ?? ""
             }
+            ensureVisibleSelectedModel()
             updateActiveSessionTitle()
         } catch {
             statusMessage = "Runtime metadata: \(error.localizedDescription)"
@@ -1408,6 +1411,103 @@ final class WorkspaceStore: ObservableObject {
     var selectedHermesModelShortLabel: String {
         guard let selectedHermesModel else { return "Model" }
         return selectedHermesModel.shortLabel
+    }
+
+    var visibleHermesModels: [HermesModelOption] {
+        hermesModels.filter { isModelVisible($0) }
+    }
+
+    var visibleHermesModelGroups: [HermesModelGroup] {
+        groupedHermesModels(visibleHermesModels)
+    }
+
+    var allHermesModelGroups: [HermesModelGroup] {
+        groupedHermesModels(hermesModels)
+    }
+
+    func isProviderVisible(_ providerId: String) -> Bool {
+        !hiddenModelProviderIds.contains(providerId)
+    }
+
+    func isModelVisible(_ model: HermesModelOption) -> Bool {
+        let providerId = model.provider ?? "default"
+        return isProviderVisible(providerId) && !hiddenModelIds.contains(model.id)
+    }
+
+    func setProviderVisible(_ providerId: String, visible: Bool) {
+        if visible {
+            hiddenModelProviderIds.remove(providerId)
+        } else {
+            hiddenModelProviderIds.insert(providerId)
+        }
+        persistStringSet(hiddenModelProviderIds, key: "codmes.hiddenModelProviderIds")
+        ensureVisibleSelectedModel()
+    }
+
+    func setModelVisible(_ model: HermesModelOption, visible: Bool) {
+        if visible {
+            hiddenModelIds.remove(model.id)
+        } else {
+            hiddenModelIds.insert(model.id)
+        }
+        persistStringSet(hiddenModelIds, key: "codmes.hiddenModelIds")
+        ensureVisibleSelectedModel()
+    }
+
+    func resetModelVisibility() {
+        hiddenModelProviderIds.removeAll()
+        hiddenModelIds.removeAll()
+        persistStringSet(hiddenModelProviderIds, key: "codmes.hiddenModelProviderIds")
+        persistStringSet(hiddenModelIds, key: "codmes.hiddenModelIds")
+        ensureVisibleSelectedModel()
+    }
+
+    func providerDisplayName(_ providerId: String) -> String {
+        runtimeProviders.first { $0.id == providerId }?.name
+            ?? providerId
+                .split(separator: "-")
+                .map { $0.capitalized }
+                .joined(separator: " ")
+    }
+
+    private func groupedHermesModels(_ models: [HermesModelOption]) -> [HermesModelGroup] {
+        var order: [String] = []
+        var grouped: [String: [HermesModelOption]] = [:]
+        for model in models {
+            let providerId = model.provider ?? "default"
+            if grouped[providerId] == nil {
+                order.append(providerId)
+                grouped[providerId] = []
+            }
+            grouped[providerId]?.append(model)
+        }
+        return order.map { providerId in
+            HermesModelGroup(
+                id: providerId,
+                title: providerId == "default" ? "Default" : providerDisplayName(providerId),
+                models: grouped[providerId] ?? []
+            )
+        }
+    }
+
+    private func ensureVisibleSelectedModel() {
+        if selectedHermesModelId.isEmpty { return }
+        if let selected = selectedHermesModel, isModelVisible(selected) { return }
+        selectedHermesModelId = visibleHermesModels.first?.id ?? hermesModels.first?.id ?? ""
+    }
+
+    private static func loadStringSet(_ key: String) -> Set<String> {
+        guard let data = UserDefaults.standard.data(forKey: key),
+              let values = try? JSONDecoder().decode([String].self, from: data) else {
+            return []
+        }
+        return Set(values)
+    }
+
+    private func persistStringSet(_ values: Set<String>, key: String) {
+        if let data = try? JSONEncoder().encode(Array(values).sorted()) {
+            UserDefaults.standard.set(data, forKey: key)
+        }
     }
 
     private func handleLiveEnvelope(_ envelope: LiveEnvelope) {

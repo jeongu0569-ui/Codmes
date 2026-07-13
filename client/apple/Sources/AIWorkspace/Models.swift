@@ -400,6 +400,12 @@ struct HermesModelOption: Identifiable, Hashable {
     }
 }
 
+struct HermesModelGroup: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let models: [HermesModelOption]
+}
+
 struct RuntimeProvidersResponse: Codable {
     let providers: [RuntimeProviderOption]
 }

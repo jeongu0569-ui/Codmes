@@ -14,9 +14,11 @@ struct ChatHomeView: View {
     @EnvironmentObject private var store: WorkspaceStore
     var compact = false
     var showsHeader = true
+    var onOpenModelSettings: (() -> Void)? = nil
     @State private var draft = ""
     @State private var showingSessionManager = false
     @State private var showingCreateGroupFolder = false
+    @State private var pendingDeleteGroupFolder: ConversationFolder?
     @State private var newGroupFolderName = ""
     @FocusState private var isDraftFocused: Bool
     @State private var isAtBottom = true
@@ -123,33 +125,7 @@ struct ChatHomeView: View {
                             Task { await store.applyAccessModeToLiveSession() }
                         }
 
-                        Menu {
-                            if store.hermesModels.isEmpty {
-                                Button("Default") {
-                                    store.selectedHermesModelId = ""
-                                }
-                            } else {
-                                ForEach(store.hermesModels) { model in
-                                    Button(model.label) {
-                                        store.selectedHermesModelId = model.id
-                                    }
-                                }
-                            }
-                        } label: {
-                            HStack(spacing: 4) {
-                                Text(store.selectedHermesModelShortLabel)
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
-                                Image(systemName: "chevron.down")
-                                    .font(.caption2)
-                            }
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.secondary)
-                            .frame(width: compact ? 82 : 108, alignment: .leading)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        .controlSize(.small)
+                        modelMenu
 
                         chatControlMenu(
                             title: store.chatReasoningMode.label,
@@ -188,6 +164,26 @@ struct ChatHomeView: View {
         .sheet(isPresented: $showingSessionManager) {
             SessionManagerView(isPresented: $showingSessionManager)
                 .environmentObject(store)
+        }
+        .confirmationDialog(
+            "Delete group folder?",
+            isPresented: Binding(
+                get: { pendingDeleteGroupFolder != nil },
+                set: { if !$0 { pendingDeleteGroupFolder = nil } }
+            ),
+            presenting: pendingDeleteGroupFolder
+        ) { folder in
+            Button("Delete \(folder.name)", role: .destructive) {
+                Task {
+                    await store.deleteConversationFolder(folder)
+                    pendingDeleteGroupFolder = nil
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                pendingDeleteGroupFolder = nil
+            }
+        } message: { folder in
+            Text("Sessions in \(folder.name) will be kept and moved out of the group.")
         }
     }
 
@@ -300,6 +296,14 @@ struct ChatHomeView: View {
             } label: {
                 Label("New group folder...", systemImage: "folder.badge.plus")
             }
+            if let folder = store.conversationFolders.first(where: { $0.id == store.selectedHermesProjectId }) {
+                Divider()
+                Button(role: .destructive) {
+                    pendingDeleteGroupFolder = folder
+                } label: {
+                    Label("Delete selected group folder", systemImage: "trash")
+                }
+            }
         } label: {
             HStack(spacing: 6) {
                 Image(systemName: "folder")
@@ -331,6 +335,58 @@ struct ChatHomeView: View {
         } message: {
             Text("Sessions inside this folder share folder-level memory.")
         }
+    }
+
+    private var modelMenu: some View {
+        Menu {
+            if store.visibleHermesModelGroups.isEmpty {
+                Button("Default") {
+                    store.selectedHermesModelId = ""
+                }
+            } else {
+                ForEach(store.visibleHermesModelGroups) { group in
+                    Section(group.title) {
+                        ForEach(group.models) { model in
+                            Button {
+                                store.selectedHermesModelId = model.id
+                            } label: {
+                                HStack {
+                                    Text(model.model)
+                                    if store.selectedHermesModelId == model.id {
+                                        Image(systemName: "checkmark")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Divider()
+            Button {
+                onOpenModelSettings?()
+            } label: {
+                Label("Model Settings...", systemImage: "slider.horizontal.3")
+            }
+            Button {
+                onOpenModelSettings?()
+            } label: {
+                Label("Choose Visible Models...", systemImage: "eye")
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Text(store.selectedHermesModelShortLabel)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Image(systemName: "chevron.down")
+                    .font(.caption2)
+            }
+            .font(.subheadline.weight(.semibold))
+            .foregroundStyle(.secondary)
+            .frame(width: compact ? 82 : 108, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .controlSize(.small)
     }
 
     private var sessionMenu: some View {
