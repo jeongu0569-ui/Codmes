@@ -11,13 +11,22 @@
   "scripts": {
     "start": "node server/index.mjs",
     "runtime:bootstrap": "node scripts/bootstrap-runtime.mjs",
-    "check": "node --check bin/codmes.mjs && node --check bin/aiw.mjs && node --check server/index.mjs && node --check server/lib/path-utils.mjs && node --test"
+    "check": "node --check bin/codmes.mjs && node --check bin/aiw.mjs && node --check server/index.mjs && node --check server/lib/path-utils.mjs && node --test server/*.test.mjs server/lib/*.test.mjs server/lib/runtime/*.test.mjs"
   },
   "engines": {
     "node": ">=22"
   },
   "dependencies": {
+    "@hermes/ink": "file:vendor/hermes-ui-tui/packages/hermes-ink",
+    "@nanostores/react": "^1.1.0",
+    "ink": "^6.8.0",
+    "ink-text-input": "^6.0.0",
     "marked": "^18.0.5",
-    "shiki": "^4.3.1"
+    "nanostores": "^1.4.0",
+    "react": "^19.2.7",
+    "shiki": "^4.3.1",
+    "tsx": "^4.23.0",
+    "undici": "^6.27.0",
+    "unicode-animations": "^1.0.3"
   }
 }

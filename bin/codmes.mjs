@@ -51,7 +51,7 @@ async function main(argv) {
   if (!command) {
     if (process.stdin.isTTY) {
       const root = workspaceRoot({});
-      await runRawChatInteractive(root);
+      await runVendoredHermesTui(root);
       return;
     } else {
       printHelp();
@@ -71,6 +71,11 @@ async function main(argv) {
     case "chat-basic": {
       const root = workspaceRoot(parseOptions(args));
       await runChatInteractive(root);
+      return;
+    }
+    case "chat-raw": {
+      const root = workspaceRoot(parseOptions(args));
+      await runRawChatInteractive(root);
       return;
     }
     case "chat-prompt-toolkit": {
@@ -1982,6 +1987,35 @@ async function runRawChatInteractive(root) {
   }
 
   console.log(`\n${UI.dim}Chat session closed.${UI.reset}`);
+}
+
+async function runVendoredHermesTui(root) {
+  const entry = path.join(REPO_ROOT, "vendor", "hermes-ui-tui", "dist", "entry.js");
+  try {
+    await fs.access(entry);
+  } catch {
+    await runRawChatInteractive(root);
+    return;
+  }
+
+  const { startHermesTuiAdapter } = await import("../server/lib/hermes-tui-adapter.mjs");
+  const adapter = await startHermesTuiAdapter({ workspaceRoot: root });
+  try {
+    await runProcess(process.execPath, [entry], {
+      cwd: path.join(REPO_ROOT, "vendor", "hermes-ui-tui"),
+      env: {
+        ...process.env,
+        HERMES_TUI_GATEWAY_URL: adapter.url,
+        HERMES_TUI_STARTUP_TIMEOUT_MS: process.env.HERMES_TUI_STARTUP_TIMEOUT_MS || "15000",
+        HERMES_CWD: root
+      },
+      stdio: "inherit",
+      resolveOnForwardedSignal: true,
+      notFoundMessage: "Vendored Hermes TUI could not be started."
+    });
+  } finally {
+    adapter.close();
+  }
 }
 
 function readRawChatLine(stdin, stdout) {
