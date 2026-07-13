@@ -7,12 +7,15 @@ import test from "node:test";
 import {
   ensureRuntimeConfig,
   envAliases,
+  listProviderCredentialEntries,
   listProviderRegistry,
   listCredentialStatus,
   providerEnvKeys,
   readCredentials,
   readRuntimeConfig,
+  removeProviderCredentialEntry,
   runtimeConfigDir,
+  selectProviderCredentialEntry,
   setCredentialValue,
   setDefaultModel
 } from "./config-store.mjs";
@@ -59,6 +62,55 @@ test("OAuth providers count token-only credentials as configured", async () => {
   assert.equal(codex.configured, true);
 });
 
+test("provider credential entries are listed, selected, and removed without exposing tokens", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "codmes-credential-pool-"));
+  await ensureRuntimeConfig(root);
+  const authPath = path.join(runtimeConfigDir(root), "auth.json");
+  await fs.writeFile(authPath, JSON.stringify({
+    version: 1,
+    credential_pool: {
+      "openai-codex": [
+        {
+          id: "first",
+          label: "First Codex",
+          auth_type: "oauth",
+          access_token: fakeJwt({ email: "first@example.com", exp: 1893456000 }),
+          refresh_token: "refresh-one"
+        },
+        {
+          id: "second",
+          label: "Second Codex",
+          auth_type: "oauth",
+          access_token: fakeJwt({
+            "https://api.openai.com/auth": { chatgpt_account_id: "acct_second" },
+            exp: 1893456001
+          })
+        }
+      ]
+    }
+  }, null, 2) + "\n", "utf8");
+
+  const entries = await listProviderCredentialEntries(root, "openai-codex");
+  assert.equal(entries.length, 2);
+  assert.equal(entries[0].active, true);
+  assert.equal(entries[0].email, "first@example.com");
+  assert.equal(entries[0].hasRefreshToken, true);
+  assert.equal(entries[1].accountId, "acct_second");
+  assert.equal(entries[0].access_token, undefined);
+  assert.equal(entries[0].refresh_token, undefined);
+
+  const selected = await selectProviderCredentialEntry(root, "openai-codex", "second");
+  assert.equal(selected.id, "second");
+  const reordered = await listProviderCredentialEntries(root, "openai-codex");
+  assert.deepEqual(reordered.map((entry) => entry.id), ["second", "first"]);
+  assert.equal(reordered[0].active, true);
+
+  const removed = await removeProviderCredentialEntry(root, "openai-codex", "second");
+  assert.equal(removed.removed, true);
+  const remaining = await listProviderCredentialEntries(root, "openai-codex");
+  assert.deepEqual(remaining.map((entry) => entry.id), ["first"]);
+});
+
 test("CODMES env aliases are preferred while AIW env aliases remain compatible", async () => {
   assert.deepEqual(envAliases("AIW_OPENAI_API_KEY"), ["CODMES_OPENAI_API_KEY", "AIW_OPENAI_API_KEY"]);
   assert.deepEqual(envAliases("CODMES_CUSTOM_API_KEY"), ["CODMES_CUSTOM_API_KEY", "AIW_CUSTOM_API_KEY"]);
@@ -76,3 +128,9 @@ test("CODMES env aliases are preferred while AIW env aliases remain compatible",
   assert.equal(openai.configured, true);
   assert.ok(openai.envKeys.includes("CODMES_OPENAI_API_KEY"));
 });
+
+function fakeJwt(payload) {
+  const header = Buffer.from(JSON.stringify({ alg: "none", typ: "JWT" })).toString("base64url");
+  const body = Buffer.from(JSON.stringify(payload)).toString("base64url");
+  return `${header}.${body}.signature`;
+}

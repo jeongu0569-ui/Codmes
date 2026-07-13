@@ -46,6 +46,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var selectedApprovalDiffText = ""
     @Published var runtimeProviders: [RuntimeProviderOption] = []
     @Published var runtimeProviderModels: [String: [String]] = [:]
+    @Published var runtimeProviderCredentials: [String: [RuntimeCredentialEntry]] = [:]
     @Published var runtimeModelSetupMessage = ""
     @Published var workspaceSurfaces: [WorkspaceSurface] = []
     @Published var surfaceSetupMessage = ""
@@ -77,6 +78,10 @@ final class WorkspaceStore: ObservableObject {
             #endif
         }
         return "Use the Workspace Server URL, for example http://100.x.x.x:8787 over Tailscale."
+    }
+
+    var selectableRuntimeProviders: [RuntimeProviderOption] {
+        runtimeProviders.filter { $0.configured == true || $0.isLocalProvider }
     }
 
     var macTailscaleServerURL: String {
@@ -339,6 +344,55 @@ final class WorkspaceStore: ObservableObject {
         } catch {
             runtimeModelSetupMessage = error.localizedDescription
             return false
+        }
+    }
+
+    func refreshRuntimeProviderCredentials(providerId: String) async {
+        guard let api else { return }
+        do {
+            let response = try await api.runtimeProviderAuth(providerId: providerId)
+            runtimeProviderCredentials[providerId] = response.credentials
+        } catch {
+            runtimeModelSetupMessage = error.localizedDescription
+        }
+    }
+
+    func selectRuntimeProviderCredential(providerId: String, credentialId: String) async {
+        guard let api else { return }
+        do {
+            try await api.selectRuntimeProviderCredential(providerId: providerId, credentialId: credentialId)
+            runtimeModelSetupMessage = "Provider account selected."
+            await refreshRuntimeProviderCredentials(providerId: providerId)
+            await refreshRuntimeProviders()
+            await refreshHermesMetadata()
+        } catch {
+            runtimeModelSetupMessage = error.localizedDescription
+        }
+    }
+
+    func deleteRuntimeProviderCredential(providerId: String, credentialId: String) async {
+        guard let api else { return }
+        do {
+            try await api.deleteRuntimeProviderCredential(providerId: providerId, credentialId: credentialId)
+            runtimeModelSetupMessage = "Provider account removed."
+            await refreshRuntimeProviderCredentials(providerId: providerId)
+            await refreshRuntimeProviders()
+            await refreshHermesMetadata()
+        } catch {
+            runtimeModelSetupMessage = error.localizedDescription
+        }
+    }
+
+    func disconnectRuntimeProvider(providerId: String) async {
+        guard let api else { return }
+        do {
+            try await api.deleteRuntimeProviderAuth(providerId: providerId)
+            runtimeProviderCredentials[providerId] = []
+            runtimeModelSetupMessage = "Provider disconnected."
+            await refreshRuntimeProviders()
+            await refreshHermesMetadata()
+        } catch {
+            runtimeModelSetupMessage = error.localizedDescription
         }
     }
 

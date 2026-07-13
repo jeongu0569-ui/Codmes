@@ -28,12 +28,15 @@ import { readAuditSummary } from "./lib/runtime/audit-log.mjs";
 import {
   BUILTIN_PROVIDERS,
   listCredentialStatus,
+  listProviderCredentialEntries,
   listProviderRegistry,
   providerBaseUrlKeys,
   providerEnvKeys,
   readCredentials,
   readRuntimeConfig,
+  removeProviderCredentialEntry,
   removeCredentialValue,
+  selectProviderCredentialEntry,
   setCredentialValue,
   setDefaultModel,
   writeRuntimeConfig
@@ -364,9 +367,23 @@ async function handleRequest(req, res) {
     if (req.method === "GET" && url.pathname === "/api/auth") {
       return sendJson(res, await listRuntimeAuth());
     }
+    const authSelectMatch = url.pathname.match(/^\/api\/auth\/([^/]+)\/select$/);
+    if (authSelectMatch && req.method === "POST") {
+      return sendJson(res, await selectProviderAuth(authSelectMatch[1], req));
+    }
+    const authCredentialDeleteMatch = url.pathname.match(/^\/api\/auth\/([^/]+)\/credentials\/([^/]+)$/);
+    if (authCredentialDeleteMatch && req.method === "DELETE") {
+      return sendJson(res, await deleteProviderAuthCredential(authCredentialDeleteMatch[1], authCredentialDeleteMatch[2]));
+    }
     const authProviderMatch = url.pathname.match(/^\/api\/auth\/([^/]+)$/);
+    if (authProviderMatch && req.method === "GET") {
+      return sendJson(res, await readProviderAuth(authProviderMatch[1]));
+    }
     if (authProviderMatch && req.method === "POST") {
       return sendJson(res, await updateProviderAuth(authProviderMatch[1], req));
+    }
+    if (authProviderMatch && req.method === "DELETE") {
+      return sendJson(res, await deleteProviderAuthAll(authProviderMatch[1]));
     }
     const authDeleteMatch = url.pathname.match(/^\/api\/auth\/([^/]+)\/([^/]+)$/);
     if (authDeleteMatch && req.method === "DELETE") {
@@ -1185,6 +1202,52 @@ async function listRuntimeAuth() {
   return {
     providers: await listCredentialStatus(WORKSPACE_ROOT)
   };
+}
+
+async function readProviderAuth(providerParam) {
+  const providerId = decodeURIComponent(providerParam);
+  const provider = BUILTIN_PROVIDERS.find((item) => item.id === providerId);
+  if (!provider) {
+    throw Object.assign(new Error(`Unknown provider: ${providerId}`), { status: 400 });
+  }
+  return {
+    provider: providerId,
+    credentials: await listProviderCredentialEntries(WORKSPACE_ROOT, providerId)
+  };
+}
+
+async function selectProviderAuth(providerParam, req) {
+  const providerId = decodeURIComponent(providerParam);
+  const provider = BUILTIN_PROVIDERS.find((item) => item.id === providerId);
+  if (!provider) {
+    throw Object.assign(new Error(`Unknown provider: ${providerId}`), { status: 400 });
+  }
+  const body = await readJsonBody(req);
+  const credentialId = String(body.credentialId || body.id || "").trim();
+  if (!credentialId) {
+    throw Object.assign(new Error("credentialId is required."), { status: 400 });
+  }
+  const selected = await selectProviderCredentialEntry(WORKSPACE_ROOT, providerId, credentialId);
+  return { ok: true, provider: providerId, selected };
+}
+
+async function deleteProviderAuthCredential(providerParam, credentialParam) {
+  const providerId = decodeURIComponent(providerParam);
+  const provider = BUILTIN_PROVIDERS.find((item) => item.id === providerId);
+  if (!provider) {
+    throw Object.assign(new Error(`Unknown provider: ${providerId}`), { status: 400 });
+  }
+  const credentialId = decodeURIComponent(credentialParam);
+  return await removeProviderCredentialEntry(WORKSPACE_ROOT, providerId, credentialId);
+}
+
+async function deleteProviderAuthAll(providerParam) {
+  const providerId = decodeURIComponent(providerParam);
+  const provider = BUILTIN_PROVIDERS.find((item) => item.id === providerId);
+  if (!provider) {
+    throw Object.assign(new Error(`Unknown provider: ${providerId}`), { status: 400 });
+  }
+  return await removeCredentialValue(WORKSPACE_ROOT, providerId);
 }
 
 async function readDefaultModel() {

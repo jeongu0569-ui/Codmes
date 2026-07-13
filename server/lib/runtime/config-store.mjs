@@ -337,6 +337,60 @@ export async function readProviderCredentialEntry(workspaceRoot, providerId) {
   return { ...entries[0] };
 }
 
+export async function listProviderCredentialEntries(workspaceRoot, providerId) {
+  await ensureRuntimeConfig(workspaceRoot);
+  const authPath = path.join(runtimeConfigDir(workspaceRoot), "auth.json");
+  let authObj = { version: 1, credential_pool: {} };
+  try {
+    authObj = JSON.parse(await fs.readFile(authPath, "utf8"));
+  } catch {}
+  const entries = authObj.credential_pool?.[providerId];
+  if (!Array.isArray(entries)) return [];
+  return entries.map((entry, index) => sanitizeCredentialEntry(entry, index));
+}
+
+export async function selectProviderCredentialEntry(workspaceRoot, providerId, credentialId) {
+  await ensureRuntimeConfig(workspaceRoot);
+  const authPath = path.join(runtimeConfigDir(workspaceRoot), "auth.json");
+  let authObj = { version: 1, credential_pool: {} };
+  try {
+    authObj = JSON.parse(await fs.readFile(authPath, "utf8"));
+  } catch {}
+  const entries = authObj.credential_pool?.[providerId];
+  if (!Array.isArray(entries) || entries.length === 0) {
+    throw Object.assign(new Error(`No credentials stored for provider '${providerId}'.`), { status: 404 });
+  }
+  const index = entries.findIndex((entry) => String(entry.id || "") === String(credentialId || ""));
+  if (index < 0) {
+    throw Object.assign(new Error(`Credential '${credentialId}' not found for provider '${providerId}'.`), { status: 404 });
+  }
+  const [selected] = entries.splice(index, 1);
+  entries.unshift(selected);
+  authObj.credential_pool[providerId] = entries;
+  await fs.writeFile(authPath, JSON.stringify(authObj, null, 2) + "\n", "utf8");
+  return sanitizeCredentialEntry(selected, 0);
+}
+
+export async function removeProviderCredentialEntry(workspaceRoot, providerId, credentialId) {
+  await ensureRuntimeConfig(workspaceRoot);
+  const authPath = path.join(runtimeConfigDir(workspaceRoot), "auth.json");
+  let authObj = { version: 1, credential_pool: {} };
+  try {
+    authObj = JSON.parse(await fs.readFile(authPath, "utf8"));
+  } catch {}
+  const entries = authObj.credential_pool?.[providerId];
+  if (!Array.isArray(entries)) return { provider: providerId, credentialId, removed: false };
+  const next = entries.filter((entry) => String(entry.id || "") !== String(credentialId || ""));
+  const removed = next.length !== entries.length;
+  if (next.length > 0) {
+    authObj.credential_pool[providerId] = next;
+  } else {
+    delete authObj.credential_pool[providerId];
+  }
+  await fs.writeFile(authPath, JSON.stringify(authObj, null, 2) + "\n", "utf8");
+  return { provider: providerId, credentialId, removed };
+}
+
 export async function patchProviderCredentialEntry(workspaceRoot, providerId, patch) {
   await ensureRuntimeConfig(workspaceRoot);
   const authPath = path.join(runtimeConfigDir(workspaceRoot), "auth.json");
@@ -550,6 +604,49 @@ export async function removeCredentialValue(workspaceRoot, providerId, key = "")
   await fs.writeFile(configPath, stringifyConfigYaml(configContent, configObj), "utf8");
 
   return { provider: providerId, key, removed: true };
+}
+
+function sanitizeCredentialEntry(entry, index = 0) {
+  const token = String(entry?.access_token || entry?.token || "").trim();
+  const claims = decodeJwtPayload(token);
+  const openaiAuth = claims?.["https://api.openai.com/auth"] || {};
+  const accountId = stringOrEmpty(openaiAuth.chatgpt_account_id)
+    || stringOrEmpty(claims?.chatgpt_account_id)
+    || stringOrEmpty(claims?.account_id);
+  const email = stringOrEmpty(claims?.email)
+    || stringOrEmpty(claims?.preferred_username)
+    || stringOrEmpty(claims?.username);
+  return {
+    id: String(entry?.id || `credential-${index + 1}`),
+    label: String(entry?.label || email || accountId || `Credential ${index + 1}`),
+    authType: String(entry?.auth_type || entry?.authType || ""),
+    source: String(entry?.source || ""),
+    priority: Number.isFinite(Number(entry?.priority)) ? Number(entry.priority) : index,
+    active: index === 0,
+    hasAccessToken: Boolean(token),
+    hasRefreshToken: Boolean(String(entry?.refresh_token || "").trim()),
+    baseUrl: String(entry?.base_url || ""),
+    accountId,
+    email,
+    expiresAt: Number.isFinite(Number(claims?.exp)) && Number(claims.exp) > 0
+      ? new Date(Number(claims.exp) * 1000).toISOString()
+      : ""
+  };
+}
+
+function decodeJwtPayload(token) {
+  try {
+    const parts = String(token || "").split(".");
+    if (parts.length < 2) return null;
+    const padded = parts[1] + "=".repeat((4 - (parts[1].length % 4)) % 4);
+    return JSON.parse(Buffer.from(padded, "base64url").toString("utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function stringOrEmpty(value) {
+  return typeof value === "string" && value.trim() ? value.trim() : "";
 }
 
 export function envAliases(key) {

@@ -94,6 +94,11 @@ test("workspace server protects APIs with CODMES_SERVER_TOKEN and exposes manage
     const ollamaAuth = authStatus.providers.find((provider) => provider.provider === "ollama-local");
     assert.equal(ollamaAuth.configured, true);
 
+    const providerAuth = await fetchJson(`${baseUrl}/api/auth/ollama-local`, { token });
+    assert.equal(providerAuth.provider, "ollama-local");
+    assert.equal(providerAuth.credentials.length, 1);
+    assert.equal(providerAuth.credentials[0].baseUrl, "http://127.0.0.1:11434");
+
     const defaultModel = await fetchJson(`${baseUrl}/api/model/default`, {
       token,
       method: "POST",
@@ -108,11 +113,13 @@ test("workspace server protects APIs with CODMES_SERVER_TOKEN and exposes manage
     const models = await fetchJson(`${baseUrl}/api/models`, { token });
     assert.ok(models.models.some((model) => model.id === "ollama-local:demo-model"));
 
-    const removedAuth = await fetchJson(`${baseUrl}/api/auth/ollama-local/baseUrl`, {
+    const removedAuth = await fetchJson(`${baseUrl}/api/auth/ollama-local`, {
       token,
       method: "DELETE"
     });
     assert.equal(removedAuth.removed, true);
+    const providerAuthAfterDelete = await fetchJson(`${baseUrl}/api/auth/ollama-local`, { token });
+    assert.equal(providerAuthAfterDelete.credentials.length, 0);
   } finally {
     server.kill("SIGTERM");
     await fs.rm(workspaceRoot, { recursive: true, force: true });

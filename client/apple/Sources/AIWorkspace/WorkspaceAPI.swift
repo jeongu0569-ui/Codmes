@@ -281,6 +281,30 @@ struct WorkspaceAPI {
         let _: EmptyResponse = try await request(components, method: "POST", body: ["values": values])
     }
 
+    func runtimeProviderAuth(providerId: String) async throws -> RuntimeProviderAuthResponse {
+        var components = try components("/api/auth/\(providerId)")
+        components.percentEncodedPath = "/api/auth/\(providerId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? providerId)"
+        return try await request(components)
+    }
+
+    func selectRuntimeProviderCredential(providerId: String, credentialId: String) async throws {
+        var components = try components("/api/auth/\(providerId)/select")
+        components.percentEncodedPath = "/api/auth/\(providerId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? providerId)/select"
+        let _: EmptyResponse = try await request(components, method: "POST", body: ["credentialId": credentialId])
+    }
+
+    func deleteRuntimeProviderCredential(providerId: String, credentialId: String) async throws {
+        var components = try components("/api/auth/\(providerId)/credentials/\(credentialId)")
+        components.percentEncodedPath = "/api/auth/\(providerId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? providerId)/credentials/\(credentialId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? credentialId)"
+        let _: EmptyResponse = try await request(components, method: "DELETE")
+    }
+
+    func deleteRuntimeProviderAuth(providerId: String) async throws {
+        var components = try components("/api/auth/\(providerId)")
+        components.percentEncodedPath = "/api/auth/\(providerId.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? providerId)"
+        let _: EmptyResponse = try await request(components, method: "DELETE")
+    }
+
     func runtimeDefaultModel() async throws -> RuntimeDefaultModel? {
         let response: RuntimeDefaultModelResponse = try await get("/api/model/default")
         return response.defaultModel

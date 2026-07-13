@@ -1015,7 +1015,7 @@ private struct RuntimeModelSelectionSettingsView: View {
     @State private var isSaving = false
 
     private var provider: RuntimeProviderOption? {
-        store.runtimeProviders.first { $0.id == selectedProviderId }
+        store.selectableRuntimeProviders.first { $0.id == selectedProviderId }
     }
 
     private var models: [String] {
@@ -1036,7 +1036,7 @@ private struct RuntimeModelSelectionSettingsView: View {
             VStack(alignment: .leading, spacing: 12) {
                 Picker("Provider", selection: $selectedProviderId) {
                     Text("Select provider").tag("")
-                    ForEach(store.runtimeProviders) { option in
+                    ForEach(store.selectableRuntimeProviders) { option in
                         Text(option.name).tag(option.id)
                     }
                 }
@@ -1095,6 +1095,12 @@ private struct RuntimeModelSelectionSettingsView: View {
             .padding(14)
             .background(.quaternary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
 
+            if store.selectableRuntimeProviders.isEmpty {
+                Text("No configured providers yet. Connect a provider in Model Config first.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
             if !store.runtimeModelSetupMessage.isEmpty {
                 Text(store.runtimeModelSetupMessage)
                     .font(.caption)
@@ -1106,11 +1112,11 @@ private struct RuntimeModelSelectionSettingsView: View {
             if selectedProviderId.isEmpty {
                 if let current = await store.runtimeDefaultModel(),
                    let currentProvider = current.provider,
-                   !currentProvider.isEmpty {
+                   store.selectableRuntimeProviders.contains(where: { $0.id == currentProvider }) {
                     selectedProviderId = currentProvider
                     model = current.model ?? ""
                     await refreshModelsForSelectedProvider()
-                } else if let first = store.runtimeProviders.first {
+                } else if let first = store.selectableRuntimeProviders.first {
                     selectedProviderId = first.id
                     await refreshModelsForSelectedProvider()
                 }
@@ -1137,6 +1143,10 @@ private struct RuntimeProviderConfigSettingsView: View {
 
     private var provider: RuntimeProviderOption? {
         store.runtimeProviders.first { $0.id == selectedProviderId }
+    }
+
+    private var providerCredentials: [RuntimeCredentialEntry] {
+        store.runtimeProviderCredentials[selectedProviderId] ?? []
     }
 
     var body: some View {
@@ -1206,6 +1216,7 @@ private struct RuntimeProviderConfigSettingsView: View {
                 }
 
                 providerCredentialFields(provider)
+                providerCredentialManagement(provider)
 
                 HStack {
                     Button {
@@ -1230,9 +1241,20 @@ private struct RuntimeProviderConfigSettingsView: View {
                     .disabled(isSaving || !canSave(provider))
 
                     if provider.isOAuth {
-                        Text("Run `codmes model` on the server to complete OAuth sign-in. App-side OAuth will need a dedicated server sign-in endpoint.")
+                        Text("Run `codmes model` on the server to add another OAuth account. Stored accounts can be selected or removed here.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                    }
+
+                    Spacer()
+
+                    if provider.configured == true {
+                        Button(role: .destructive) {
+                            Task { await store.disconnectRuntimeProvider(providerId: selectedProviderId) }
+                        } label: {
+                            Label("Disconnect", systemImage: "rectangle.portrait.and.arrow.right")
+                        }
+                        .buttonStyle(.bordered)
                     }
                 }
             } else {
@@ -1292,6 +1314,67 @@ private struct RuntimeProviderConfigSettingsView: View {
     }
 
     @ViewBuilder
+    private func providerCredentialManagement(_ provider: RuntimeProviderOption) -> some View {
+        if provider.isOAuth {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Stored accounts")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if providerCredentials.isEmpty {
+                    Text(provider.configured == true ? "Connected account metadata is unavailable. Reconnect with `codmes model` to expose account choices." : "No stored account for this provider.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(providerCredentials) { credential in
+                        HStack(spacing: 10) {
+                            Image(systemName: credential.active == true ? "checkmark.circle.fill" : "person.crop.circle")
+                                .foregroundStyle(credential.active == true ? .green : .secondary)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(credential.displayName)
+                                    .font(.callout)
+                                    .lineLimit(1)
+                                Text(credential.detailLabel)
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                            }
+                            Spacer()
+                            if credential.active != true {
+                                Button("Use") {
+                                    Task {
+                                        await store.selectRuntimeProviderCredential(
+                                            providerId: selectedProviderId,
+                                            credentialId: credential.id
+                                        )
+                                    }
+                                }
+                                .buttonStyle(.borderless)
+                            }
+                            Button(role: .destructive) {
+                                Task {
+                                    await store.deleteRuntimeProviderCredential(
+                                        providerId: selectedProviderId,
+                                        credentialId: credential.id
+                                    )
+                                }
+                            } label: {
+                                Image(systemName: "trash")
+                            }
+                            .buttonStyle(.borderless)
+                        }
+                        .padding(9)
+                        .background(.quaternary.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+            }
+        } else if provider.configured == true {
+            Text("Use Disconnect to remove the stored \(provider.isLocalProvider ? "endpoint" : "credential") and hide this provider from Model selection.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
     private func providerCredentialFields(_ provider: RuntimeProviderOption) -> some View {
         if provider.isLocalOllama {
             TextField("http://127.0.0.1:11434/v1", text: $baseUrl)
@@ -1317,6 +1400,9 @@ private struct RuntimeProviderConfigSettingsView: View {
         selectedProviderId = option.id
         apiKey = ""
         baseUrl = option.defaultBaseUrl ?? ""
+        Task {
+            await store.refreshRuntimeProviderCredentials(providerId: option.id)
+        }
     }
 
     private func iconName(for provider: RuntimeProviderOption) -> String {

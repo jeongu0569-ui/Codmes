@@ -440,6 +440,47 @@ struct RuntimeProviderModelsResponse: Codable {
     let models: [String]
 }
 
+struct RuntimeProviderAuthResponse: Codable {
+    let provider: String
+    let credentials: [RuntimeCredentialEntry]
+}
+
+struct RuntimeCredentialEntry: Codable, Identifiable, Hashable {
+    let id: String
+    let label: String?
+    let authType: String?
+    let source: String?
+    let priority: Int?
+    let active: Bool?
+    let hasAccessToken: Bool?
+    let hasRefreshToken: Bool?
+    let baseUrl: String?
+    let accountId: String?
+    let email: String?
+    let expiresAt: String?
+
+    var displayName: String {
+        if let email, !email.isEmpty { return email }
+        if let accountId, !accountId.isEmpty { return accountId }
+        if let label, !label.isEmpty { return label }
+        return id
+    }
+
+    var detailLabel: String {
+        var parts: [String] = []
+        if let accountId, !accountId.isEmpty, accountId != displayName {
+            parts.append(accountId)
+        }
+        if let authType, !authType.isEmpty {
+            parts.append(authType)
+        }
+        if active == true {
+            parts.append("active")
+        }
+        return parts.isEmpty ? id : parts.joined(separator: " · ")
+    }
+}
+
 struct RuntimeDefaultModelResponse: Codable {
     let defaultModel: RuntimeDefaultModel?
 }
