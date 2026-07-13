@@ -342,6 +342,30 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
+    func runtimeDefaultModel() async -> RuntimeDefaultModel? {
+        guard let api else { return nil }
+        do {
+            return try await api.runtimeDefaultModel()
+        } catch {
+            runtimeModelSetupMessage = error.localizedDescription
+            return nil
+        }
+    }
+
+    func saveRuntimeModelSelection(providerId: String, model: String) async -> Bool {
+        guard let api else { return false }
+        do {
+            try await api.setRuntimeDefaultModel(provider: providerId, model: model)
+            runtimeModelSetupMessage = "Default model updated."
+            await refreshRuntimeProviders()
+            await refreshHermesMetadata()
+            return true
+        } catch {
+            runtimeModelSetupMessage = error.localizedDescription
+            return false
+        }
+    }
+
     func saveRuntimeModelConfiguration(providerId: String, model: String, apiKey: String, baseUrl: String) async -> Bool {
         guard let api else { return false }
         do {

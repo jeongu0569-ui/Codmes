@@ -440,6 +440,18 @@ struct RuntimeProviderModelsResponse: Codable {
     let models: [String]
 }
 
+struct RuntimeDefaultModelResponse: Codable {
+    let defaultModel: RuntimeDefaultModel?
+}
+
+struct RuntimeDefaultModel: Codable, Hashable {
+    let provider: String?
+    let model: String?
+    let id: String?
+    let baseUrl: String?
+    let apiMode: String?
+}
+
 struct WorkspaceApprovalsResponse: Codable {
     let approvals: [WorkspaceApproval]
 }

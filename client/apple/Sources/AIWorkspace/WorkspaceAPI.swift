@@ -281,6 +281,11 @@ struct WorkspaceAPI {
         let _: EmptyResponse = try await request(components, method: "POST", body: ["values": values])
     }
 
+    func runtimeDefaultModel() async throws -> RuntimeDefaultModel? {
+        let response: RuntimeDefaultModelResponse = try await get("/api/model/default")
+        return response.defaultModel
+    }
+
     func setRuntimeDefaultModel(provider: String, model: String, baseUrl: String? = nil) async throws {
         var body = ["provider": provider, "model": model]
         if let baseUrl, !baseUrl.isEmpty { body["baseUrl"] = baseUrl }

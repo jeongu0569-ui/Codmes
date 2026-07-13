@@ -749,37 +749,61 @@ struct ServerStatusView: View {
     }
 }
 
+private enum SettingsSection: String, CaseIterable, Identifiable {
+    case connection = "Connection"
+    case model = "Model"
+    case modelConfig = "Model Config"
+    case surfaces = "Surfaces"
+
+    var id: String { rawValue }
+
+    var systemImage: String {
+        switch self {
+        case .connection: "network"
+        case .model: "cube"
+        case .modelConfig: "key"
+        case .surfaces: "square.grid.2x2"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .connection: "Server URL and token"
+        case .model: "Choose provider and model"
+        case .modelConfig: "Provider auth and endpoints"
+        case .surfaces: "Client modes and plugins"
+        }
+    }
+}
+
 struct WorkspaceSettingsView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @Binding var isPresented: Bool
+    @State private var selectedSection: SettingsSection = .model
 
     var body: some View {
         NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 18) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Connection")
-                            .font(.headline)
-                        ServerStatusView()
+            Group {
+                #if os(iOS)
+                VStack(spacing: 0) {
+                    Picker("Settings", selection: $selectedSection) {
+                        ForEach(SettingsSection.allCases) { section in
+                            Text(section.rawValue).tag(section)
+                        }
                     }
-                    .padding(14)
-                    .background(.quaternary.opacity(0.18), in: RoundedRectangle(cornerRadius: 10))
-
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text("iPhone / Tailscale")
-                            .font(.headline)
-                        Text("Use the Mac server's Tailscale URL when the app runs on iPhone or iPad. 127.0.0.1 points to the phone itself.")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(14)
-                    .background(.quaternary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
-
-                    RuntimeModelSettingsView()
-
-                    SurfaceSettingsView()
+                    .pickerStyle(.segmented)
+                    .padding()
+                    settingsDetail
                 }
-                .padding(18)
+                #else
+                HStack(spacing: 0) {
+                    settingsSidebar
+                        .frame(width: 220)
+                    Divider()
+                    settingsDetail
+                }
+                .frame(minWidth: 820, minHeight: 560)
+                #endif
             }
             .navigationTitle("Settings")
             #if os(iOS)
@@ -792,6 +816,82 @@ struct WorkspaceSettingsView: View {
                     }
                 }
             }
+        }
+    }
+
+    private var settingsSidebar: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            ForEach(SettingsSection.allCases) { section in
+                Button {
+                    selectedSection = section
+                } label: {
+                    HStack(spacing: 10) {
+                        Image(systemName: section.systemImage)
+                            .frame(width: 18)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(section.rawValue)
+                                .font(.callout.weight(.medium))
+                            Text(section.subtitle)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        Spacer()
+                    }
+                    .padding(.vertical, 9)
+                    .padding(.horizontal, 10)
+                    .background(
+                        selectedSection == section ? Color.accentColor.opacity(0.14) : Color.clear,
+                        in: RoundedRectangle(cornerRadius: 8)
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer()
+        }
+        .padding(12)
+        .background(.quaternary.opacity(0.10))
+    }
+
+    @ViewBuilder
+    private var settingsDetail: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                switch selectedSection {
+                case .connection:
+                    connectionSettings
+                case .model:
+                    RuntimeModelSelectionSettingsView()
+                case .modelConfig:
+                    RuntimeProviderConfigSettingsView()
+                case .surfaces:
+                    SurfaceSettingsView()
+                }
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private var connectionSettings: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Connection")
+                    .font(.headline)
+                ServerStatusView()
+            }
+            .padding(14)
+            .background(.quaternary.opacity(0.18), in: RoundedRectangle(cornerRadius: 10))
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text("iPhone / Tailscale")
+                    .font(.headline)
+                Text("Use the Mac server's Tailscale URL when the app runs on iPhone or iPad. 127.0.0.1 points to the phone itself.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(14)
+            .background(.quaternary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
         }
     }
 }
@@ -908,12 +1008,10 @@ private struct SurfaceSettingsView: View {
     }
 }
 
-private struct RuntimeModelSettingsView: View {
+private struct RuntimeModelSelectionSettingsView: View {
     @EnvironmentObject private var store: WorkspaceStore
     @State private var selectedProviderId = ""
     @State private var model = ""
-    @State private var apiKey = ""
-    @State private var baseUrl = ""
     @State private var isSaving = false
 
     private var provider: RuntimeProviderOption? {
@@ -927,8 +1025,129 @@ private struct RuntimeModelSettingsView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Providers")
-                .font(.headline)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Model")
+                    .font(.headline)
+                Text("Choose the active provider and model for new chat sessions.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            VStack(alignment: .leading, spacing: 12) {
+                Picker("Provider", selection: $selectedProviderId) {
+                    Text("Select provider").tag("")
+                    ForEach(store.runtimeProviders) { option in
+                        Text(option.name).tag(option.id)
+                    }
+                }
+                .onChange(of: selectedProviderId) { _, newValue in
+                    model = ""
+                    if !newValue.isEmpty {
+                        Task { await refreshModelsForSelectedProvider() }
+                    }
+                }
+
+                HStack(spacing: 10) {
+                    Picker("Model", selection: $model) {
+                        Text("Select model").tag("")
+                        ForEach(models, id: \.self) { item in
+                            Text(item).tag(item)
+                        }
+                    }
+                    .disabled(selectedProviderId.isEmpty)
+
+                    Button {
+                        Task { await refreshModelsForSelectedProvider() }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(selectedProviderId.isEmpty)
+                    .help("Refresh models")
+                }
+
+                HStack(spacing: 10) {
+                    Button {
+                        isSaving = true
+                        let providerId = selectedProviderId
+                        let selectedModel = model
+                        Task {
+                            _ = await store.saveRuntimeModelSelection(providerId: providerId, model: selectedModel)
+                            isSaving = false
+                        }
+                    } label: {
+                        if isSaving {
+                            ProgressView()
+                        } else {
+                            Label("Use This Model", systemImage: "checkmark")
+                        }
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(selectedProviderId.isEmpty || model.isEmpty || isSaving)
+
+                    if let provider {
+                        Text(provider.configured == true || provider.isLocalProvider ? "Ready" : "Configure this provider in Model Config first.")
+                            .font(.caption)
+                            .foregroundStyle(provider.configured == true || provider.isLocalProvider ? Color.secondary : Color.orange)
+                    }
+                }
+            }
+            .padding(14)
+            .background(.quaternary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+
+            if !store.runtimeModelSetupMessage.isEmpty {
+                Text(store.runtimeModelSetupMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .task {
+            await store.refreshRuntimeProviders()
+            if selectedProviderId.isEmpty {
+                if let current = await store.runtimeDefaultModel(),
+                   let currentProvider = current.provider,
+                   !currentProvider.isEmpty {
+                    selectedProviderId = currentProvider
+                    model = current.model ?? ""
+                    await refreshModelsForSelectedProvider()
+                } else if let first = store.runtimeProviders.first {
+                    selectedProviderId = first.id
+                    await refreshModelsForSelectedProvider()
+                }
+            }
+        }
+    }
+
+    private func refreshModelsForSelectedProvider() async {
+        guard !selectedProviderId.isEmpty else { return }
+        await store.discoverRuntimeModels(providerId: selectedProviderId)
+        let nextModels = store.runtimeProviderModels[selectedProviderId] ?? provider?.models ?? []
+        if model.isEmpty, let first = nextModels.first {
+            model = first
+        }
+    }
+}
+
+private struct RuntimeProviderConfigSettingsView: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    @State private var selectedProviderId = ""
+    @State private var apiKey = ""
+    @State private var baseUrl = ""
+    @State private var isSaving = false
+
+    private var provider: RuntimeProviderOption? {
+        store.runtimeProviders.first { $0.id == selectedProviderId }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Model Config")
+                    .font(.headline)
+                Text("Configure provider accounts, API keys, and local endpoints. Pick the active model in the Model menu.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
             #if os(iOS)
             VStack(alignment: .leading, spacing: 14) {
                 providerList
@@ -937,7 +1156,7 @@ private struct RuntimeModelSettingsView: View {
             #else
             HStack(alignment: .top, spacing: 16) {
                 providerList
-                    .frame(width: 280)
+                    .frame(width: 300)
                 providerDetail
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             }
@@ -988,32 +1207,12 @@ private struct RuntimeModelSettingsView: View {
 
                 providerCredentialFields(provider)
 
-                HStack(spacing: 10) {
-                    Picker("Model", selection: $model) {
-                        Text("Select model").tag("")
-                        ForEach(models, id: \.self) { item in
-                            Text(item).tag(item)
-                        }
-                    }
-                    .labelsHidden()
-                    .frame(maxWidth: .infinity)
-
-                    Button {
-                        Task { await refreshSelectedProviderModels(saveValuesFirst: true) }
-                    } label: {
-                        Image(systemName: "arrow.clockwise")
-                    }
-                    .buttonStyle(.plain)
-                    .help("Refresh models")
-                }
-
                 HStack {
                     Button {
                         isSaving = true
                         Task {
-                            _ = await store.saveRuntimeModelConfiguration(
+                            _ = await store.saveRuntimeProviderValues(
                                 providerId: selectedProviderId,
-                                model: model,
                                 apiKey: apiKey,
                                 baseUrl: baseUrl
                             )
@@ -1024,14 +1223,14 @@ private struct RuntimeModelSettingsView: View {
                         if isSaving {
                             ProgressView()
                         } else {
-                            Label("Set Default", systemImage: "checkmark")
+                            Label("Save Provider", systemImage: "checkmark")
                         }
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(model.isEmpty || isSaving)
+                    .disabled(isSaving || !canSave(provider))
 
                     if provider.isOAuth {
-                        Text("Run `codmes model` on the server to sign in.")
+                        Text("Run `codmes model` on the server to complete OAuth sign-in. App-side OAuth will need a dedicated server sign-in endpoint.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -1116,27 +1315,24 @@ private struct RuntimeModelSettingsView: View {
 
     private func selectProvider(_ option: RuntimeProviderOption) {
         selectedProviderId = option.id
-        model = ""
         apiKey = ""
         baseUrl = option.defaultBaseUrl ?? ""
-        Task { await refreshSelectedProviderModels(saveValuesFirst: false) }
-    }
-
-    private func refreshSelectedProviderModels(saveValuesFirst: Bool) async {
-        guard !selectedProviderId.isEmpty else { return }
-        if saveValuesFirst {
-            _ = await store.saveRuntimeProviderValues(providerId: selectedProviderId, apiKey: apiKey, baseUrl: baseUrl)
-        }
-        await store.discoverRuntimeModels(providerId: selectedProviderId)
-        let nextModels = store.runtimeProviderModels[selectedProviderId] ?? provider?.models ?? []
-        if model.isEmpty, let first = nextModels.first {
-            model = first
-        }
     }
 
     private func iconName(for provider: RuntimeProviderOption) -> String {
         if provider.isLocalProvider { return "desktopcomputer" }
         if provider.isOAuth { return "person.crop.circle.badge.checkmark" }
         return "key"
+    }
+
+    private func canSave(_ provider: RuntimeProviderOption?) -> Bool {
+        guard let provider else { return false }
+        if provider.isOAuth { return false }
+        if provider.isLocalOllama { return !baseUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        if provider.needsAPIKey {
+            return !apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                || !baseUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        }
+        return false
     }
 }
