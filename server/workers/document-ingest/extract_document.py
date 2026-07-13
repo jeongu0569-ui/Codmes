@@ -180,7 +180,7 @@ def extract_pdf(data: bytes, name: str) -> tuple[str, list[dict[str, Any]], list
 
 def pymupdf4llm_pdf_to_markdown(data: bytes) -> tuple[str, str | None]:
     if pymupdf4llm is None:
-        return "", "PyMuPDF4LLM not installed; using PyMuPDF block extractor."
+        return "", "PyMuPDF4LLM not installed; PDF Markdown/table extraction unavailable."
     if fitz is None:
         return "", "PyMuPDF not installed; PyMuPDF4LLM unavailable."
     try:

@@ -272,6 +272,10 @@ struct SearchConfigResponse: Codable {
     let openaiApiKeyConfigured: Bool
     let openaiEmbedModel: String
     let openaiEmbedDim: Int
+    let vlmProvider: String?
+    let vlmModel: String?
+    let vlmBaseUrl: String?
+    let vlmApiKeyConfigured: Bool?
     let dbPath: String
     let backend: String?
 }
@@ -283,6 +287,10 @@ struct SearchConfigUpdateBody: Encodable {
     let openaiApiKey: String?
     let openaiEmbedModel: String
     let openaiEmbedDim: Int
+    let vlmProvider: String?
+    let vlmModel: String?
+    let vlmBaseUrl: String?
+    let vlmApiKey: String?
     let includeGlobs: [String]?
     let excludeGlobs: [String]?
     let dbPath: String?

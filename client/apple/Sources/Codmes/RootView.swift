@@ -923,8 +923,11 @@ private struct SearchSettingsView: View {
     @State private var rootsText = ""
     @State private var embeddingBaseURL = "http://127.0.0.1:11434/v1"
     @State private var embeddingApiKey = ""
-    @State private var embeddingModel = "bge-m3"
+    @State private var embeddingModelId = "openai:bge-m3"
     @State private var embeddingDim = "1024"
+    @State private var vlmModelId = ""
+    @State private var vlmBaseURL = "http://127.0.0.1:11434/v1"
+    @State private var vlmApiKey = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -940,6 +943,7 @@ private struct SearchSettingsView: View {
                 Button {
                     Task {
                         await store.refreshSearchConfig()
+                        await store.refreshHermesMetadata()
                         loadFields()
                     }
                 } label: {
@@ -988,9 +992,6 @@ private struct SearchSettingsView: View {
                     HStack {
                         TextField("OpenAI-compatible base URL", text: $embeddingBaseURL)
                             .textFieldStyle(.roundedBorder)
-                        TextField("Model", text: $embeddingModel)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(maxWidth: 180)
                         TextField("Dim", text: $embeddingDim)
                             .textFieldStyle(.roundedBorder)
                             .frame(maxWidth: 80)
@@ -1007,20 +1008,72 @@ private struct SearchSettingsView: View {
                         .autocorrectionDisabled()
                         #endif
 
-                    Text("For local Ollama, use base URL http://127.0.0.1:11434/v1, model bge-m3, dim 1024, and API key placeholder ollama.")
+                    modelSelectionField(
+                        title: "Embedding model",
+                        selection: $embeddingModelId,
+                        allowNone: false,
+                        emptyLabel: "Select embedding model"
+                    )
+
+                    Text("For local Ollama, use base URL http://127.0.0.1:11434/v1, choose an embedding model such as bge-m3, dim 1024, and API key placeholder ollama.")
                         .font(.caption2)
                         .foregroundStyle(.secondary)
+                }
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("PDF image OCR / VLM")
+                                .font(.caption.weight(.semibold))
+                            Text("Used for scanned PDF pages and image-only regions when this extractor layer is enabled.")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if store.searchConfig?.vlmApiKeyConfigured == true {
+                            Label("VLM key saved", systemImage: "checkmark.circle.fill")
+                                .font(.caption)
+                                .foregroundStyle(.green)
+                        }
+                    }
+
+                    HStack {
+                        TextField("VLM base URL", text: $vlmBaseURL)
+                            .textFieldStyle(.roundedBorder)
+                        SecureField("VLM API key or local placeholder", text: $vlmApiKey)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    #if os(iOS)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    #endif
+
+                    modelSelectionField(
+                        title: "VLM model",
+                        selection: $vlmModelId,
+                        allowNone: true,
+                        emptyLabel: "Disabled"
+                    )
                 }
 
                 HStack {
                     Button {
                         Task {
+                            let embedding = splitModelId(embeddingModelId)
+                            let vlm = splitModelId(vlmModelId)
                             await store.saveSearchConfig(
                                 rootsText: rootsText,
+                                embeddingsProvider: embedding.provider,
                                 openaiBaseUrl: embeddingBaseURL,
                                 openaiApiKey: embeddingApiKey,
-                                openaiEmbedModel: embeddingModel,
-                                openaiEmbedDim: embeddingDim
+                                openaiEmbedModel: embedding.model,
+                                openaiEmbedDim: embeddingDim,
+                                vlmProvider: vlm.provider,
+                                vlmModel: vlm.model,
+                                vlmBaseUrl: vlmBaseURL,
+                                vlmApiKey: vlmApiKey
                             )
                             loadFields()
                         }
@@ -1049,6 +1102,12 @@ private struct SearchSettingsView: View {
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .lineLimit(2)
+                        if let vlmModel = config.vlmModel, !vlmModel.isEmpty {
+                            Text("VLM model: \(config.vlmProvider ?? "provider") / \(vlmModel)")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
                     }
                     .padding(.top, 4)
                 }
@@ -1066,6 +1125,7 @@ private struct SearchSettingsView: View {
         .background(.quaternary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
         .task {
             await store.refreshSearchConfig()
+            await store.refreshHermesMetadata()
             loadFields()
         }
     }
@@ -1077,10 +1137,15 @@ private struct SearchSettingsView: View {
         }
         rootsText = config.roots.joined(separator: "\n")
         embeddingBaseURL = config.openaiBaseUrl
-        embeddingModel = config.openaiEmbedModel
+        embeddingModelId = joinModelId(provider: config.embeddingsProvider, model: config.openaiEmbedModel)
         embeddingDim = String(config.openaiEmbedDim)
+        vlmModelId = joinModelId(provider: config.vlmProvider ?? "", model: config.vlmModel ?? "")
+        vlmBaseURL = config.vlmBaseUrl?.isEmpty == false ? (config.vlmBaseUrl ?? "") : "http://127.0.0.1:11434/v1"
         if config.openaiApiKeyConfigured && embeddingApiKey.isEmpty {
             embeddingApiKey = ""
+        }
+        if config.vlmApiKeyConfigured == true && vlmApiKey.isEmpty {
+            vlmApiKey = ""
         }
     }
 
@@ -1096,8 +1161,58 @@ private struct SearchSettingsView: View {
         }
         embeddingBaseURL = "http://127.0.0.1:11434/v1"
         embeddingApiKey = "ollama"
-        embeddingModel = "bge-m3"
+        embeddingModelId = "ollama-local:bge-m3"
         embeddingDim = "1024"
+        vlmBaseURL = "http://127.0.0.1:11434/v1"
+        vlmApiKey = "ollama"
+        vlmModelId = ""
+    }
+
+    @ViewBuilder
+    private func modelSelectionField(title: String, selection: Binding<String>, allowNone: Bool, emptyLabel: String) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+            Picker(title, selection: selection) {
+                if allowNone {
+                    Text(emptyLabel).tag("")
+                } else if store.visibleHermesModelGroups.isEmpty {
+                    Text(emptyLabel).tag(selection.wrappedValue)
+                }
+                ForEach(store.visibleHermesModelGroups) { group in
+                    Section(group.title) {
+                        ForEach(group.models) { model in
+                            Text(model.model)
+                                .tag(model.id)
+                        }
+                    }
+                }
+            }
+            .pickerStyle(.menu)
+            if store.visibleHermesModelGroups.isEmpty {
+                Text("Connect or refresh runtime models in Model Config first.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func joinModelId(provider: String, model: String) -> String {
+        let cleanProvider = provider.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanModel = model.trimmingCharacters(in: .whitespacesAndNewlines)
+        if cleanModel.isEmpty { return "" }
+        return cleanProvider.isEmpty ? cleanModel : "\(cleanProvider):\(cleanModel)"
+    }
+
+    private func splitModelId(_ id: String) -> (provider: String, model: String) {
+        let clean = id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !clean.isEmpty else { return ("", "") }
+        guard let separator = clean.firstIndex(of: ":") else {
+            return ("openai", clean)
+        }
+        let provider = String(clean[..<separator])
+        let modelStart = clean.index(after: separator)
+        return (provider, String(clean[modelStart...]))
     }
 }
 

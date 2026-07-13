@@ -126,12 +126,19 @@ test("workspace server protects APIs with CODMES_SERVER_TOKEN and exposes manage
         openaiBaseUrl: "http://127.0.0.1:11434/v1",
         openaiApiKey: "ollama",
         openaiEmbedModel: "bge-m3",
-        openaiEmbedDim: 1024
+        openaiEmbedDim: 1024,
+        vlmProvider: "ollama-local",
+        vlmModel: "gemma4:e2b-mlx",
+        vlmBaseUrl: "http://127.0.0.1:11434/v1",
+        vlmApiKey: "ollama"
       }
     });
     assert.equal(searchConfig.ok, true);
     assert.equal(searchConfig.openaiEmbedModel, "bge-m3");
     assert.equal(searchConfig.openaiApiKeyConfigured, true);
+    assert.equal(searchConfig.vlmProvider, "ollama-local");
+    assert.equal(searchConfig.vlmModel, "gemma4:e2b-mlx");
+    assert.equal(searchConfig.vlmApiKeyConfigured, true);
     assert.equal(searchConfig.backend, "codmes");
     assert.match(searchConfig.configPath, /search\.env$/);
 

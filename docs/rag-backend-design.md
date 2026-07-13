@@ -11,17 +11,17 @@ or use workspace scan before answering.
 - Keep Notes, Documents, PDFs, and Code searchable from one workspace root.
 - Support a native chunk index with local text/PDF workspace scan.
 - Let runtime prompts receive compact search context instead of raw folder dumps.
-- Keep embedding provider/model selection server-owned and configurable.
+- Keep embedding provider/model and PDF image OCR VLM provider/model selection server-owned and configurable.
 - Avoid duplicating OCR and indexing logic inside Apple clients.
 
 ## Scope Decisions
 
 - PDF Markdown/table extraction uses PyMuPDF4LLM from the Codmes bootstrap
   environment. PDF page/block coordinates still use PyMuPDF.
-- Scanned PDF/image text extraction is limited to MarkItDown's default
-  local/free converter path for now. Codmes should not require tesseract,
-  pdftoppm, Java-based ODL, LibreOffice, soffice, or paid cloud OCR providers
-  for the default search path.
+- Scanned PDF/image text extraction is a distinct VLM/OCR extractor layer. The
+  chosen VLM provider/model is stored in Search settings, but Codmes should not
+  require tesseract, pdftoppm, Java-based ODL, LibreOffice, soffice, or paid
+  cloud OCR providers for the default search path.
 - No built-in embedding model runner.
 - Native vector storage is planned but not complete.
 - Text-layer PDFs, Office/HWP/Excel/PPT extraction output, Markdown, code, and text documents are searchable through the built-in chunk index.
@@ -54,9 +54,10 @@ First pass implemented:
 Planned:
 
 - More robust PDF parsing for compressed streams.
-- Optional VLM-assisted extraction for scanned PDF pages, modeled after the KNU assistant,
-  but implemented as a Codmes provider rather than a mandatory dependency.
+- VLM-assisted extraction for scanned PDF pages, modeled after the KNU assistant,
+  using the provider/model selected in Settings > Search.
 - PDF viewer page navigation and search result highlight.
 - Free/local OCR provider design for scanned PDFs/images, without native binary requirements.
 - Selectable transparent text overlay in the Apple PDF viewer after OCR ownership is decided.
-- Better UI for search/index status, watched roots, and embedding model selection.
+- Better UI for search/index status, watched roots, embedding model selection,
+  and VLM OCR model selection.

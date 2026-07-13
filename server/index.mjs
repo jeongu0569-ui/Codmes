@@ -1249,6 +1249,10 @@ async function readSearchConfig() {
     openaiApiKeyConfigured: Boolean(env.OPENAI_API_KEY),
     openaiEmbedModel: env.OPENAI_EMBED_MODEL || "bge-m3",
     openaiEmbedDim: Number.parseInt(env.OPENAI_EMBED_DIM || "1024", 10),
+    vlmProvider: env.VLM_PROVIDER || "",
+    vlmModel: env.VLM_MODEL || "",
+    vlmBaseUrl: env.VLM_BASE_URL || "",
+    vlmApiKeyConfigured: Boolean(env.VLM_API_KEY),
     dbPath: env.DB_PATH || path.join(WORKSPACE_ROOT, ".codmes", "index", "search.sqlite"),
     backend: env.SEARCH_BACKEND || "codmes"
   };
@@ -1274,6 +1278,12 @@ async function updateSearchConfig(req) {
       : previousEnv.OPENAI_API_KEY || "",
     OPENAI_EMBED_MODEL: String(body.openaiEmbedModel || current.openaiEmbedModel || "bge-m3").trim(),
     OPENAI_EMBED_DIM: String(body.openaiEmbedDim || current.openaiEmbedDim || "1024").trim(),
+    VLM_PROVIDER: String(body.vlmProvider ?? current.vlmProvider ?? "").trim(),
+    VLM_MODEL: String(body.vlmModel ?? current.vlmModel ?? "").trim(),
+    VLM_BASE_URL: String(body.vlmBaseUrl ?? current.vlmBaseUrl ?? "").trim(),
+    VLM_API_KEY: body.vlmApiKey !== undefined
+      ? String(body.vlmApiKey || "").trim()
+      : previousEnv.VLM_API_KEY || "",
     DB_PATH: String(body.dbPath || current.dbPath || path.join(WORKSPACE_ROOT, ".codmes", "index", "search.sqlite")).trim()
   };
   await fs.mkdir(path.dirname(envPath), { recursive: true });

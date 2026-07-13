@@ -37,10 +37,15 @@ The important settings are:
 - `OPENAI_BASE_URL`: OpenAI-compatible embedding endpoint.
 - `OPENAI_EMBED_MODEL`: selected embedding model.
 - `OPENAI_EMBED_DIM`: expected embedding dimension.
+- `VLM_PROVIDER`: selected provider for PDF image OCR / scanned-page vision extraction.
+- `VLM_MODEL`: selected VLM model.
+- `VLM_BASE_URL`: optional OpenAI-compatible VLM endpoint.
 
 Embedding settings are already persisted and copied into the index metadata.
 The current index still ranks by filename/text chunk matching; actual vector
 generation and vector similarity search are the next Search Runtime layer.
+Apple clients expose these values in `Settings > Search` with model pickers
+that reuse the configured Codmes runtime providers.
 
 ## Incremental Indexing
 
@@ -75,7 +80,7 @@ Supported first-pass inputs:
 
 - PDF Markdown/table extraction through PyMuPDF4LLM installed by `npm run runtime:bootstrap`
 - PDF text layers and page block coordinates through PyMuPDF
-- scanned PDF/image text when MarkItDown's default local converters can extract it
+- scanned PDF/image text is a separate VLM/OCR extractor layer driven by the Search VLM setting
 - HWPX XML text
 - DOCX/PPTX/XLSX/XLS through Python libraries installed by bootstrap where possible
 - HWP/DOC/PPT/ODT/ODP through MarkItDown or explicit internal extractors where possible

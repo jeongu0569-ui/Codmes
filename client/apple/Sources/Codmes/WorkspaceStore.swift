@@ -270,7 +270,18 @@ final class WorkspaceStore: ObservableObject {
         }
     }
 
-    func saveSearchConfig(rootsText: String, openaiBaseUrl: String, openaiApiKey: String, openaiEmbedModel: String, openaiEmbedDim: String) async {
+    func saveSearchConfig(
+        rootsText: String,
+        embeddingsProvider: String,
+        openaiBaseUrl: String,
+        openaiApiKey: String,
+        openaiEmbedModel: String,
+        openaiEmbedDim: String,
+        vlmProvider: String,
+        vlmModel: String,
+        vlmBaseUrl: String,
+        vlmApiKey: String
+    ) async {
         guard let api else { return }
         let roots = rootsText
             .split(whereSeparator: { $0.isNewline || $0 == "," })
@@ -287,11 +298,15 @@ final class WorkspaceStore: ObservableObject {
         do {
             let body = SearchConfigUpdateBody(
                 roots: roots,
-                embeddingsProvider: "openai",
+                embeddingsProvider: embeddingsProvider.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "openai" : embeddingsProvider.trimmingCharacters(in: .whitespacesAndNewlines),
                 openaiBaseUrl: openaiBaseUrl.trimmingCharacters(in: .whitespacesAndNewlines),
                 openaiApiKey: openaiApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : openaiApiKey.trimmingCharacters(in: .whitespacesAndNewlines),
                 openaiEmbedModel: openaiEmbedModel.trimmingCharacters(in: .whitespacesAndNewlines),
                 openaiEmbedDim: dim,
+                vlmProvider: vlmProvider.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : vlmProvider.trimmingCharacters(in: .whitespacesAndNewlines),
+                vlmModel: vlmModel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : vlmModel.trimmingCharacters(in: .whitespacesAndNewlines),
+                vlmBaseUrl: vlmBaseUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : vlmBaseUrl.trimmingCharacters(in: .whitespacesAndNewlines),
+                vlmApiKey: vlmApiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : vlmApiKey.trimmingCharacters(in: .whitespacesAndNewlines),
                 includeGlobs: nil,
                 excludeGlobs: nil,
                 dbPath: nil
