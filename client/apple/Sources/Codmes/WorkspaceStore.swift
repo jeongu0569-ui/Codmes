@@ -11,6 +11,7 @@ final class WorkspaceStore: ObservableObject {
     @Published var codePath = ""
     @Published var selectedFile: FileResponse?
     @Published var selectedRawFile: RawFilePreview?
+    @Published var selectedPDFFocus: PDFDocumentFocus?
     @Published var editorText = ""
     @Published var isEditingFile = false
     @Published var searchResponse: SearchResponse?
@@ -1107,6 +1108,9 @@ final class WorkspaceStore: ObservableObject {
         isLoading = true
         defer { isLoading = false }
         do {
+            if selectedPDFFocus?.path != item.path {
+                selectedPDFFocus = nil
+            }
             if item.kind == "pdf" {
                 let url = try await api.downloadRawFile(path: item.path, name: item.name)
                 selectedRawFile = RawFilePreview(path: item.path, name: item.name, kind: item.kind, url: url)
@@ -1126,6 +1130,24 @@ final class WorkspaceStore: ObservableObject {
             statusMessage = "Opened \(item.name)"
         } catch {
             statusMessage = error.localizedDescription
+        }
+    }
+
+    func openSearchResult(_ result: SearchResponse.Result) async {
+        let item = WorkspaceItem(
+            name: URL(fileURLWithPath: result.path).lastPathComponent,
+            path: result.path,
+            kind: result.kind,
+            isDirectory: false,
+            size: result.size,
+            modifiedAt: result.modifiedAt
+        )
+        if result.kind == "pdf" {
+            selectedPDFFocus = PDFDocumentFocus(path: result.path, page: result.page, bbox: result.bbox)
+        }
+        await loadFile(item)
+        if result.kind == "pdf" {
+            selectedPDFFocus = PDFDocumentFocus(path: result.path, page: result.page, bbox: result.bbox)
         }
     }
 

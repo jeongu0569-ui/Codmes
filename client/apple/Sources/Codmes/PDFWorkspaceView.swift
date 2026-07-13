@@ -36,11 +36,12 @@ struct PDFWorkspaceView: View {
             AnnotatedPDFKitView(
                 url: rawFile.url,
                 annotations: annotations,
+                focus: store.selectedPDFFocus?.path == rawFile.path ? store.selectedPDFFocus : nil,
                 onPageInkChanged: updatePageInk(pageIndex:data:)
             )
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             #else
-            PDFPreviewView(url: rawFile.url)
+            PDFPreviewView(url: rawFile.url, focus: store.selectedPDFFocus?.path == rawFile.path ? store.selectedPDFFocus : nil)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             #endif
         }
@@ -112,6 +113,7 @@ struct PDFWorkspaceView: View {
 struct AnnotatedPDFKitView: UIViewRepresentable {
     let url: URL
     var annotations: PDFAnnotationDocument?
+    var focus: PDFDocumentFocus?
     var onPageInkChanged: (Int, Data) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -132,6 +134,7 @@ struct AnnotatedPDFKitView: UIViewRepresentable {
     func updateUIView(_ view: PDFView, context: Context) {
         context.coordinator.onPageInkChanged = onPageInkChanged
         context.coordinator.annotations = annotations
+        context.coordinator.focus = focus
         if context.coordinator.currentURL != url {
             context.coordinator.currentURL = url
             context.coordinator.canvases.removeAll()
@@ -140,14 +143,18 @@ struct AnnotatedPDFKitView: UIViewRepresentable {
             view.document = PDFDocument(url: url)
         }
         context.coordinator.applyAnnotationsToVisibleCanvases()
+        context.coordinator.applyFocus()
     }
 
     final class Coordinator: NSObject, @preconcurrency PDFPageOverlayViewProvider, PKCanvasViewDelegate {
         weak var pdfView: PDFView?
         var currentURL: URL?
         var annotations: PDFAnnotationDocument?
+        var focus: PDFDocumentFocus?
         var onPageInkChanged: (Int, Data) -> Void
         var canvases: [Int: PKCanvasView] = [:]
+        private var highlightViews: [Int: UIView] = [:]
+        private var lastFocusKey = ""
         private var applyingProgrammaticDrawing = false
 
         init(onPageInkChanged: @escaping (Int, Data) -> Void) {
@@ -172,6 +179,7 @@ struct AnnotatedPDFKitView: UIViewRepresentable {
             canvas.maximumZoomScale = 1
             canvases[pageIndex] = canvas
             applyAnnotation(to: canvas, pageIndex: pageIndex)
+            applyHighlight(to: canvas, pageIndex: pageIndex)
             return canvas
         }
 
@@ -179,6 +187,7 @@ struct AnnotatedPDFKitView: UIViewRepresentable {
             guard let canvas = overlayView as? PKCanvasView,
                   let pageIndex = pdfView.document?.index(for: page) else { return }
             applyAnnotation(to: canvas, pageIndex: pageIndex)
+            applyHighlight(to: canvas, pageIndex: pageIndex)
         }
 
         func pdfView(_ pdfView: PDFView, willEndDisplayingOverlayView overlayView: UIView, for page: PDFPage) {
@@ -196,6 +205,19 @@ struct AnnotatedPDFKitView: UIViewRepresentable {
         func applyAnnotationsToVisibleCanvases() {
             for (pageIndex, canvas) in canvases {
                 applyAnnotation(to: canvas, pageIndex: pageIndex)
+                applyHighlight(to: canvas, pageIndex: pageIndex)
+            }
+        }
+
+        func applyFocus() {
+            guard let pdfView, let document = pdfView.document, let focus else { return }
+            let key = "\(focus.path):\(focus.page ?? -1):\(focus.bbox?.x ?? -1):\(focus.bbox?.y ?? -1)"
+            if key != lastFocusKey, let page = focus.page, page > 0, page <= document.pageCount, let pdfPage = document.page(at: page - 1) {
+                pdfView.go(to: pdfPage)
+                lastFocusKey = key
+            }
+            for (pageIndex, canvas) in canvases {
+                applyHighlight(to: canvas, pageIndex: pageIndex)
             }
         }
 
@@ -208,6 +230,44 @@ struct AnnotatedPDFKitView: UIViewRepresentable {
             canvas.drawing = drawing
             applyingProgrammaticDrawing = false
         }
+
+        private func applyHighlight(to canvas: PKCanvasView, pageIndex: Int) {
+            highlightViews[pageIndex]?.removeFromSuperview()
+            highlightViews[pageIndex] = nil
+            guard let focus,
+                  let page = focus.page,
+                  page - 1 == pageIndex,
+                  let box = focus.bbox?.normalizedOrSelf else { return }
+
+            let highlight = UIView()
+            highlight.isUserInteractionEnabled = false
+            highlight.layer.borderColor = UIColor.systemYellow.withAlphaComponent(0.95).cgColor
+            highlight.layer.borderWidth = 2
+            highlight.backgroundColor = UIColor.systemYellow.withAlphaComponent(0.18)
+            highlight.layer.cornerRadius = 3
+            let bounds = canvas.bounds
+            let frame = CGRect(
+                x: bounds.width * box.x,
+                y: bounds.height * box.y,
+                width: max(12, bounds.width * box.width),
+                height: max(10, bounds.height * box.height)
+            )
+            highlight.frame = frame
+            canvas.addSubview(highlight)
+            highlightViews[pageIndex] = highlight
+        }
     }
 }
 #endif
+
+private extension AnnotationBoundingBox {
+    var normalizedOrSelf: NormalizedBoundingBox? {
+        if let normalized {
+            return normalized
+        }
+        if x >= 0, y >= 0, width > 0, height > 0, x <= 1, y <= 1, width <= 1, height <= 1 {
+            return NormalizedBoundingBox(x: x, y: y, width: width, height: height)
+        }
+        return nil
+    }
+}

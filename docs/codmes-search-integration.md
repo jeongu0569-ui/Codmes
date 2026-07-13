@@ -74,11 +74,13 @@ server/workers/document-ingest/extract_document.py
 Supported first-pass inputs:
 
 - PDF text layers
-- scanned PDF OCR when `pdftoppm` and `tesseract` are installed
-- image OCR when `tesseract` is installed
+- PDF text and page rendering through PyMuPDF installed by `npm run runtime:bootstrap`
+- scanned PDF OCR when `tesseract` is available; PyMuPDF renders pages and
+  `pdftoppm` remains an optional renderer fallback
+- image OCR when `tesseract` is available
 - HWPX XML text
-- HWP/DOC/DOCX/PPT/PPTX/ODT/ODP through LibreOffice/`soffice` conversion when available
-- XLSX/XLS tables through `openpyxl`/`xlrd` when available
+- DOCX/PPTX/XLSX/XLS through Python libraries installed by bootstrap where possible
+- HWP/DOC/PPT/ODT/ODP through LibreOffice/`soffice` conversion when available
 - ZIP files containing supported document/image formats
 
 Extraction cache:

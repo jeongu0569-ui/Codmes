@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import { constants as fsConstants, createReadStream, watch } from "node:fs";
+import { accessSync, constants as fsConstants, createReadStream, watch } from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -50,6 +50,7 @@ import {
   startCodexOAuthLogin
 } from "./lib/runtime/codex-oauth.mjs";
 
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_PORT = Number.parseInt(process.env.CODMES_PORT || process.env.PORT || "8787", 10);
 const WORKSPACE_HOST = process.env.CODMES_HOST || process.env.WORKSPACE_HOST || process.env.HOST || "127.0.0.1";
 const DEFAULT_WORKSPACE_ROOT = path.join(process.env.HOME || process.cwd(), "CodmesWorkspace");
@@ -1413,8 +1414,84 @@ async function doctorStatus() {
       itemCount: index.itemCount || 0
     },
     audit,
-    search: searchStatus(WORKSPACE_ROOT)
+    search: searchStatus(WORKSPACE_ROOT),
+    documentIngest: await documentIngestDiagnostics()
   };
+}
+
+async function documentIngestDiagnostics() {
+  const python = await documentWorkerPython();
+  return {
+    python,
+    requirements: "server/workers/document-ingest/requirements.txt",
+    libraries: await pythonLibraryDiagnostics(python, ["fitz", "PIL", "openpyxl", "docx", "pptx", "markitdown"]),
+    binaries: {
+      tesseract: findExecutable("tesseract"),
+      pdftoppm: findExecutable("pdftoppm"),
+      soffice: findExecutable("soffice") || findExecutable("libreoffice") || await fileIfExists("/Applications/LibreOffice.app/Contents/MacOS/soffice")
+    },
+    notes: [
+      "PyMuPDF handles most PDF text extraction and can render scanned PDF pages for OCR.",
+      "Tesseract is still required for OCR text recognition unless a future Apple Vision/server OCR provider is enabled.",
+      "LibreOffice/soffice is optional but improves legacy Office/HWP conversion quality."
+    ]
+  };
+}
+
+async function documentWorkerPython() {
+  if (process.env.CODMES_PYTHON) return process.env.CODMES_PYTHON;
+  if (process.env.PYTHON) return process.env.PYTHON;
+  const bundled = path.join(REPO_ROOT, ".codmes-runtime", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
+  try {
+    await fs.access(bundled);
+    return bundled;
+  } catch {
+    return "python3";
+  }
+}
+
+async function pythonLibraryDiagnostics(python, modules) {
+  const { spawnSync } = await import("node:child_process");
+  const script = [
+    "import importlib.util, json",
+    `mods = ${JSON.stringify(modules)}`,
+    "print(json.dumps({m: bool(importlib.util.find_spec(m)) for m in mods}))"
+  ].join("\n");
+  const result = spawnSync(python, ["-c", script], { encoding: "utf8" });
+  if (result.error || result.status !== 0) {
+    return Object.fromEntries(modules.map((module) => [module, false]));
+  }
+  try {
+    return JSON.parse(result.stdout);
+  } catch {
+    return Object.fromEntries(modules.map((module) => [module, false]));
+  }
+}
+
+function findExecutable(name) {
+  const pathEnv = process.env.PATH || "";
+  const extensions = process.platform === "win32" ? ["", ".exe", ".cmd", ".bat"] : [""];
+  for (const dir of pathEnv.split(path.delimiter).filter(Boolean)) {
+    for (const ext of extensions) {
+      const candidate = path.join(dir, `${name}${ext}`);
+      try {
+        accessSync(candidate);
+      } catch {
+        continue;
+      }
+      return candidate;
+    }
+  }
+  return null;
+}
+
+async function fileIfExists(filePath) {
+  try {
+    await fs.access(filePath);
+    return filePath;
+  } catch {
+    return null;
+  }
 }
 
 async function listRuntimeProviders() {

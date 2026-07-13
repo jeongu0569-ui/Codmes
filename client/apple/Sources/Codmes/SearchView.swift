@@ -27,21 +27,46 @@ struct SearchView: View {
                     .frame(height: 1)
             }
             List(store.searchResponse?.results ?? []) { result in
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
-                        Text(result.path)
-                            .font(.headline)
-                        Spacer()
-                        Text(result.kind)
+                Button {
+                    Task { await store.openSearchResult(result) }
+                } label: {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack {
+                            Text(result.path)
+                                .font(.headline)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer()
+                            HStack(spacing: 6) {
+                                if let page = result.page {
+                                    Text("p. \(page)")
+                                }
+                                Text(result.kind)
+                            }
                             .font(.caption)
                             .foregroundStyle(.secondary)
+                        }
+                        Text(result.snippet)
+                            .font(.body)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                        if result.bbox != nil || result.source != nil {
+                            HStack(spacing: 8) {
+                                if let source = result.source {
+                                    Label(source, systemImage: "scope")
+                                }
+                                if result.bbox != nil {
+                                    Label("position", systemImage: "viewfinder")
+                                }
+                            }
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                        }
                     }
-                    Text(result.snippet)
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
+                    .contentShape(Rectangle())
+                    .padding(.vertical, 6)
                 }
-                .padding(.vertical, 6)
+                .buttonStyle(.plain)
             }
         }
     }

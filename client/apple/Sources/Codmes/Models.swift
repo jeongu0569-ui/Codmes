@@ -67,6 +67,12 @@ struct RawFilePreview: Identifiable {
     let url: URL
 }
 
+struct PDFDocumentFocus: Equatable {
+    let path: String
+    let page: Int?
+    let bbox: AnnotationBoundingBox?
+}
+
 enum UploadStatus: String, Codable {
     case reading
     case uploading
@@ -150,7 +156,15 @@ struct PDFAnnotationObject: Codable, Identifiable {
     var metadata: [String: String]?
 }
 
-struct AnnotationBoundingBox: Codable {
+struct AnnotationBoundingBox: Codable, Equatable {
+    var x: Double
+    var y: Double
+    var width: Double
+    var height: Double
+    var normalized: NormalizedBoundingBox?
+}
+
+struct NormalizedBoundingBox: Codable, Equatable {
     var x: Double
     var y: Double
     var width: Double
@@ -166,6 +180,9 @@ struct SearchResponse: Codable {
         let modifiedAt: String
         let score: Double
         let snippet: String
+        let source: String?
+        let page: Int?
+        let bbox: AnnotationBoundingBox?
     }
 
     let provider: String

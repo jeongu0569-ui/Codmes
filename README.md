@@ -132,12 +132,16 @@ Code는 서버의 `Code/` 폴더 안 프로젝트를 다루는 화면입니다.
 
 LLM에는 `codmes_search`라는 내장 검색 도구가 노출됩니다. 이 도구는 외부 `docsearch-mcp` 의존 없이 Codmes Search Runtime을 통해 파일, 노트, 코드, PDF/Office/이미지 추출 텍스트, 대화 기록을 검색하는 공식 경로입니다. 현재는 `.codmes/index/search.json` chunk index와 scan fallback을 사용하고, 임베딩 모델 선택값은 Search 설정과 인덱스 메타데이터에 저장됩니다. 실제 벡터 유사도 저장소는 다음 단계입니다.
 
-문서 추출은 KNU AI Assistant에서 사용했던 통합 첨부파일 파이프라인을 Codmes용 worker로 흡수하는 방향입니다. Codmes는 기본 Python worker로 PDF 텍스트 레이어, HWPX XML, XLSX/XLS 표, ZIP 내부 파일, 일반 텍스트를 처리하고, 시스템에 다음 도구가 설치되어 있으면 더 넓은 문서와 OCR을 처리합니다.
+문서 추출은 KNU AI Assistant에서 사용했던 통합 첨부파일 파이프라인을 Codmes용 worker로 흡수하는 방향입니다. `npm run runtime:bootstrap`은 Codmes 전용 Python 환경에 PyMuPDF, Pillow, MarkItDown, openpyxl/xlrd, python-docx, python-pptx 같은 문서 처리 라이브러리를 설치합니다. 그래서 일반 PDF 텍스트 레이어, HWPX XML, XLSX/XLS 표, DOCX/PPTX, ZIP 내부 파일, 일반 텍스트는 추가 수동 설치 없이 처리하는 방향입니다.
 
-- LibreOffice/`soffice`: HWP, DOC, PPT 등을 PDF로 변환한 뒤 추출
-- `tesseract`: 이미지 OCR
-- `pdftoppm`: 스캔 PDF 페이지 렌더링
-- `openpyxl`, `xlrd`: Excel 표 추출 품질 향상
+무거운 네이티브 도구는 선택적 품질 향상 계층입니다.
+
+- `tesseract`: 스캔 PDF/이미지 OCR 텍스트 인식 엔진
+- PyMuPDF: PDF 텍스트 추출과 스캔 PDF 페이지 렌더링
+- `pdftoppm`: PyMuPDF가 없거나 렌더링 호환성이 필요할 때 쓰는 대체 PDF 렌더러
+- LibreOffice/`soffice`: 구형 HWP, DOC, PPT, ODT/ODP 변환 품질 향상용
+
+최종 배포판에서는 이 네이티브 도구들도 서버 패키지/설치 스크립트에 묶는 방향입니다. 현재는 `codmes doctor`에서 어떤 도구와 Python 라이브러리가 준비됐는지 확인할 수 있습니다.
 
 ### 6. Approvals와 Tasks
 
@@ -204,7 +208,7 @@ codmes model
 설치된 채팅 모델을 불러옵니다.
 
 처음 실행하기 전 `npm run runtime:bootstrap`은 저장소의 `.codmes-runtime`에
-프로젝트 전용 Python 환경을 만듭니다.
+프로젝트 전용 Python 환경을 만들고 문서 추출용 Python 라이브러리까지 설치합니다.
 
 ```bash
 codmes provider list
@@ -396,7 +400,7 @@ WebSocket과 raw 파일 URL은 token query를 사용할 수 있습니다. Apple 
 ## 현재 한계와 앞으로의 작업
 
 - 내장 검색은 chunk index와 통합 문서 추출 캐시까지 지원합니다. 실제 임베딩 벡터 저장소와 semantic reranking은 다음 단계입니다.
-- 스캔 PDF/이미지 OCR은 `pdftoppm`/`tesseract`가 설치된 서버에서 처리됩니다. 좌표 기반 OCR 텍스트 선택/복사는 다음 단계입니다.
+- 스캔 PDF/이미지 OCR은 서버의 문서 worker가 처리합니다. PyMuPDF는 bootstrap으로 설치되어 PDF 렌더링에 쓰이고, OCR 텍스트 인식에는 현재 `tesseract`가 필요합니다. 향후 macOS 서버 배포판에서는 Apple Vision OCR 또는 번들 OCR 엔진으로 사용자의 별도 설치를 줄일 예정입니다.
 - 텍스트 레이어가 있는 PDF와 Markdown/텍스트 파일은 기존 추출 및 Workspace 검색 경로로 처리합니다.
 - PDF는 Apple PDFKit 기반으로 열고, iOS/iPadOS에서는 PencilKit 페이지 오버레이 필기를 `.codmes/annotations`에 저장하는 1차 구조가 들어갔습니다. 텍스트 박스, 이미지 박스, 오브젝트 편집, PDF export는 다음 단계입니다.
 - Code 화면은 아직 VS Code 수준의 LSP, 디버거, 확장 기능을 제공하지 않습니다.

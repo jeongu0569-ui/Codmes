@@ -139,6 +139,9 @@ test("workspace server protects APIs with CODMES_SERVER_TOKEN and exposes manage
     assert.equal(doctor.ok, true);
     assert.equal(doctor.authRequired, true);
     assert.equal(doctor.audit.path, ".codmes/audit/audit.jsonl");
+    assert.equal(doctor.documentIngest.requirements, "server/workers/document-ingest/requirements.txt");
+    assert.equal(typeof doctor.documentIngest.libraries.fitz, "boolean");
+    assert.equal(Object.hasOwn(doctor.documentIngest.binaries, "tesseract"), true);
 
     const providers = await fetchJson(`${baseUrl}/api/providers`, { token });
     assert.equal(providers.providers.some((provider) => provider.id === "custom"), false);

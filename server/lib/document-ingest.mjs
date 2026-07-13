@@ -29,6 +29,7 @@ const DOCUMENT_EXTENSIONS = new Set([
 ]);
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.resolve(__dirname, "..", "..");
 const WORKER_PATH = path.resolve(__dirname, "..", "workers", "document-ingest", "extract_document.py");
 
 export function isDocumentIngestFile(relativePath) {
@@ -93,7 +94,7 @@ export async function extractAndCacheDocument(workspaceRoot, absolutePath, relat
 }
 
 async function runDocumentWorker({ absolutePath, relativePath }) {
-  const python = process.env.CODMES_PYTHON || process.env.PYTHON || "python3";
+  const python = await documentWorkerPython();
   const stdout = [];
   const stderr = [];
   const child = spawn(python, [
@@ -121,6 +122,18 @@ async function runDocumentWorker({ absolutePath, relativePath }) {
     return JSON.parse(out || "{}");
   } catch (error) {
     throw Object.assign(new Error(`Document worker returned invalid JSON: ${error.message}${err ? `; stderr=${err}` : ""}`), { status: 500 });
+  }
+}
+
+async function documentWorkerPython() {
+  if (process.env.CODMES_PYTHON) return process.env.CODMES_PYTHON;
+  if (process.env.PYTHON) return process.env.PYTHON;
+  const bundled = path.join(REPO_ROOT, ".codmes-runtime", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
+  try {
+    await fs.access(bundled);
+    return bundled;
+  } catch {
+    return "python3";
   }
 }
 

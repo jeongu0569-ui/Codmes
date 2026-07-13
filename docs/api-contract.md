@@ -352,15 +352,18 @@ MCP process execution still happens inside the runtime, not in the client.
 |---|---|---:|---|---|
 | GET | `/api/doctor` | implemented | token when configured | available |
 
-The response includes runtime, MCP, skills, security, index, and search summary.
-It also includes an audit summary when `.codmes/audit/audit.jsonl`
-exists.
+The response includes runtime, MCP, skills, security, index, search summary,
+document-ingest diagnostics, and audit summary when `.codmes/audit/audit.jsonl`
+exists. Document diagnostics report the Python worker, bootstrap requirements
+file, installed Python libraries such as PyMuPDF/MarkItDown, and optional
+native binaries such as `tesseract`, `pdftoppm`, and `soffice`.
 
 ## Known Gaps
 
 - OAuth provider flow is not complete.
 - Built-in search is a server-owned text/document chunk index with scan
-  fallback. OCR runs when server-side OCR tools are installed. Native vector
-  embeddings are planned as a later Codmes Search Runtime layer.
+  fallback. PDF text/page rendering uses bootstrap Python libraries where
+  possible. OCR currently requires an OCR engine such as `tesseract`. Native
+  vector embeddings are planned as a later Codmes Search Runtime layer.
 - Audit log exists for security policy decisions. More runtime subsystems should
   write explicit approved/rejected records as they become first-class actions.

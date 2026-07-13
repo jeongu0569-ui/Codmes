@@ -16,7 +16,11 @@ or use scan fallback before answering.
 
 ## Scope Decisions
 
-- Scanned PDF/image OCR is available when server-side OCR tools are installed.
+- PDF text extraction and PDF page rendering use PyMuPDF from the Codmes
+  bootstrap environment when available.
+- Scanned PDF/image OCR uses server-side OCR. Tesseract is the current OCR
+  engine; future packaged builds can replace or supplement it with Apple Vision
+  OCR on macOS.
 - No built-in embedding model runner.
 - Native vector storage is planned but not complete.
 - Text-layer PDFs, OCR text, Office/HWP/Excel/PPT extraction output, Markdown, code, and text documents are searchable through the built-in chunk index.

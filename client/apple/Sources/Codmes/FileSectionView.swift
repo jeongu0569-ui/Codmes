@@ -694,6 +694,7 @@ private func languageForPath(_ path: String) -> String? {
 #if os(macOS)
 struct PDFPreviewView: NSViewRepresentable {
     let url: URL
+    var focus: PDFDocumentFocus?
 
     func makeNSView(context: Context) -> PDFView {
         let view = PDFView()
@@ -705,7 +706,13 @@ struct PDFPreviewView: NSViewRepresentable {
     }
 
     func updateNSView(_ view: PDFView, context: Context) {
-        view.document = PDFDocument(url: url)
+        if view.document?.documentURL != url {
+            view.document = PDFDocument(url: url)
+        }
+        if let pageNumber = focus?.page,
+           let page = view.document?.page(at: max(0, pageNumber - 1)) {
+            view.go(to: page)
+        }
     }
 }
 #endif
@@ -713,6 +720,7 @@ struct PDFPreviewView: NSViewRepresentable {
 #if os(iOS)
 struct PDFPreviewView: UIViewRepresentable {
     let url: URL
+    var focus: PDFDocumentFocus?
 
     func makeUIView(context: Context) -> PDFView {
         let view = PDFView()
@@ -724,7 +732,13 @@ struct PDFPreviewView: UIViewRepresentable {
     }
 
     func updateUIView(_ view: PDFView, context: Context) {
-        view.document = PDFDocument(url: url)
+        if view.document?.documentURL != url {
+            view.document = PDFDocument(url: url)
+        }
+        if let pageNumber = focus?.page,
+           let page = view.document?.page(at: max(0, pageNumber - 1)) {
+            view.go(to: page)
+        }
     }
 }
 #endif

@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
 """Codmes document extraction worker.
 
-This worker is intentionally dependency-light. It uses Python stdlib first, and
-automatically upgrades extraction quality when optional tools are installed:
+This worker uses Python stdlib fallbacks first, and automatically upgrades
+extraction quality when Codmes bootstrap libraries or optional native tools are
+installed:
 
-- LibreOffice/soffice: office and HWP/HWPX/PPT/PPTX -> PDF -> text
+- PyMuPDF: PDF text extraction and scanned-PDF page rendering
+- MarkItDown/python-docx/python-pptx/openpyxl/xlrd: document/table extraction
+- LibreOffice/soffice: legacy office and HWP/HWPX/PPT/PPTX -> PDF -> text
 - openpyxl/xlrd: spreadsheet extraction
-- tesseract + pdftoppm: image/scanned-PDF OCR
+- tesseract: image/scanned-PDF OCR text recognition
+- pdftoppm: optional scanned-PDF page rendering fallback
 
 The Node server owns scheduling, caching, and indexing. This script only turns
 one workspace file into normalized JSON text blocks.
@@ -28,6 +32,11 @@ import zipfile
 from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree as ET
+
+try:
+    import fitz  # PyMuPDF
+except Exception:  # pragma: no cover - optional dependency
+    fitz = None
 
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic"}
@@ -147,6 +156,13 @@ def extract_bytes(data: bytes, name: str, args: argparse.Namespace, depth: int) 
 def extract_pdf(data: bytes, name: str) -> tuple[str, list[dict[str, Any]], list[str]]:
     warnings: list[str] = []
     blocks: list[dict[str, Any]] = []
+    pymupdf_text, pymupdf_blocks, pymupdf_warning = pymupdf_pdf_to_blocks(data, name)
+    if pymupdf_warning:
+        warnings.append(pymupdf_warning)
+    if pymupdf_text:
+        blocks.extend(pymupdf_blocks)
+        return pymupdf_text, blocks, warnings
+
     text = extract_pdf_literals(data)
     page_count = estimate_pdf_pages(data)
     if text:
@@ -160,6 +176,64 @@ def extract_pdf(data: bytes, name: str) -> tuple[str, list[dict[str, Any]], list
         return "\n\n".join(ocr_text).strip(), blocks, warnings
 
     return "", blocks, warnings or ["No text layer found and OCR tools were unavailable or returned no text."]
+
+
+def pymupdf_pdf_to_blocks(data: bytes, name: str) -> tuple[str, list[dict[str, Any]], str | None]:
+    if fitz is None:
+        return "", [], "PyMuPDF not installed; using fallback PDF parser."
+    try:
+        doc = fitz.open(stream=data, filetype="pdf")
+    except Exception as exc:
+        return "", [], f"PyMuPDF could not open PDF: {exc}"
+    blocks: list[dict[str, Any]] = []
+    page_texts: list[str] = []
+    try:
+        for page_index, page in enumerate(doc, start=1):
+            page_text = normalize_text(page.get_text("text") or "")
+            if page_text:
+                page_texts.append(page_text)
+            rect = page.rect
+            page_width = float(rect.width or 0)
+            page_height = float(rect.height or 0)
+            for block_index, item in enumerate(page.get_text("blocks") or [], start=1):
+                if len(item) < 5:
+                    continue
+                x0, y0, x1, y1, text = item[:5]
+                text = normalize_text(text)
+                if not text:
+                    continue
+                bbox = {
+                    "unit": "pdf-point",
+                    "x": float(x0),
+                    "y": float(y0),
+                    "width": max(0.0, float(x1) - float(x0)),
+                    "height": max(0.0, float(y1) - float(y0)),
+                    "pageWidth": page_width,
+                    "pageHeight": page_height,
+                }
+                if page_width > 0 and page_height > 0:
+                    bbox["normalized"] = {
+                        "x": float(x0) / page_width,
+                        "y": float(y0) / page_height,
+                        "width": max(0.0, float(x1) - float(x0)) / page_width,
+                        "height": max(0.0, float(y1) - float(y0)) / page_height,
+                    }
+                blocks.append(block(
+                    name,
+                    text,
+                    source="pdf-text",
+                    page=page_index,
+                    kind="pdf",
+                    metadata={
+                        "pdfEngine": "pymupdf",
+                        "pageCount": doc.page_count,
+                        "blockIndex": block_index,
+                    },
+                    bbox=bbox,
+                ))
+    finally:
+        doc.close()
+    return normalize_text("\n\n".join(page_texts)), blocks, None
 
 
 def extract_pdf_literals(data: bytes) -> str:
@@ -196,31 +270,61 @@ def ocr_pdf_bytes(data: bytes, name: str) -> tuple[list[str], list[dict[str, Any
     blocks: list[dict[str, Any]] = []
     pdftoppm = shutil.which("pdftoppm")
     tesseract = shutil.which("tesseract")
-    if not pdftoppm or not tesseract:
-        return [], [], ["OCR skipped: pdftoppm and/or tesseract not found."]
+    if not tesseract:
+        return [], [], ["OCR skipped: tesseract not found."]
     with tempfile.TemporaryDirectory(prefix="codmes-pdf-ocr-") as tmp:
         tmp_path = Path(tmp)
         pdf_path = tmp_path / "input.pdf"
         pdf_path.write_bytes(data)
-        prefix = tmp_path / "page"
-        result = subprocess.run(
-            [pdftoppm, "-png", "-r", os.getenv("CODMES_OCR_DPI", "160"), str(pdf_path), str(prefix)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            timeout=int(os.getenv("CODMES_PDF_RENDER_TIMEOUT_SECONDS", "90")),
-            check=False,
-        )
-        if result.returncode != 0:
-            return [], [], [f"pdftoppm failed: {result.stderr.strip() or result.stdout.strip()}"]
+        if pdftoppm:
+            prefix = tmp_path / "page"
+            result = subprocess.run(
+                [pdftoppm, "-png", "-r", os.getenv("CODMES_OCR_DPI", "160"), str(pdf_path), str(prefix)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=int(os.getenv("CODMES_PDF_RENDER_TIMEOUT_SECONDS", "90")),
+                check=False,
+            )
+            if result.returncode != 0:
+                return [], [], [f"pdftoppm failed: {result.stderr.strip() or result.stdout.strip()}"]
+            page_images = sorted(tmp_path.glob("page-*.png"))
+        elif fitz is not None:
+            page_images, render_warning = render_pdf_pages_with_pymupdf(data, tmp_path)
+            if render_warning:
+                warnings.append(render_warning)
+        else:
+            return [], [], ["OCR skipped: no PDF renderer found. Install PyMuPDF through runtime bootstrap or provide pdftoppm."]
         texts: list[str] = []
-        for page_number, image in enumerate(sorted(tmp_path.glob("page-*.png")), start=1):
+        for page_number, image in enumerate(page_images, start=1):
             page_text, page_blocks, warning = image_path_to_blocks(image, name=name, page=page_number, kind="pdf")
             if warning:
                 warnings.append(warning)
             texts.append(page_text)
             blocks.extend(page_blocks)
         return texts, blocks, warnings
+
+
+def render_pdf_pages_with_pymupdf(data: bytes, tmp_path: Path) -> tuple[list[Path], str | None]:
+    if fitz is None:
+        return [], "PyMuPDF not installed."
+    dpi = int(os.getenv("CODMES_OCR_DPI", "160"))
+    scale = dpi / 72
+    matrix = fitz.Matrix(scale, scale)
+    try:
+        doc = fitz.open(stream=data, filetype="pdf")
+    except Exception as exc:
+        return [], f"PyMuPDF render open failed: {exc}"
+    images: list[Path] = []
+    try:
+        for index, page in enumerate(doc, start=1):
+            pix = page.get_pixmap(matrix=matrix, alpha=False)
+            image_path = tmp_path / f"pymupdf-page-{index:04d}.png"
+            pix.save(str(image_path))
+            images.append(image_path)
+    finally:
+        doc.close()
+    return images, None
 
 
 def image_to_blocks(data: bytes, ext: str, *, name: str, page: int | None, kind: str) -> tuple[str, list[dict[str, Any]], str | None]:
@@ -433,9 +537,12 @@ def openxml_to_text(data: bytes, filename: str) -> str:
 
 
 def office_to_text(data: bytes, filename: str) -> tuple[str, str | None]:
+    markitdown_text, markitdown_warning = markitdown_to_text(data, filename)
+    if markitdown_text:
+        return markitdown_text, markitdown_warning
     soffice = find_soffice()
     if not soffice:
-        return "", "LibreOffice/soffice not found."
+        return "", markitdown_warning or "LibreOffice/soffice not found."
     suffix = Path(filename).suffix or ".bin"
     with tempfile.TemporaryDirectory(prefix="codmes-office-") as tmp:
         tmp_path = Path(tmp)
@@ -475,6 +582,23 @@ def office_to_text(data: bytes, filename: str) -> tuple[str, str | None]:
             return "", "LibreOffice conversion did not produce a PDF."
         text, _blocks, warnings = extract_pdf(pdf.read_bytes(), filename)
         return text, "; ".join(warnings) if warnings else None
+
+
+def markitdown_to_text(data: bytes, filename: str) -> tuple[str, str | None]:
+    try:
+        from markitdown import MarkItDown  # type: ignore
+    except Exception:
+        return "", "MarkItDown not installed."
+    suffix = Path(filename).suffix or ".bin"
+    with tempfile.TemporaryDirectory(prefix="codmes-markitdown-") as tmp:
+        input_path = Path(tmp) / f"input{suffix}"
+        input_path.write_bytes(data)
+        try:
+            result = MarkItDown().convert(str(input_path))
+            text = normalize_text(getattr(result, "text_content", "") or "")
+            return text, None if text else "MarkItDown returned no text."
+        except Exception as exc:
+            return "", f"MarkItDown failed: {exc}"
 
 
 def find_soffice() -> str | None:
