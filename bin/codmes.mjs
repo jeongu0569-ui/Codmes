@@ -51,7 +51,7 @@ async function main(argv) {
   if (!command) {
     if (process.stdin.isTTY) {
       const root = workspaceRoot({});
-      await runPromptToolkitChat(root);
+      await runRawChatInteractive(root);
       return;
     } else {
       printHelp();
@@ -71,6 +71,11 @@ async function main(argv) {
     case "chat-basic": {
       const root = workspaceRoot(parseOptions(args));
       await runChatInteractive(root);
+      return;
+    }
+    case "chat-prompt-toolkit": {
+      const root = workspaceRoot(parseOptions(args));
+      await runPromptToolkitChat(root);
       return;
     }
     case "serve":
@@ -1852,6 +1857,194 @@ async function runChatInteractive(root) {
   }
 }
 
+async function runRawChatInteractive(root) {
+  const config = await readRuntimeConfig(root);
+  if (!config.defaultModel?.provider || !config.defaultModel?.model) {
+    console.log("No default model is configured.");
+    console.log("Please run 'codmes model' to configure a default model first.");
+    return;
+  }
+
+  const { createWorkspaceAgentEngine } = await import("../server/lib/agent-engine.mjs");
+  const engine = createWorkspaceAgentEngine({ workspaceRoot: root });
+
+  process.stdout.write(`${UI.cyan}Connecting to Codmes Runtime...${UI.reset}\r`);
+  try {
+    await engine.connect();
+  } catch (error) {
+    process.stdout.write("\n");
+    console.error(`${UI.red}Failed to connect to runtime:${UI.reset} ${error.message}`);
+    engine.close();
+    return;
+  }
+
+  const sessionResult = await engine.createSession({
+    provider: config.defaultModel.provider,
+    model: config.defaultModel.model,
+    title: `CLI Chat ${new Date().toLocaleDateString()}`
+  });
+  const sessionId = sessionResult.sessionId;
+  const chatState = {
+    model: config.defaultModel.model,
+    promptTokenEstimate: null,
+    contextWindow: null,
+    activityStarted: false,
+    answerStarted: false
+  };
+
+  renderChatWelcome({
+    provider: config.defaultModel.provider,
+    model: config.defaultModel.model,
+    workspaceRoot: root,
+    sessionId
+  });
+
+  const onEvent = (event) => {
+    if (event.sessionId !== sessionId) return;
+    if (event.type === "turn.start") {
+      chatState.promptTokenEstimate = event.promptTokenEstimate || null;
+      chatState.contextWindow = event.contextWindow || null;
+      chatState.activityStarted = true;
+      chatState.answerStarted = false;
+      process.stdout.write(`${UI.dim}thinking...${UI.reset}\n`);
+      return;
+    }
+    if (isReasoningEvent(event) && event.text) {
+      if (!chatState.activityStarted) {
+        chatState.activityStarted = true;
+        process.stdout.write(`${UI.dim}thinking...${UI.reset}\n`);
+      }
+      process.stdout.write(`${UI.dim}${event.text}${UI.reset}`);
+      return;
+    }
+    if (isMessageDeltaEvent(event) && event.text) {
+      if (!chatState.answerStarted) {
+        if (chatState.activityStarted) process.stdout.write("\n");
+        chatState.answerStarted = true;
+      }
+      process.stdout.write(event.text);
+      return;
+    }
+    if (String(event.type || "").startsWith("tool.")) {
+      const label = event.toolName || event.summary || event.type;
+      process.stdout.write(`\n${UI.dim}${event.type}: ${label}${UI.reset}\n`);
+    }
+  };
+  engine.on("event", onEvent);
+
+  const stdin = process.stdin;
+  const wasRaw = stdin.isRaw;
+  const previousEncoding = stdin.readableEncoding;
+
+  try {
+    stdin.setEncoding("utf8");
+    stdin.setRawMode(true);
+    stdin.resume();
+
+    for (;;) {
+      const input = await readRawChatLine(stdin, process.stdout);
+      if (input === null) break;
+      const message = input.trim();
+      process.stdout.write("\n");
+      if (!message) continue;
+      if (message.toLowerCase() === "exit" || message.toLowerCase() === "quit" || message.toLowerCase() === "/exit") {
+        break;
+      }
+      if (message === "/help") {
+        printChatHelp();
+        continue;
+      }
+
+      chatState.activityStarted = false;
+      chatState.answerStarted = false;
+      process.stdout.write(`${UI.border}${"─".repeat(chatTerminalWidth())}${UI.reset}\n`);
+      process.stdout.write(`${UI.green}✦ Agent${UI.reset}\n`);
+      try {
+        await engine.submitPrompt({
+          sessionId,
+          message,
+          provider: config.defaultModel.provider,
+          model: config.defaultModel.model,
+          wait: true
+        });
+      } catch (error) {
+        console.error(`\n${UI.red}Error:${UI.reset} ${error.message}`);
+      }
+      process.stdout.write("\n");
+      printChatStatus(chatState);
+    }
+  } finally {
+    engine.off("event", onEvent);
+    engine.close();
+    if (stdin.isTTY) stdin.setRawMode(Boolean(wasRaw));
+    if (previousEncoding) stdin.setEncoding(previousEncoding);
+    stdin.pause();
+  }
+
+  console.log(`\n${UI.dim}Chat session closed.${UI.reset}`);
+}
+
+function readRawChatLine(stdin, stdout) {
+  return new Promise((resolve) => {
+    let buffer = "";
+    let done = false;
+    const prompt = `${UI.purple}❯ ${UI.reset}`;
+
+    const render = () => {
+      stdout.write(`\r\x1b[2K${prompt}${buffer}`);
+    };
+
+    const finish = (value) => {
+      if (done) return;
+      done = true;
+      stdin.off("data", onData);
+      resolve(value);
+    };
+
+    const submit = () => {
+      finish(buffer);
+    };
+
+    const onData = (chunk) => {
+      const text = String(chunk);
+      const chars = Array.from(text);
+      for (let i = 0; i < chars.length; i += 1) {
+        const char = chars[i];
+        if (char === "\u0003") {
+          stdout.write("^C");
+          finish(null);
+          return;
+        }
+        if (char === "\r" || char === "\n") {
+          submit();
+          return;
+        }
+        if (char === "\u007f" || char === "\b") {
+          const chars = Array.from(buffer);
+          chars.pop();
+          buffer = chars.join("");
+          render();
+          continue;
+        }
+        if (char === "\u001b") {
+          while (i + 1 < chars.length && !/[A-Za-z~]/.test(chars[i + 1])) {
+            i += 1;
+          }
+          if (i + 1 < chars.length) i += 1;
+          continue;
+        }
+        if (char >= " " || char.charCodeAt(0) > 0x7f) {
+          buffer += char;
+          render();
+        }
+      }
+    };
+
+    stdin.on("data", onData);
+    render();
+  });
+}
+
 async function runPromptToolkitChat(root) {
   const python = resolvePromptToolkitPython();
   const script = path.join(REPO_ROOT, "bin", "codmes_tui.py");
@@ -2066,6 +2259,13 @@ function isReasoningEvent(event) {
     || type === "thinking.delta"
     || type === "assistant.reasoning.delta"
     || type === "assistant.thinking.delta";
+}
+
+function isMessageDeltaEvent(event) {
+  const type = String(event?.type || "");
+  return type === "message.delta"
+    || type === "assistant.delta"
+    || type === "assistant.message.delta";
 }
 
 async function runAuthInteractive(root) {
