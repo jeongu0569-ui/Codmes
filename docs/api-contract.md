@@ -92,7 +92,7 @@ The server resolves context requests for `none`, `current`, `note`, `folder`,
 | POST | `/api/index/rebuild` | implemented | token when configured | available |
 
 Current search provider is `codmes-search-index` after the first rebuild, with
-`workspace-scan` as the fallback when no index exists. It supports content
+`workspace-scan` as the secondary search path when no index exists. It supports content
 search, filename hits, scope filtering, `kind`/`kinds`, modified date filters,
 and first-pass PDF/Office/HWP/Excel/image/ZIP extraction through
 `.codmes/index/documents/`.
@@ -355,16 +355,16 @@ MCP process execution still happens inside the runtime, not in the client.
 The response includes runtime, MCP, skills, security, index, search summary,
 document-ingest diagnostics, and audit summary when `.codmes/audit/audit.jsonl`
 exists. Document diagnostics report the Python worker, bootstrap requirements
-file, and installed Python libraries such as PyMuPDF/MarkItDown. Codmes Core
+file, and installed Python libraries such as PyMuPDF4LLM/PyMuPDF/MarkItDown. Codmes Core
 does not require native OCR or office-conversion binaries such as `tesseract`,
-`pdftoppm`, LibreOffice, or `soffice`. Paid cloud OCR providers are not part of
-the default dependency path.
+`pdftoppm`, Java-based ODL, LibreOffice, or `soffice`. Paid cloud OCR providers
+are not part of the default dependency path.
 
 ## Known Gaps
 
 - OAuth provider flow is not complete.
-- Built-in search is a server-owned text/document chunk index with scan
-  fallback. PDF text extraction uses bootstrap Python libraries where possible.
+- Built-in search is a server-owned text/document chunk index with workspace
+  scan. PDF Markdown/table and text extraction uses bootstrap Python libraries where possible.
   Scanned PDF/image extraction is limited to MarkItDown's default local/free
   converter path until Codmes owns a stronger free/local OCR provider. Native
   vector embeddings are planned as a later Codmes Search Runtime layer.

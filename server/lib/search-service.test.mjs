@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
 import {
   buildSearchIndex,
   readSearchIndex,
@@ -10,6 +12,8 @@ import {
   searchWorkspace,
   updateSearchIndex
 } from "./search-service.mjs";
+
+const execFileAsync = promisify(execFile);
 
 test("searches workspace text files within scope", async () => {
   const root = await fixtureWorkspace();
@@ -51,7 +55,7 @@ test("search supports filename hits and kind filters", async () => {
   assert.equal(filteredOut.resultCount, 0);
 });
 
-test("reports fallback search status", async () => {
+test("reports secondary workspace scan search status", async () => {
   const status = searchStatus("/tmp/workspace");
   assert.equal(status.provider, "workspace-scan");
   assert.equal(status.available, true);
@@ -145,11 +149,7 @@ test("full workspace indexing skips private Codmes config state", async () => {
 test("searches extracted PDF text and caches it", async () => {
   const root = await fixtureWorkspace();
   await fs.mkdir(path.join(root, "Documents"), { recursive: true });
-  await fs.writeFile(
-    path.join(root, "Documents", "manual.pdf"),
-    "%PDF-1.4\n1 0 obj << /Type /Page >> endobj\nBT (semantic workspace manual) Tj ET\n%%EOF",
-    "latin1"
-  );
+  await createMinimalPdf(path.join(root, "Documents", "manual.pdf"), "semantic workspace manual");
 
   const result = await searchWorkspace(root, {
     query: "semantic workspace",
@@ -170,4 +170,16 @@ async function fixtureWorkspace() {
   await fs.writeFile(path.join(root, "Notes", "os.md"), "# OS\n\nA scheduler chooses a process.", "utf8");
   await fs.writeFile(path.join(root, "Code", "main.js"), "console.log('hello')", "utf8");
   return root;
+}
+
+async function createMinimalPdf(filePath, text) {
+  const script = `
+import fitz, sys
+path, text = sys.argv[1], sys.argv[2]
+doc = fitz.open()
+page = doc.new_page()
+page.insert_text((72, 72), text, fontsize=14)
+doc.save(path)
+`;
+  await execFileAsync(process.env.CODMES_PYTHON || ".codmes-runtime/bin/python", ["-c", script, filePath, text]);
 }

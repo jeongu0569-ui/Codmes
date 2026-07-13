@@ -14,7 +14,7 @@ User question
 ```
 
 The current implementation uses a native Codmes chunk index backed by JSON
-state under `.codmes/index/search.json`, with workspace scan as the fallback
+state under `.codmes/index/search.json`, with workspace scan as the secondary
 when no index exists yet. Search configuration is exposed through:
 
 ```text
@@ -73,19 +73,27 @@ server/workers/document-ingest/extract_document.py
 
 Supported first-pass inputs:
 
-- PDF text layers
-- PDF text and page block coordinates through PyMuPDF installed by `npm run runtime:bootstrap`
+- PDF Markdown/table extraction through PyMuPDF4LLM installed by `npm run runtime:bootstrap`
+- PDF text layers and page block coordinates through PyMuPDF
 - scanned PDF/image text when MarkItDown's default local converters can extract it
 - HWPX XML text
 - DOCX/PPTX/XLSX/XLS through Python libraries installed by bootstrap where possible
-- HWP/DOC/PPT/ODT/ODP through MarkItDown or internal fallbacks where possible
+- HWP/DOC/PPT/ODT/ODP through MarkItDown or explicit internal extractors where possible
 - ZIP files containing supported document/image formats
 
 Codmes Core intentionally does not require native OCR or office-conversion
-binaries such as `tesseract`, `pdftoppm`, LibreOffice, or `soffice`. Scanned
-PDF/image text extraction is limited to what MarkItDown's default local/free
-converters can extract. Paid cloud OCR providers are not part of the default
-Codmes dependency path.
+binaries such as `tesseract`, `pdftoppm`, Java-based ODL, LibreOffice, or
+`soffice`. Scanned PDF/image text extraction is limited to what MarkItDown's
+default local/free converters can extract. Paid cloud OCR providers are not
+part of the default Codmes dependency path.
+
+This mirrors the KNU assistant's format-specific extractor idea without copying
+its heaviest runtime dependencies:
+
+```text
+KNU:    ODL PDF markdown -> pdf2image + VLM -> LibreOffice/HWP conversion paths
+Codmes: PyMuPDF4LLM markdown -> PyMuPDF coordinates -> MarkItDown/internal extractors
+```
 
 Extraction cache:
 

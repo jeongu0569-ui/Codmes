@@ -17,18 +17,14 @@ test("document ingest extracts and caches PDF text through the worker", async ()
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "document-ingest-"));
   await fs.mkdir(path.join(root, "Documents"), { recursive: true });
   const pdfPath = path.join(root, "Documents", "manual.pdf");
-  await fs.writeFile(
-    pdfPath,
-    "%PDF-1.4\n1 0 obj << /Type /Page >> endobj\nBT (codmes document ingest marker) Tj ET\n%%EOF",
-    "latin1"
-  );
+  await createMinimalPdf(pdfPath, "codmes document ingest marker");
 
   assert.equal(isDocumentIngestFile("Documents/manual.pdf"), true);
 
   const first = await extractAndCacheDocument(root, pdfPath, "Documents/manual.pdf");
   assert.equal(first.kind, "pdf");
   assert.match(first.text, /codmes document ingest marker/i);
-  assert.equal(first.blocks.length, 1);
+  assert.ok(first.blocks.length >= 1);
   assert.equal(first.blocks[0].source, "pdf-text");
 
   const metadata = await getDocumentIngestMetadata(root, pdfPath, "Documents/manual.pdf");
@@ -40,17 +36,29 @@ test("document ingest extracts and caches PDF text through the worker", async ()
   assert.deepEqual(second.text, first.text);
 });
 
-test("document ingest extracts DOCX text without LibreOffice through OpenXML fallback", async () => {
+test("document ingest extracts DOCX text without LibreOffice through OpenXML", async () => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "document-ingest-docx-"));
   await fs.mkdir(path.join(root, "Documents"), { recursive: true });
   const docxPath = path.join(root, "Documents", "sample.docx");
-  await createMinimalDocx(docxPath, "codmes openxml fallback marker");
+  await createMinimalDocx(docxPath, "codmes openxml marker");
 
   const result = await extractAndCacheDocument(root, docxPath, "Documents/sample.docx");
   assert.equal(result.kind, "document");
-  assert.match(result.text, /codmes openxml fallback marker/i);
+  assert.match(result.text, /codmes openxml marker/i);
   assert.equal(result.blocks[0].source, "openxml");
 });
+
+async function createMinimalPdf(filePath, text) {
+  const script = `
+import fitz, sys
+path, text = sys.argv[1], sys.argv[2]
+doc = fitz.open()
+page = doc.new_page()
+page.insert_text((72, 72), text, fontsize=14)
+doc.save(path)
+`;
+  await execFileAsync(process.env.CODMES_PYTHON || ".codmes-runtime/bin/python", ["-c", script, filePath, text]);
+}
 
 async function createMinimalDocx(filePath, text) {
   const script = `

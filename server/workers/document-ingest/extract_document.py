@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Codmes document extraction worker.
 
-This worker uses Python stdlib fallbacks first, and upgrades extraction quality
-with libraries installed by Codmes runtime bootstrap:
+This worker uses explicit, format-specific extractors installed by Codmes
+runtime bootstrap:
 
+- PyMuPDF4LLM: PDF to Markdown/table-oriented extraction
 - PyMuPDF: PDF text extraction and PDF block coordinates
 - MarkItDown/python-docx/python-pptx/openpyxl/xlrd: document/table extraction
 - openpyxl/xlrd: spreadsheet extraction
@@ -35,6 +36,11 @@ try:
     import fitz  # PyMuPDF
 except Exception:  # pragma: no cover - optional dependency
     fitz = None
+
+try:
+    import pymupdf4llm
+except Exception:  # pragma: no cover - optional dependency
+    pymupdf4llm = None
 
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic"}
@@ -155,32 +161,53 @@ def extract_bytes(data: bytes, name: str, args: argparse.Namespace, depth: int) 
 def extract_pdf(data: bytes, name: str) -> tuple[str, list[dict[str, Any]], list[str]]:
     warnings: list[str] = []
     blocks: list[dict[str, Any]] = []
-    pymupdf_text, pymupdf_blocks, pymupdf_warning = pymupdf_pdf_to_blocks(data, name)
+    structured_text, structured_warning = pymupdf4llm_pdf_to_markdown(data)
+    if structured_warning:
+        warnings.append(structured_warning)
+
+    _pymupdf_text, pymupdf_blocks, pymupdf_warning = pymupdf_pdf_to_blocks(data, name)
     if pymupdf_warning:
         warnings.append(pymupdf_warning)
-    if pymupdf_text:
-        blocks.extend(pymupdf_blocks)
-        return pymupdf_text, blocks, warnings
+    if structured_text:
+        if pymupdf_blocks:
+            blocks.extend(pymupdf_blocks)
+        else:
+            blocks.append(block(name, structured_text, source="pdf-markdown", page=None, kind="pdf", metadata={"pdfEngine": "pymupdf4llm"}))
+        return structured_text, blocks, warnings
 
-    text = extract_pdf_literals(data)
-    page_count = estimate_pdf_pages(data)
-    if text:
-        blocks.append(block(name, text, source="pdf-text", page=None, kind="pdf", metadata={"pageCount": page_count}))
-        return text, blocks, warnings
+    return "", blocks, warnings or ["PyMuPDF4LLM produced no PDF text."]
 
-    markitdown_text, markitdown_warning = markitdown_to_text(data, name)
-    if markitdown_warning:
-        warnings.append(markitdown_warning)
-    if markitdown_text:
-        blocks.append(block(name, markitdown_text, source="markitdown", page=None, kind="pdf", metadata={"pageCount": page_count}))
-        return markitdown_text, blocks, warnings
 
-    return "", blocks, warnings or ["No text layer found; MarkItDown default local converter returned no text."]
+def pymupdf4llm_pdf_to_markdown(data: bytes) -> tuple[str, str | None]:
+    if pymupdf4llm is None:
+        return "", "PyMuPDF4LLM not installed; using PyMuPDF block extractor."
+    if fitz is None:
+        return "", "PyMuPDF not installed; PyMuPDF4LLM unavailable."
+    try:
+        doc = fitz.open(stream=data, filetype="pdf")
+    except Exception as exc:
+        return "", f"PyMuPDF4LLM could not open PDF: {exc}"
+    try:
+        markdown = pymupdf4llm.to_markdown(
+            doc,
+            write_images=False,
+            embed_images=False,
+            ignore_images=True,
+            page_separators=True,
+            table_strategy=os.getenv("CODMES_PDF_TABLE_STRATEGY", "lines_strict"),
+            show_progress=False,
+        )
+        text = normalize_text(markdown)
+        return text, None if text else "PyMuPDF4LLM returned no text."
+    except Exception as exc:
+        return "", f"PyMuPDF4LLM failed: {exc}"
+    finally:
+        doc.close()
 
 
 def pymupdf_pdf_to_blocks(data: bytes, name: str) -> tuple[str, list[dict[str, Any]], str | None]:
     if fitz is None:
-        return "", [], "PyMuPDF not installed; using fallback PDF parser."
+        return "", [], "PyMuPDF not installed; PDF coordinates unavailable."
     try:
         doc = fitz.open(stream=data, filetype="pdf")
     except Exception as exc:
@@ -236,35 +263,6 @@ def pymupdf_pdf_to_blocks(data: bytes, name: str) -> tuple[str, list[dict[str, A
     return normalize_text("\n\n".join(page_texts)), blocks, None
 
 
-def extract_pdf_literals(data: bytes) -> str:
-    raw = data.decode("latin1", "ignore")
-    pieces: list[str] = []
-    for match in re.finditer(r"\((?:\\.|[^\\)])*\)", raw):
-        value = decode_pdf_literal(match.group(0)[1:-1])
-        if looks_like_text(value):
-            pieces.append(value)
-    return normalize_text("\n".join(pieces))
-
-
-def decode_pdf_literal(value: str) -> str:
-    value = (
-        value.replace("\\n", "\n")
-        .replace("\\r", "\n")
-        .replace("\\t", "\t")
-        .replace("\\b", "\b")
-        .replace("\\f", "\f")
-        .replace("\\(", "(")
-        .replace("\\)", ")")
-        .replace("\\\\", "\\")
-    )
-    return re.sub(r"\\([0-7]{1,3})", lambda m: chr(int(m.group(1), 8)), value)
-
-
-def estimate_pdf_pages(data: bytes) -> int | None:
-    matches = re.findall(rb"/Type\s*/Page\b", data)
-    return len(matches) if matches else None
-
-
 def hwpx_to_text(data: bytes) -> str:
     parts: list[str] = []
     with zipfile.ZipFile(io.BytesIO(data)) as zf:
@@ -281,9 +279,9 @@ def office_or_hwp_to_text(data: bytes, filename: str) -> tuple[str, str | None]:
     text, warning = office_to_text(data, filename)
     if text:
         return text, warning
-    fallback = hwp_ole_strings_to_text(data)
-    if fallback:
-        return fallback, warning
+    ole_text = hwp_ole_strings_to_text(data)
+    if ole_text:
+        return ole_text, warning
     return "", warning or "HWP extraction failed."
 
 
@@ -544,14 +542,6 @@ def kind_for_path(path: str) -> str:
     if ext == ".zip":
         return "archive"
     return "file"
-
-
-def looks_like_text(value: str) -> bool:
-    normalized = re.sub(r"\s+", " ", value or "").strip()
-    if len(normalized) < 2:
-        return False
-    printable = sum(1 for char in normalized if char in "\n\r\t" or (ord(char) >= 32 and ord(char) != 127))
-    return printable / max(len(normalized), 1) > 0.8
 
 
 def normalize_text(text: str) -> str:

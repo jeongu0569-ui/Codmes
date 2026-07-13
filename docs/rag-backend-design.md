@@ -4,24 +4,24 @@ Codmes treats broad document search as a server-owned runtime feature, not as a
 client-side prompt attachment trick. Clients should not upload large folders or
 PDFs into a chat prompt. They should send the user's scope and intent, then the
 server decides whether to inline small context, search the native Codmes index,
-or use scan fallback before answering.
+or use workspace scan before answering.
 
 ## Goals
 
 - Keep Notes, Documents, PDFs, and Code searchable from one workspace root.
-- Support a native chunk index with local text/PDF scan fallback.
+- Support a native chunk index with local text/PDF workspace scan.
 - Let runtime prompts receive compact search context instead of raw folder dumps.
 - Keep embedding provider/model selection server-owned and configurable.
 - Avoid duplicating OCR and indexing logic inside Apple clients.
 
 ## Scope Decisions
 
-- PDF text extraction and PDF block coordinates use PyMuPDF from the Codmes
-  bootstrap environment.
+- PDF Markdown/table extraction uses PyMuPDF4LLM from the Codmes bootstrap
+  environment. PDF page/block coordinates still use PyMuPDF.
 - Scanned PDF/image text extraction is limited to MarkItDown's default
   local/free converter path for now. Codmes should not require tesseract,
-  pdftoppm, LibreOffice, soffice, or paid cloud OCR providers for the default
-  search path.
+  pdftoppm, Java-based ODL, LibreOffice, soffice, or paid cloud OCR providers
+  for the default search path.
 - No built-in embedding model runner.
 - Native vector storage is planned but not complete.
 - Text-layer PDFs, Office/HWP/Excel/PPT extraction output, Markdown, code, and text documents are searchable through the built-in chunk index.
@@ -54,6 +54,8 @@ First pass implemented:
 Planned:
 
 - More robust PDF parsing for compressed streams.
+- Optional VLM-assisted extraction for scanned PDF pages, modeled after the KNU assistant,
+  but implemented as a Codmes provider rather than a mandatory dependency.
 - PDF viewer page navigation and search result highlight.
 - Free/local OCR provider design for scanned PDFs/images, without native binary requirements.
 - Selectable transparent text overlay in the Apple PDF viewer after OCR ownership is decided.

@@ -1426,6 +1426,7 @@ async function documentIngestDiagnostics() {
     requirements: "server/workers/document-ingest/requirements.txt",
     libraries: await pythonLibraryDiagnostics(python, [
       "fitz",
+      "pymupdf4llm",
       "PIL",
       "openpyxl",
       "docx",
@@ -1434,6 +1435,7 @@ async function documentIngestDiagnostics() {
     ]),
     notes: [
       "Codmes core document extraction uses runtime Python libraries only.",
+      "PyMuPDF4LLM provides the KNU-style PDF-to-Markdown/table extraction layer without Java-based ODL.",
       "Native OCR and office-conversion binaries such as tesseract, pdftoppm, LibreOffice, and soffice are not part of the core dependency path.",
       "MarkItDown is used through its default local/free converter path."
     ]
