@@ -47,6 +47,8 @@ test("Hermes TUI adapter exposes Codmes sessions, model picker data, and slash c
 
     const created = await rpc("session.create");
     assert.ok(created.session_id);
+    const toolCount = Object.values(created.info.tools || {}).reduce((sum, items) => sum + items.length, 0);
+    assert.ok(toolCount > 0);
 
     const listed = await rpc("session.list");
     assert.ok(listed.sessions.some((session) => session.id === created.session_id));

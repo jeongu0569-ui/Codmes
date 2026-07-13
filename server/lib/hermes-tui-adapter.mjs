@@ -2,6 +2,9 @@ import http from "node:http";
 
 import { createWorkspaceAgentEngine } from "./agent-engine.mjs";
 import { acceptWebSocket, createFrameDecoder, encodeWebSocketFrame } from "./websocket-utils.mjs";
+import { listSkills } from "./runtime/skill-registry.mjs";
+import { TOOL_REGISTRY } from "./runtime/tool-discovery.mjs";
+import { WORKSPACE_TOOL_DEFINITIONS } from "./runtime/workspace-tools.mjs";
 import {
   listCredentialStatus,
   listProviderRegistry,
@@ -105,7 +108,7 @@ export async function startHermesTuiAdapter({ workspaceRoot }) {
         broadcast({
           type: "session.info",
           session_id: String(params.session_id || activeSessionId || ""),
-          payload: sessionInfo(await getConfig(), workspaceRoot)
+          payload: await sessionInfo(await getConfig(), workspaceRoot)
         });
         return { value: label };
       }
@@ -118,7 +121,7 @@ export async function startHermesTuiAdapter({ workspaceRoot }) {
         title: `Codmes Chat ${new Date().toLocaleString()}`
       });
       activeSessionId = session.sessionId;
-      const info = sessionInfo(config, workspaceRoot);
+      const info = await sessionInfo(config, workspaceRoot);
       sessions.set(activeSessionId, {
         id: activeSessionId,
         info,
@@ -136,7 +139,7 @@ export async function startHermesTuiAdapter({ workspaceRoot }) {
       if (entry) sessions.set(activeSessionId, entry);
       return {
         session_id: activeSessionId,
-        info: entry?.info || sessionInfo(config, workspaceRoot),
+        info: entry?.info || await sessionInfo(config, workspaceRoot),
         messages: entry?.messages || [],
         message_count: entry?.messages?.length || 0,
         running: false,
@@ -253,17 +256,43 @@ function sendFrame(socket, value) {
   if (!socket.destroyed) socket.write(encodeWebSocketFrame(value));
 }
 
-function sessionInfo(config, workspaceRoot) {
+async function sessionInfo(config, workspaceRoot) {
   return {
     cwd: workspaceRoot || process.cwd(),
     model: config.defaultModel?.model || "no-model",
     profile_name: "codmes",
     reasoning_effort: "medium",
-    skills: {},
-    tools: {},
+    skills: await sessionSkills(workspaceRoot),
+    tools: sessionTools(),
     usage: sessionUsage(),
     version: "Codmes"
   };
+}
+
+async function sessionSkills(workspaceRoot) {
+  const skills = await listSkills(workspaceRoot).catch(() => []);
+  const enabled = skills
+    .filter((skill) => skill.config?.enabled)
+    .map((skill) => skill.name)
+    .filter(Boolean);
+  return enabled.length ? { enabled } : {};
+}
+
+function sessionTools() {
+  const groups = {};
+  for (const tool of TOOL_REGISTRY) {
+    const group = tool.group || "tools";
+    if (!groups[group]) groups[group] = [];
+    if (!groups[group].includes(tool.name)) groups[group].push(tool.name);
+  }
+  const definedNames = new Set(WORKSPACE_TOOL_DEFINITIONS.map((tool) => tool.function?.name).filter(Boolean));
+  for (const name of definedNames) {
+    if (Object.values(groups).some((items) => items.includes(name))) continue;
+    if (!groups.workspace_tools) groups.workspace_tools = [];
+    groups.workspace_tools.push(name);
+  }
+  groups.discovery = ["tool_discovery"];
+  return groups;
 }
 
 function sessionUsage() {
@@ -407,7 +436,7 @@ async function runtimeSessionEntry(engine, sessionId, config, workspaceRoot) {
   })).filter((message) => message.text);
   return {
     id: sessionId,
-    info: sessionInfo(config, workspaceRoot),
+    info: await sessionInfo(config, workspaceRoot),
     started_at: toEpochSeconds(meta.createdAt || meta.startedAt || meta.updatedAt),
     title: meta.title || sessionTitleFromMessages(mappedMessages) || sessionId,
     messages: mappedMessages,
