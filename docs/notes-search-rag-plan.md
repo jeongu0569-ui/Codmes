@@ -229,7 +229,7 @@ Next:
 
 - Full multi-user permission model
 - Handwritten PDF annotation sync
-- MarkItDown OCR provider setup UI
+- Free/local scanned document text extraction design
 - Native-binary OCR dependency management
 - Client-only OCR
 - Client-owned vector indexing

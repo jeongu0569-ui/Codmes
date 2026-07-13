@@ -357,16 +357,16 @@ document-ingest diagnostics, and audit summary when `.codmes/audit/audit.jsonl`
 exists. Document diagnostics report the Python worker, bootstrap requirements
 file, and installed Python libraries such as PyMuPDF/MarkItDown. Codmes Core
 does not require native OCR or office-conversion binaries such as `tesseract`,
-`pdftoppm`, LibreOffice, or `soffice`. Scanned PDF/image OCR should be routed
-through configured MarkItDown providers rather than local native binaries.
+`pdftoppm`, LibreOffice, or `soffice`. Paid cloud OCR providers are not part of
+the default dependency path.
 
 ## Known Gaps
 
 - OAuth provider flow is not complete.
 - Built-in search is a server-owned text/document chunk index with scan
   fallback. PDF text extraction uses bootstrap Python libraries where possible.
-  Scanned PDF/image OCR is available through configured MarkItDown providers,
-  not native local OCR binaries. Native vector embeddings are planned as a later
-  Codmes Search Runtime layer.
+  Scanned PDF/image extraction is limited to MarkItDown's default local/free
+  converter path until Codmes owns a stronger free/local OCR provider. Native
+  vector embeddings are planned as a later Codmes Search Runtime layer.
 - Audit log exists for security policy decisions. More runtime subsystems should
   write explicit approved/rejected records as they become first-class actions.

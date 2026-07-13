@@ -75,8 +75,7 @@ Supported first-pass inputs:
 
 - PDF text layers
 - PDF text and page block coordinates through PyMuPDF installed by `npm run runtime:bootstrap`
-- scanned PDF/image OCR through configured MarkItDown Document Intelligence or
-  Content Understanding providers
+- scanned PDF/image text when MarkItDown's default local converters can extract it
 - HWPX XML text
 - DOCX/PPTX/XLSX/XLS through Python libraries installed by bootstrap where possible
 - HWP/DOC/PPT/ODT/ODP through MarkItDown or internal fallbacks where possible
@@ -84,10 +83,9 @@ Supported first-pass inputs:
 
 Codmes Core intentionally does not require native OCR or office-conversion
 binaries such as `tesseract`, `pdftoppm`, LibreOffice, or `soffice`. Scanned
-PDF/image OCR is routed through MarkItDown providers instead of local native
-binaries. MarkItDown's default offline PDF converter extracts text layers; OCR
-requires a configured provider such as Document Intelligence or Content
-Understanding.
+PDF/image text extraction is limited to what MarkItDown's default local/free
+converters can extract. Paid cloud OCR providers are not part of the default
+Codmes dependency path.
 
 Extraction cache:
 
@@ -113,8 +111,8 @@ search result at the matching page and highlight text-layer blocks. The Apple
 client now has the first server-owned PDF annotation layer in place: iOS/iPadOS
 page ink is stored through `GET/PUT /api/file/annotations`, and text-layer PDF
 search results can jump to the matching page. Selectable OCR overlays are
-planned after Codmes formalizes MarkItDown OCR/provider configuration and stores
-provider-returned coordinates in the search index.
+planned after Codmes owns a free/local OCR path that can return stable text
+coordinates for scanned images.
 
 ## Direction
 

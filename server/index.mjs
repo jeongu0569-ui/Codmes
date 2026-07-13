@@ -1430,14 +1430,12 @@ async function documentIngestDiagnostics() {
       "openpyxl",
       "docx",
       "pptx",
-      "markitdown",
-      "azure.ai.documentintelligence",
-      "azure.ai.contentunderstanding"
+      "markitdown"
     ]),
     notes: [
       "Codmes core document extraction uses runtime Python libraries only.",
       "Native OCR and office-conversion binaries such as tesseract, pdftoppm, LibreOffice, and soffice are not part of the core dependency path.",
-      "Scanned PDF/image OCR is routed through configured MarkItDown Document Intelligence or Content Understanding providers."
+      "MarkItDown is used through its default local/free converter path."
     ]
   };
 }
