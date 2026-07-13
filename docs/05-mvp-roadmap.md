@@ -94,7 +94,7 @@ Remaining:
 
 - Stronger semantic memory ranking.
 - Richer folder/project conversation management UI.
-- Better use of external Codmes Search results for broad workspace recall.
+- Better use of built-in Codmes Search results for broad workspace recall.
 
 ## Phase 4: Apple Client
 

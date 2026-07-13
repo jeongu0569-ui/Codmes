@@ -57,9 +57,9 @@ GET  /api/index/status
 POST /api/index/rebuild
 ```
 
-This is a metadata and text-scan index. It is intentionally not a native vector
-index; semantic retrieval should come from an external server tool such as
-codmes-search.
+This rebuilds both file metadata and the native Codmes Search chunk index.
+Embedding provider/model settings are stored with the search index metadata.
+Actual vector embedding generation is planned as the next server-owned layer.
 
 ## Current Search
 
@@ -72,11 +72,14 @@ server/lib/search-service.mjs
 Current provider:
 
 ```text
-workspace-scan
+codmes-search-index
 ```
 
 Capabilities:
 
+- native chunk index under `.codmes/index/search.json`
+- scope-limited indexing roots
+- partial indexing when watched files change
 - scope search
 - content search
 - filename search
@@ -111,7 +114,7 @@ Phase 2 target is not full GoodNotes-level annotation yet. The stable order is:
 3. Add PDF text extraction where possible.
 4. Add extracted text chunks to the search layer.
 5. Add server-side annotation storage.
-6. Let external OCR/search pipelines handle scanned PDFs when needed.
+6. Keep scanned PDF OCR out of Codmes unless this product decision changes.
 
 PDF annotations should not be stored only inside a client-local app cache. They
 should be workspace-owned so iPhone, iPad, and Mac see the same annotation
@@ -144,12 +147,8 @@ prefer server-side search tools rather than attaching many raw files.
 
 ## Codmes Search Integration
 
-Codmes Search should be treated as a server capability:
-
-```text
-codmes mcp add Codmes Search <command> [args...]
-codmes mcp enable Codmes Search
-```
+Codmes Search is a built-in server capability. It does not require adding a
+document search MCP server.
 
 Expected path:
 
@@ -157,14 +156,12 @@ Expected path:
 question
   -> model decides search is needed
   -> Codmes Search tool call
-  -> approval policy if required
   -> retrieved chunks
   -> model answer
 ```
 
-The current MCP approval implementation pauses as `approval_required` and can be
-resumed with a stored `pendingState`, so long search/tool operations should not
-block the server while waiting for user approval.
+Search reads workspace files and index state. It should not require an approval
+round-trip for normal read-only retrieval.
 
 ## Roadmap
 
@@ -184,6 +181,10 @@ Done:
 - filename hit support
 - kind filter
 - modified date filter
+- native chunk index
+- search roots configuration
+- partial update API for changed files
+- server file watchers while `codmes serve` is running
 
 Next:
 
@@ -203,8 +204,8 @@ Next:
 
 Next:
 
-- support Codmes Search as first external RAG backend
-- add `/api/index/rebuild` handoff to Codmes Search when configured
+- generate embeddings with the selected embedding provider/model
+- add a local vector or FTS-backed retrieval store
 - add top-k chunk retrieval API for server-internal use
 
 ### Step 5: Client UX
@@ -222,5 +223,5 @@ Next:
 - Full multi-user permission model
 - Handwritten PDF annotation sync
 - Built-in OCR for scanned PDFs
-- Full vector database ownership
+- Client-owned vector indexing
 - Client-side direct indexing

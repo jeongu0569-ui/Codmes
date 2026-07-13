@@ -249,13 +249,12 @@ Returns the active search provider and indexing capability.
 Current MVP provider:
 
 ```text
-workspace-scan
+codmes-search-index
 ```
 
-This is a dependency-free fallback that scans text files in the workspace. It is
-not a vector index and does not replace codmes-search. It gives the client and
-server a stable search API while semantic search remains an optional external
-server-side integration.
+This is Codmes' built-in chunk index for notes, documents, code, extracted PDF
+text, and conversation index files. If the index has not been built yet, the
+server falls back to `workspace-scan` so search still works.
 
 ### `POST /api/search`
 
@@ -273,7 +272,7 @@ Response:
 
 ```json
 {
-  "provider": "workspace-scan",
+  "provider": "codmes-search-index",
   "query": "scheduler",
   "scopePath": "Notes/Operating Systems",
   "resultCount": 1,
@@ -287,10 +286,10 @@ Response:
 }
 ```
 
-External provider:
+Fallback provider:
 
 ```text
-codmes-search / external search tool
+workspace-scan
 ```
 
 ### `GET /api/index/status`
@@ -299,8 +298,10 @@ Returns the current metadata index summary from `.codmes/index/files.json`.
 
 ### `POST /api/index/rebuild`
 
-Rebuilds the current workspace file metadata index. This indexes file metadata
-and extracted text cache state, not vector embeddings.
+Rebuilds the current workspace file metadata index and Codmes native search
+index. The search index stores chunk metadata and text snippets under
+`.codmes/index/search.json`. Embedding provider/model settings are persisted in
+the index metadata; actual vector embedding generation is a future layer.
 
 ## Runtime Management
 
@@ -761,7 +762,7 @@ Response:
     "suggestedCheckCommands": ["npm run test", "npm run build"]
   },
   "search": {
-    "provider": "workspace-scan",
+    "provider": "codmes-search-index",
     "resultCount": 3
   },
   "git": {

@@ -1,5 +1,5 @@
 import fs from "node:fs/promises";
-import { constants as fsConstants, createReadStream } from "node:fs";
+import { constants as fsConstants, createReadStream, watch } from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { randomUUID } from "node:crypto";
@@ -23,7 +23,7 @@ import {
 import { buildWorkspaceContext } from "./lib/context-router.mjs";
 import { buildIndex, readFileMetadata, readIndex } from "./lib/file-index.mjs";
 import { renderCodeDocument, renderMarkdownDocument } from "./lib/render-service.mjs";
-import { searchStatus, searchWorkspace } from "./lib/search-service.mjs";
+import { buildSearchIndex, searchStatus, searchWorkspace, updateSearchIndex } from "./lib/search-service.mjs";
 import { readAuditSummary } from "./lib/runtime/audit-log.mjs";
 import {
   BUILTIN_PROVIDERS,
@@ -55,6 +55,9 @@ const WORKSPACE_HOST = process.env.CODMES_HOST || process.env.WORKSPACE_HOST || 
 const DEFAULT_WORKSPACE_ROOT = path.join(process.env.HOME || process.cwd(), "CodmesWorkspace");
 const WORKSPACE_ROOT = path.resolve(process.env.CODMES_WORKSPACE_ROOT || DEFAULT_WORKSPACE_ROOT);
 const SERVER_TOKEN = process.env.CODMES_SERVER_TOKEN || "";
+const searchWatchers = [];
+const pendingSearchUpdates = new Set();
+let searchUpdateTimer = null;
 
 const TEXT_FILE_LIMIT = 5 * 1024 * 1024;
 
@@ -66,6 +69,7 @@ async function main() {
     console.log(`[codmes] listening on http://${WORKSPACE_HOST}:${DEFAULT_PORT}`);
     console.log(`[codmes] root ${WORKSPACE_ROOT}`);
   });
+  await startSearchWatchers();
 }
 
 function handleUpgrade(req, socket) {
@@ -1010,21 +1014,32 @@ async function resolveContext(req) {
 
 async function indexStatus() {
   const index = await readIndex(WORKSPACE_ROOT);
+  const search = searchStatus(WORKSPACE_ROOT);
   return {
     provider: index.provider,
     builtAt: index.builtAt,
     itemCount: index.itemCount || 0,
-    indexPath: ".codmes/index/files.json"
+    indexPath: ".codmes/index/files.json",
+    search
   };
 }
 
 async function rebuildIndex() {
   const index = await buildIndex(WORKSPACE_ROOT);
+  const config = await readSearchConfig();
+  const search = await buildSearchIndex(WORKSPACE_ROOT, searchIndexOptions(config));
   return {
     ok: true,
     provider: index.provider,
     builtAt: index.builtAt,
-    itemCount: index.itemCount
+    itemCount: index.itemCount,
+    search: {
+      provider: search.provider,
+      builtAt: search.builtAt,
+      itemCount: search.itemCount,
+      chunkCount: search.chunkCount,
+      indexPath: ".codmes/index/search.json"
+    }
   };
 }
 
@@ -1168,7 +1183,7 @@ async function readSearchConfig() {
   const env = await readEnvFile(envPath);
   return {
     configPath: envPath,
-    roots: splitCsv(env.FILE_ROOTS || defaultSearchRoots()),
+    roots: normalizeSearchRoots(splitCsv(env.FILE_ROOTS || defaultSearchRoots())),
     includeGlobs: splitCsv(env.FILE_INCLUDE_GLOBS || defaultSearchIncludeGlobs()),
     excludeGlobs: splitCsv(env.FILE_EXCLUDE_GLOBS || defaultSearchExcludeGlobs()),
     embeddingsProvider: env.EMBEDDINGS_PROVIDER || "openai",
@@ -1186,7 +1201,7 @@ async function updateSearchConfig(req) {
   const envPath = codmesSearchEnvPath();
   const previousEnv = await readEnvFile(envPath);
   const current = await readSearchConfig();
-  const roots = sanitizeStringList(body.roots, current.roots.length ? current.roots : splitCsv(defaultSearchRoots()));
+  const roots = normalizeSearchRoots(sanitizeStringList(body.roots, current.roots.length ? current.roots : splitCsv(defaultSearchRoots())));
   const includeGlobs = sanitizeStringList(body.includeGlobs, current.includeGlobs.length ? current.includeGlobs : splitCsv(defaultSearchIncludeGlobs()));
   const excludeGlobs = sanitizeStringList(body.excludeGlobs, current.excludeGlobs.length ? current.excludeGlobs : splitCsv(defaultSearchExcludeGlobs()));
   const nextEnv = {
@@ -1206,6 +1221,7 @@ async function updateSearchConfig(req) {
   await fs.mkdir(path.dirname(envPath), { recursive: true });
   await fs.mkdir(path.dirname(nextEnv.DB_PATH), { recursive: true });
   await writeEnvFile(envPath, nextEnv);
+  await restartSearchWatchers();
 
   return { ok: true, ...(await readSearchConfig()) };
 }
@@ -1216,12 +1232,81 @@ function codmesSearchEnvPath() {
 
 function defaultSearchRoots() {
   return [
-    path.join(WORKSPACE_ROOT, "Notes"),
-    path.join(WORKSPACE_ROOT, "Documents"),
-    path.join(WORKSPACE_ROOT, "Code"),
-    path.join(WORKSPACE_ROOT, ".codmes", "conversation-index"),
-    path.join(WORKSPACE_ROOT, ".codmes", "sessions")
+    "Notes",
+    "Documents",
+    "Code",
+    ".codmes/conversation-index",
+    ".codmes/sessions"
   ].join(",");
+}
+
+function searchIndexOptions(config) {
+  return {
+    roots: normalizeSearchRoots(config.roots || splitCsv(defaultSearchRoots())),
+    embeddingsProvider: config.embeddingsProvider,
+    openaiBaseUrl: config.openaiBaseUrl,
+    openaiEmbedModel: config.openaiEmbedModel,
+    openaiEmbedDim: config.openaiEmbedDim
+  };
+}
+
+function normalizeSearchRoots(roots) {
+  return sanitizeStringList(roots, splitCsv(defaultSearchRoots()))
+    .map((root) => {
+      const raw = String(root || "").trim();
+      if (!raw) return "";
+      const absolute = path.isAbsolute(raw) ? raw : path.join(WORKSPACE_ROOT, raw);
+      const relative = path.relative(WORKSPACE_ROOT, absolute).replace(/\\/g, "/");
+      if (relative.startsWith("..") || path.isAbsolute(relative)) return null;
+      return relative === "." ? "" : relative;
+    })
+    .filter((root) => root !== null)
+    .filter((root, index, array) => array.indexOf(root) === index);
+}
+
+async function startSearchWatchers() {
+  const config = await readSearchConfig().catch(() => null);
+  if (!config) return;
+  for (const root of normalizeSearchRoots(config.roots)) {
+    const absolute = path.join(WORKSPACE_ROOT, root);
+    const stat = await fs.stat(absolute).catch(() => null);
+    if (!stat?.isDirectory()) continue;
+    try {
+      const watcher = watch(absolute, { recursive: true }, (_eventType, filename) => {
+        if (!filename) {
+          queueSearchIndexUpdate(root);
+          return;
+        }
+        queueSearchIndexUpdate(path.join(root, String(filename)).replace(/\\/g, "/"));
+      });
+      searchWatchers.push(watcher);
+      console.log(`[codmes] watching search root ${root || "."}`);
+    } catch (error) {
+      console.warn(`[codmes] search watcher unavailable for ${root || "."}: ${error?.message || error}`);
+    }
+  }
+}
+
+async function restartSearchWatchers() {
+  for (const watcher of searchWatchers.splice(0)) {
+    try { watcher.close(); } catch {}
+  }
+  await startSearchWatchers();
+}
+
+function queueSearchIndexUpdate(relativePath) {
+  const clean = String(relativePath || "").replace(/\\/g, "/").replace(/^\/+/, "");
+  if (!clean || clean.startsWith(".codmes/index/")) return;
+  pendingSearchUpdates.add(clean);
+  clearTimeout(searchUpdateTimer);
+  searchUpdateTimer = setTimeout(async () => {
+    const changed = Array.from(pendingSearchUpdates);
+    pendingSearchUpdates.clear();
+    const config = await readSearchConfig().catch(() => null);
+    await updateSearchIndex(WORKSPACE_ROOT, changed, searchIndexOptions(config || {})).catch((error) => {
+      console.warn(`[codmes] search partial index update failed: ${error?.message || error}`);
+    });
+  }, 750);
 }
 
 function defaultSearchIncludeGlobs() {

@@ -118,7 +118,7 @@ Code는 서버의 `Code/` 폴더 안 프로젝트를 다루는 화면입니다.
 
 ### 5. Search와 RAG
 
-기본 검색은 Workspace 파일을 직접 스캔하는 fallback 방식으로 동작합니다.
+기본 검색은 Codmes Server가 직접 관리하는 내장 검색 인덱스로 동작합니다.
 
 - 파일명과 본문 검색
 - Notes, Code, Documents 범위 검색
@@ -126,8 +126,11 @@ Code는 서버의 `Code/` 폴더 안 프로젝트를 다루는 화면입니다.
 - PDF 추출 텍스트 검색 경로
 - 채팅 세션 제목, 요약, 메시지 검색
 - 사용자, 프로젝트, 폴더, 세션 메모리 검색
+- 설정된 범위만 인덱싱
+- 서버 실행 중 파일 변경 감지 후 부분 인덱싱
+- 임베딩 프로바이더와 모델 설정 저장
 
-LLM에는 `codmes_search`라는 내장 검색 도구가 노출됩니다. 이 도구는 Codmes Search Runtime을 통해 파일, 노트, 코드, PDF 추출 텍스트, 대화 기록을 검색하는 공식 경로입니다. 현재 semantic RAG 백엔드는 codmes-search 같은 외부 검색 엔진을 서버 내부 구현으로 사용할 수 있지만, 사용자와 모델에게는 MCP 도구가 아니라 Codmes의 기본 검색 기능처럼 보이도록 정리하는 방향입니다. 스캔 PDF OCR은 아직 계획 단계입니다.
+LLM에는 `codmes_search`라는 내장 검색 도구가 노출됩니다. 이 도구는 외부 `docsearch-mcp` 의존 없이 Codmes Search Runtime을 통해 파일, 노트, 코드, PDF 추출 텍스트, 대화 기록을 검색하는 공식 경로입니다. 현재는 `.codmes/index/search.json` chunk index와 scan fallback을 사용하고, 임베딩 모델 선택값은 Search 설정과 인덱스 메타데이터에 저장됩니다. 실제 벡터 유사도 저장소는 다음 단계입니다. 스캔 PDF OCR은 제품 범위에서 제외했습니다.
 
 ### 6. Approvals와 Tasks
 
@@ -384,7 +387,8 @@ WebSocket과 raw 파일 URL은 token query를 사용할 수 있습니다. Apple 
 
 ## 현재 한계와 앞으로의 작업
 
-- 앱 내부 네이티브 벡터 DB, 임베딩 인덱싱, 자체 OCR은 제품 범위에서 제외했습니다. 필요한 경우 서버에 외부 Codmes Search/OCR 파이프라인을 연결합니다.
+- 내장 검색은 chunk index와 PDF 텍스트 추출 캐시까지 지원합니다. 실제 임베딩 벡터 저장소와 semantic reranking은 다음 단계입니다.
+- 스캔 PDF용 자체 OCR은 제품 범위에서 제외했습니다.
 - 텍스트 레이어가 있는 PDF와 Markdown/텍스트 파일은 기존 추출 및 Workspace 검색 경로로 처리합니다.
 - PDF 필기와 Apple Pencil 주석 저장은 완성되지 않았습니다.
 - Code 화면은 아직 VS Code 수준의 LSP, 디버거, 확장 기능을 제공하지 않습니다.

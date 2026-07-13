@@ -76,8 +76,8 @@ index_entries
 - chunk_count
 ```
 
-`codmes-search` should be treated as a server-side index/search capability, not
-as a client plugin detail.
+Codmes Search state belongs to the server. Clients can configure roots and
+embedding model settings, but they do not own the index files directly.
 
 ## Session Associations
 

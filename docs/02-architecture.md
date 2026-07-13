@@ -211,9 +211,9 @@ Discovery emits `tool.discovery.request`, `tool.discovery.result`,
 persisted to session JSON or user tool-mode settings. Approval-gated or
 dangerous tools can be discovered but are not automatically expanded.
 
-`codmes_search` first tries a configured Codmes Search-style MCP server with a
-search/query tool. When no suitable MCP server is configured or the call fails,
-the runtime returns a normalized `workspace-search-fallback` result instead.
+`codmes_search` calls the built-in Codmes Search Runtime. After an index rebuild
+it searches `.codmes/index/search.json`; before that it uses workspace scan as a
+fallback. Document search is not modeled as a required MCP dependency.
 
 Tool calls are executed by Codmes itself, emitted as `tool.start`, `tool.complete`, or `tool.error` live events, then passed back to the model as tool results before the final assistant message is streamed.
 

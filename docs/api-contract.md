@@ -89,12 +89,13 @@ The server resolves context requests for `none`, `current`, `note`, `folder`,
 | GET | `/api/index/status` | implemented | token when configured | available |
 | POST | `/api/index/rebuild` | implemented | token when configured | available |
 
-Current search provider is `workspace-scan`. It supports content search,
-filename hits, scope filtering, `kind`/`kinds`, modified date filters, and
-first-pass PDF text extraction through `.codmes/index/pdf-text/`.
+Current search provider is `codmes-search-index` after the first rebuild, with
+`workspace-scan` as the fallback when no index exists. It supports content
+search, filename hits, scope filtering, `kind`/`kinds`, modified date filters,
+and first-pass PDF text extraction through `.codmes/index/pdf-text/`.
 
-External search/RAG direction is tracked in `docs/rag-backend-design.md`.
-Codmes Search integration is tracked in `docs/codmes-search-integration.md`.
+Codmes Search ownership and incremental indexing are tracked in
+`docs/codmes-search-integration.md`.
 
 ## Provider, Auth, And Models
 
@@ -355,8 +356,8 @@ exists.
 ## Known Gaps
 
 - OAuth provider flow is not complete.
-- Built-in search is a text/PDF scan fallback. Codmes does not include an
-  internal OCR engine or native vector database; Codmes Search is the
-  recommended external semantic search path.
+- Built-in search is a server-owned text/PDF chunk index with scan fallback.
+  Codmes does not include an OCR engine for scanned PDFs. Native vector
+  embeddings are planned as a later Codmes Search Runtime layer.
 - Audit log exists for security policy decisions. More runtime subsystems should
   write explicit approved/rejected records as they become first-class actions.
