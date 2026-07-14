@@ -1695,6 +1695,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         private var activePage: PDFPage?
         private var activePageIndex: Int?
         private var activeStartTime: TimeInterval = 0
+        private var didLockScrollForDrawing = false
 
         init(
             onCurrentPageChanged: @escaping (Int) -> Void,
@@ -1875,6 +1876,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                 activePage = page
                 activePageIndex = pageIndex
                 activeStartTime = ProcessInfo.processInfo.systemUptime
+                lockPDFScrollingForActiveDrawing()
                 if tool == .pen {
                     pdfView.drawingOverlay.strokeColor = UIColor(hexString: penColorHex)
                     pdfView.drawingOverlay.lineWidth = CGFloat(penWidth)
@@ -1894,6 +1896,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                 defer {
                     activePage = nil
                     activePageIndex = nil
+                    unlockPDFScrollingAfterActiveDrawing()
                 }
                 guard tool == .pen,
                       let page = activePage,
@@ -1912,9 +1915,28 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                 pdfView.drawingOverlay.cancel()
                 activePage = nil
                 activePageIndex = nil
+                unlockPDFScrollingAfterActiveDrawing()
             default:
                 break
             }
+        }
+
+        private func lockPDFScrollingForActiveDrawing() {
+            guard UIDevice.current.userInterfaceIdiom == .pad,
+                  isWritingMode,
+                  tool == .pen || tool == .eraser,
+                  let pdfView else { return }
+            didLockScrollForDrawing = true
+            for scrollView in pdfView.descendantScrollViews {
+                scrollView.isScrollEnabled = false
+            }
+        }
+
+        private func unlockPDFScrollingAfterActiveDrawing() {
+            guard didLockScrollForDrawing else { return }
+            didLockScrollForDrawing = false
+            pdfView?.descendantScrollViews.forEach { $0.isScrollEnabled = true }
+            applyPDFScrollTouchPolicy()
         }
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
