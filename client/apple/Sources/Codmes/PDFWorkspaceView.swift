@@ -1386,10 +1386,45 @@ private struct SliderRow: View {
 #endif
 
 #if os(iOS)
+fileprivate final class AnnotatedPDFView: PDFView {
+    let liveCanvas = PKCanvasView()
+    var livePage: PDFPage? {
+        didSet { setNeedsLayout() }
+    }
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        liveCanvas.backgroundColor = .clear
+        liveCanvas.isOpaque = false
+        liveCanvas.alwaysBounceVertical = false
+        liveCanvas.alwaysBounceHorizontal = false
+        liveCanvas.isScrollEnabled = false
+        liveCanvas.delaysContentTouches = false
+        liveCanvas.minimumZoomScale = 1
+        liveCanvas.maximumZoomScale = 1
+        liveCanvas.drawingPolicy = .anyInput
+        addSubview(liveCanvas)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        if let livePage {
+            liveCanvas.frame = convert(livePage.bounds(for: .cropBox), from: livePage)
+        } else {
+            liveCanvas.frame = bounds
+        }
+        liveCanvas.contentSize = liveCanvas.bounds.size
+        bringSubviewToFront(liveCanvas)
+    }
+}
+
 fileprivate final class PDFPageAnnotationOverlay: UIView {
     let canvas = PKCanvasView()
     var objectViews: [String: UIView] = [:]
-    var routesTouchesToCanvas = true
 
     override init(frame: CGRect) {
         super.init(frame: frame)
@@ -1420,9 +1455,6 @@ fileprivate final class PDFPageAnnotationOverlay: UIView {
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
         guard isUserInteractionEnabled, !isHidden, alpha > 0.01 else { return nil }
-        if routesTouchesToCanvas {
-            return canvas
-        }
         return super.hitTest(point, with: event)
     }
 }
@@ -1452,13 +1484,14 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         )
     }
 
-    func makeUIView(context: Context) -> PDFView {
-        let view = PDFView()
+    func makeUIView(context: Context) -> AnnotatedPDFView {
+        let view = AnnotatedPDFView()
         view.autoScales = true
         view.displayMode = .singlePageContinuous
         view.displayDirection = .vertical
         view.backgroundColor = .clear
         view.pageOverlayViewProvider = context.coordinator
+        view.liveCanvas.delegate = context.coordinator
         context.coordinator.pdfView = view
         NotificationCenter.default.addObserver(
             context.coordinator,
@@ -1469,7 +1502,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         return view
     }
 
-    func updateUIView(_ view: PDFView, context: Context) {
+    func updateUIView(_ view: AnnotatedPDFView, context: Context) {
         context.coordinator.onCurrentPageChanged = onCurrentPageChanged
         context.coordinator.onPageInkChanged = onPageInkChanged
         context.coordinator.onObjectSelected = onObjectSelected
@@ -1493,13 +1526,14 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         context.coordinator.applyPDFNavigationMode()
         context.coordinator.applyAnnotationsToVisibleOverlays()
         context.coordinator.applyFocus()
+        context.coordinator.applyLiveCanvasForCurrentPage()
         if let current = view.currentPage, let index = view.document?.index(for: current), index >= 0 {
             onCurrentPageChanged(index)
         }
     }
 
     final class Coordinator: NSObject, @preconcurrency PDFPageOverlayViewProvider, PKCanvasViewDelegate {
-        weak var pdfView: PDFView?
+        weak var pdfView: AnnotatedPDFView?
         var currentURL: URL?
         var annotations: PDFAnnotationDocument?
         var focus: PDFDocumentFocus?
@@ -1539,6 +1573,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         @objc func visiblePageChanged(_ notification: Notification) {
             guard let pdfView, let page = pdfView.currentPage, let index = pdfView.document?.index(for: page), index >= 0 else { return }
             onCurrentPageChanged(index)
+            applyLiveCanvasForCurrentPage()
         }
 
         func pdfView(_ view: PDFView, overlayViewFor page: PDFPage) -> UIView? {
@@ -1551,6 +1586,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             let overlay = PDFPageAnnotationOverlay()
             overlay.canvas.drawingPolicy = .anyInput
             overlay.canvas.delegate = self
+            overlay.canvas.isUserInteractionEnabled = false
             overlays[pageIndex] = overlay
             applyTool(to: overlay)
             applyAnnotation(to: overlay.canvas, pageIndex: pageIndex)
@@ -1575,8 +1611,13 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         }
 
         func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
-            guard !applyingProgrammaticDrawing,
-                  let pageIndex = overlays.first(where: { $0.value.canvas === canvasView })?.key else { return }
+            guard !applyingProgrammaticDrawing else { return }
+            if let pdfView, canvasView === pdfView.liveCanvas {
+                guard let pageIndex = currentPageIndex() else { return }
+                onPageInkChanged(pageIndex, canvasView.drawing.dataRepresentation(), canvasView.drawing, canvasView.bounds.size)
+                return
+            }
+            guard let pageIndex = overlays.first(where: { $0.value.canvas === canvasView })?.key else { return }
             onPageInkChanged(pageIndex, canvasView.drawing.dataRepresentation(), canvasView.drawing, canvasView.bounds.size)
         }
 
@@ -1590,7 +1631,8 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             guard let pdfView else { return }
             let navigationEnabled = tool == .select
             pdfView.isInMarkupMode = !navigationEnabled
-            setNavigationEnabled(navigationEnabled, in: pdfView)
+            pdfView.liveCanvas.isHidden = navigationEnabled
+            pdfView.liveCanvas.isUserInteractionEnabled = !navigationEnabled
         }
 
         func applyAnnotationsToVisibleOverlays() {
@@ -1613,46 +1655,66 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             }
         }
 
+        func applyLiveCanvasForCurrentPage() {
+            guard let pdfView else { return }
+            pdfView.livePage = pdfView.currentPage
+            applyTool(to: pdfView.liveCanvas)
+            guard let pageIndex = currentPageIndex() else {
+                setDrawing(PKDrawing(), on: pdfView.liveCanvas)
+                return
+            }
+            guard let drawing = annotationDrawing(pageIndex: pageIndex) else {
+                setDrawing(PKDrawing(), on: pdfView.liveCanvas)
+                return
+            }
+            if pdfView.liveCanvas.drawing.dataRepresentation() != drawing.dataRepresentation() {
+                setDrawing(drawing, on: pdfView.liveCanvas)
+            }
+        }
+
         private func applyTool(to overlay: PDFPageAnnotationOverlay) {
-            overlay.routesTouchesToCanvas = tool != .select
-            overlay.canvas.isUserInteractionEnabled = tool != .select
+            overlay.canvas.isUserInteractionEnabled = false
             for view in overlay.objectViews.values {
                 view.isUserInteractionEnabled = tool == .select
             }
+            applyTool(to: overlay.canvas)
+        }
+
+        private func applyTool(to canvas: PKCanvasView) {
+            canvas.isUserInteractionEnabled = tool != .select
             switch tool {
             case .pen:
-                overlay.canvas.tool = PKInkingTool(.pen, color: UIColor(hexString: penColorHex), width: CGFloat(penWidth))
-                overlay.canvas.becomeFirstResponder()
+                canvas.tool = PKInkingTool(.pen, color: UIColor(hexString: penColorHex), width: CGFloat(penWidth))
+                canvas.becomeFirstResponder()
             case .eraser:
-                overlay.canvas.tool = PKEraserTool(.vector, width: CGFloat(eraserWidth))
-                overlay.canvas.becomeFirstResponder()
+                canvas.tool = PKEraserTool(.vector, width: CGFloat(eraserWidth))
+                canvas.becomeFirstResponder()
             case .lasso:
-                overlay.canvas.tool = PKLassoTool()
+                canvas.tool = PKLassoTool()
             case .select:
                 break
             }
         }
 
-        private func setNavigationEnabled(_ isEnabled: Bool, in view: UIView) {
-            if view is PKCanvasView {
-                return
-            }
-            view.gestureRecognizers?.forEach { $0.isEnabled = isEnabled }
-            if let scrollView = view as? UIScrollView, !(scrollView is PKCanvasView) {
-                scrollView.isScrollEnabled = isEnabled
-                scrollView.panGestureRecognizer.isEnabled = isEnabled
-                scrollView.pinchGestureRecognizer?.isEnabled = isEnabled
-            }
-            for subview in view.subviews {
-                setNavigationEnabled(isEnabled, in: subview)
-            }
+        private func currentPageIndex() -> Int? {
+            guard let pdfView, let page = pdfView.currentPage, let index = pdfView.document?.index(for: page), index >= 0 else { return nil }
+            return index
         }
 
         private func applyAnnotation(to canvas: PKCanvasView, pageIndex: Int) {
-            guard let encoded = annotations?.pages.first(where: { $0.pageIndex == pageIndex })?.inkDataBase64,
-                  let data = Data(base64Encoded: encoded),
-                  let drawing = try? PKDrawing(data: data) else { return }
+            guard let drawing = annotationDrawing(pageIndex: pageIndex) else { return }
+            let data = drawing.dataRepresentation()
             if canvas.drawing.dataRepresentation() == data { return }
+            setDrawing(drawing, on: canvas)
+        }
+
+        private func annotationDrawing(pageIndex: Int) -> PKDrawing? {
+            guard let encoded = annotations?.pages.first(where: { $0.pageIndex == pageIndex })?.inkDataBase64,
+                  let data = Data(base64Encoded: encoded) else { return nil }
+            return try? PKDrawing(data: data)
+        }
+
+        private func setDrawing(_ drawing: PKDrawing, on canvas: PKCanvasView) {
             applyingProgrammaticDrawing = true
             canvas.drawing = drawing
             applyingProgrammaticDrawing = false
