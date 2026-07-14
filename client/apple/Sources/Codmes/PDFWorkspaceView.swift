@@ -1922,8 +1922,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         }
 
         private func lockPDFScrollingForActiveDrawing() {
-            guard UIDevice.current.userInterfaceIdiom == .pad,
-                  isWritingMode,
+            guard isWritingMode,
                   tool == .pen || tool == .eraser,
                   let pdfView else { return }
             didLockScrollForDrawing = true
