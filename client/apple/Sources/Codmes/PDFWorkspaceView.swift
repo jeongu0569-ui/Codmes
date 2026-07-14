@@ -1534,31 +1534,6 @@ fileprivate final class PDFDrawingOverlayView: UIView {
     }
 }
 
-fileprivate final class PDFLassoSelectionView: UIView {
-    private let shapeLayer = CAShapeLayer()
-
-    override init(frame: CGRect) {
-        super.init(frame: frame)
-        isUserInteractionEnabled = false
-        backgroundColor = .clear
-        shapeLayer.fillColor = UIColor.systemOrange.withAlphaComponent(0.08).cgColor
-        shapeLayer.strokeColor = UIColor.systemOrange.cgColor
-        shapeLayer.lineWidth = 1.5
-        shapeLayer.lineDashPattern = [7, 5]
-        layer.addSublayer(shapeLayer)
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    override func layoutSubviews() {
-        super.layoutSubviews()
-        shapeLayer.frame = bounds
-        shapeLayer.path = UIBezierPath(roundedRect: bounds.insetBy(dx: 1, dy: 1), cornerRadius: 6).cgPath
-    }
-}
-
 private extension UIView {
     var descendantScrollViews: [UIScrollView] {
         var result: [UIScrollView] = []
@@ -1574,7 +1549,6 @@ private extension UIView {
 
 fileprivate final class PDFPageAnnotationOverlay: UIView {
     let canvas = PKCanvasView()
-    let lassoSelectionView = PDFLassoSelectionView()
     var objectViews: [String: UIView] = [:]
 
     override init(frame: CGRect) {
@@ -1592,8 +1566,6 @@ fileprivate final class PDFPageAnnotationOverlay: UIView {
         canvas.minimumZoomScale = 1
         canvas.maximumZoomScale = 1
         addSubview(canvas)
-        lassoSelectionView.isHidden = true
-        addSubview(lassoSelectionView)
     }
 
     required init?(coder: NSCoder) {
@@ -1604,7 +1576,6 @@ fileprivate final class PDFPageAnnotationOverlay: UIView {
         super.layoutSubviews()
         canvas.frame = bounds
         canvas.contentSize = bounds.size
-        bringSubviewToFront(lassoSelectionView)
     }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
@@ -1653,7 +1624,12 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         drawGesture.cancelsTouchesInView = true
         drawGesture.delegate = context.coordinator
         view.addGestureRecognizer(drawGesture)
+        let clearSelectionTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePDFTap(_:)))
+        clearSelectionTap.cancelsTouchesInView = false
+        clearSelectionTap.delegate = context.coordinator
+        view.addGestureRecognizer(clearSelectionTap)
         context.coordinator.drawingGesture = drawGesture
+        context.coordinator.clearSelectionTapGesture = clearSelectionTap
         context.coordinator.pdfView = view
         NotificationCenter.default.addObserver(
             context.coordinator,
@@ -1711,6 +1687,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
 
         weak var pdfView: AnnotatedPDFView?
         weak var drawingGesture: UIPanGestureRecognizer?
+        weak var clearSelectionTapGesture: UITapGestureRecognizer?
         var currentURL: URL?
         var annotations: PDFAnnotationDocument?
         var focus: PDFDocumentFocus?
@@ -1876,7 +1853,6 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             for view in overlay.objectViews.values {
                 view.isUserInteractionEnabled = isWritingMode && tool == .lasso
             }
-            applyLassoSelection(to: overlay, pageIndex: pageIndex(for: overlay))
             applyTool(to: overlay.canvas)
         }
 
@@ -1897,10 +1873,6 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         private func currentPageIndex() -> Int? {
             guard let pdfView, let page = pdfView.currentPage, let index = pdfView.document?.index(for: page), index >= 0 else { return nil }
             return index
-        }
-
-        private func pageIndex(for overlay: PDFPageAnnotationOverlay) -> Int {
-            overlays.first(where: { $0.value === overlay })?.key ?? -1
         }
 
         func applyCodmesInkAnnotations() {
@@ -2035,6 +2007,29 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             }
         }
 
+        @objc func handlePDFTap(_ gesture: UITapGestureRecognizer) {
+            guard gesture.state == .ended,
+                  isWritingMode,
+                  tool == .lasso,
+                  let selection = lassoSelection,
+                  let pdfView else { return }
+            let viewPoint = gesture.location(in: pdfView)
+            guard let page = pdfView.page(for: viewPoint, nearest: true),
+                  let document = pdfView.document else {
+                clearLassoSelection()
+                return
+            }
+            let pageIndex = document.index(for: page)
+            guard pageIndex == selection.pageIndex else {
+                clearLassoSelection()
+                return
+            }
+            let normalized = normalizedPoint(from: viewPoint, page: page)
+            if !contains(normalized, in: selection.bounds) {
+                clearLassoSelection()
+            }
+        }
+
         private func lockPDFScrollingForActiveDrawing() {
             guard isWritingMode,
                   tool == .pen || tool == .eraser || tool == .lasso,
@@ -2053,6 +2048,9 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         }
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            if gestureRecognizer === clearSelectionTapGesture {
+                return isWritingMode && tool == .lasso && lassoSelection != nil
+            }
             guard isWritingMode, tool == .pen || tool == .eraser || tool == .lasso else { return false }
             if UIDevice.current.userInterfaceIdiom == .pad {
                 return touch.type == .pencil
@@ -2073,7 +2071,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                 id: UUID().uuidString,
                 tool: "pen",
                 color: penColorHex,
-                width: penWidth,
+                width: penWidth / max(Double(pdfView?.scaleFactor ?? 1), 0.001),
                 opacity: nil,
                 points: normalizedPoints
             )
@@ -2336,16 +2334,6 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             )
         }
 
-        private func applyLassoSelection(to overlay: PDFPageAnnotationOverlay, pageIndex: Int) {
-            guard let selection = lassoSelection, selection.pageIndex == pageIndex else {
-                overlay.lassoSelectionView.isHidden = true
-                return
-            }
-            overlay.lassoSelectionView.frame = frame(for: selection.bounds, in: overlay.bounds)
-            overlay.lassoSelectionView.isHidden = false
-            overlay.bringSubviewToFront(overlay.lassoSelectionView)
-        }
-
         private func applyAnnotation(to canvas: PKCanvasView, pageIndex: Int) {
             guard let drawing = annotationDrawing(pageIndex: pageIndex) else { return }
             let data = drawing.dataRepresentation()
@@ -2395,7 +2383,6 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             if let selectedObjectId, let selected = overlay.objectViews[selectedObjectId] {
                 overlay.bringSubviewToFront(selected)
             }
-            applyLassoSelection(to: overlay, pageIndex: pageIndex)
         }
 
         private func makeObjectView(object: PDFAnnotationObject, pageIndex: Int) -> UIView {
