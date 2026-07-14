@@ -132,7 +132,8 @@ struct PDFWorkspaceView: View {
                 eraserWidth: eraserWidth,
                 selectedObjectId: selectedObjectId,
                 onCurrentPageChanged: { currentPageIndex = $0 },
-                onPageInkChanged: updatePageInk(pageIndex:data:drawing:canvasSize:),
+                onStrokeFinished: appendInkStroke(pageIndex:stroke:),
+                onStrokesChanged: replaceInkStrokes(pageIndex:strokes:),
                 onObjectSelected: { selectedObjectId = $0.id },
                 onObjectChanged: updateAnnotationObject(_:),
                 onObjectDeleted: deleteAnnotationObject(_:)
@@ -569,6 +570,32 @@ struct PDFWorkspaceView: View {
             next.pages[index].inkStrokes = strokes
         } else {
             next.pages.append(PDFAnnotationPage(pageIndex: pageIndex, inkDataBase64: encoded, inkStrokes: strokes, objects: []))
+            next.pages.sort { $0.pageIndex < $1.pageIndex }
+        }
+        annotations = next
+        scheduleSave(next)
+    }
+
+    private func appendInkStroke(pageIndex: Int, stroke: CodmesInkStroke) {
+        var next = annotations ?? emptyAnnotationDocument()
+        if let index = next.pages.firstIndex(where: { $0.pageIndex == pageIndex }) {
+            var strokes = next.pages[index].inkStrokes ?? []
+            strokes.append(stroke)
+            next.pages[index].inkStrokes = strokes
+        } else {
+            next.pages.append(PDFAnnotationPage(pageIndex: pageIndex, inkDataBase64: nil, inkStrokes: [stroke], objects: []))
+            next.pages.sort { $0.pageIndex < $1.pageIndex }
+        }
+        annotations = next
+        scheduleSave(next)
+    }
+
+    private func replaceInkStrokes(pageIndex: Int, strokes: [CodmesInkStroke]) {
+        var next = annotations ?? emptyAnnotationDocument()
+        if let index = next.pages.firstIndex(where: { $0.pageIndex == pageIndex }) {
+            next.pages[index].inkStrokes = strokes
+        } else {
+            next.pages.append(PDFAnnotationPage(pageIndex: pageIndex, inkDataBase64: nil, inkStrokes: strokes, objects: []))
             next.pages.sort { $0.pageIndex < $1.pageIndex }
         }
         annotations = next
@@ -1387,23 +1414,12 @@ private struct SliderRow: View {
 
 #if os(iOS)
 fileprivate final class AnnotatedPDFView: PDFView {
-    let liveCanvas = PKCanvasView()
-    var livePage: PDFPage? {
-        didSet { setNeedsLayout() }
-    }
+    let drawingOverlay = PDFDrawingOverlayView()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
-        liveCanvas.backgroundColor = .clear
-        liveCanvas.isOpaque = false
-        liveCanvas.alwaysBounceVertical = false
-        liveCanvas.alwaysBounceHorizontal = false
-        liveCanvas.isScrollEnabled = false
-        liveCanvas.delaysContentTouches = false
-        liveCanvas.minimumZoomScale = 1
-        liveCanvas.maximumZoomScale = 1
-        liveCanvas.drawingPolicy = .anyInput
-        addSubview(liveCanvas)
+        drawingOverlay.isUserInteractionEnabled = false
+        addSubview(drawingOverlay)
     }
 
     required init?(coder: NSCoder) {
@@ -1412,13 +1428,64 @@ fileprivate final class AnnotatedPDFView: PDFView {
 
     override func layoutSubviews() {
         super.layoutSubviews()
-        if let livePage {
-            liveCanvas.frame = convert(livePage.bounds(for: .cropBox), from: livePage)
-        } else {
-            liveCanvas.frame = bounds
-        }
-        liveCanvas.contentSize = liveCanvas.bounds.size
-        bringSubviewToFront(liveCanvas)
+        drawingOverlay.frame = bounds
+        bringSubviewToFront(drawingOverlay)
+    }
+}
+
+fileprivate final class PDFDrawingOverlayView: UIView {
+    var strokeColor = UIColor.black
+    var lineWidth: CGFloat = 2.5
+    private var path: UIBezierPath?
+    private(set) var points: [CGPoint] = []
+
+    override init(frame: CGRect) {
+        super.init(frame: frame)
+        backgroundColor = .clear
+        isOpaque = false
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func begin(at point: CGPoint) {
+        let nextPath = UIBezierPath()
+        nextPath.lineCapStyle = .round
+        nextPath.lineJoinStyle = .round
+        nextPath.lineWidth = lineWidth
+        nextPath.move(to: point)
+        path = nextPath
+        points = [point]
+        setNeedsDisplay()
+    }
+
+    func move(to point: CGPoint) {
+        guard let path else { return }
+        path.addLine(to: point)
+        points.append(point)
+        setNeedsDisplay()
+    }
+
+    func finish() -> [CGPoint] {
+        let result = points
+        path = nil
+        points = []
+        setNeedsDisplay()
+        return result
+    }
+
+    func cancel() {
+        path = nil
+        points = []
+        setNeedsDisplay()
+    }
+
+    override func draw(_ rect: CGRect) {
+        guard let path else { return }
+        strokeColor.setStroke()
+        path.lineWidth = lineWidth
+        path.stroke()
     }
 }
 
@@ -1469,7 +1536,8 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
     var eraserWidth: Double
     var selectedObjectId: String?
     var onCurrentPageChanged: (Int) -> Void
-    var onPageInkChanged: (Int, Data, PKDrawing, CGSize) -> Void
+    var onStrokeFinished: (Int, CodmesInkStroke) -> Void
+    var onStrokesChanged: (Int, [CodmesInkStroke]) -> Void
     var onObjectSelected: (PDFAnnotationObject) -> Void
     var onObjectChanged: (PDFAnnotationObject) -> Void
     var onObjectDeleted: (PDFAnnotationObject) -> Void
@@ -1477,7 +1545,8 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
     func makeCoordinator() -> Coordinator {
         Coordinator(
             onCurrentPageChanged: onCurrentPageChanged,
-            onPageInkChanged: onPageInkChanged,
+            onStrokeFinished: onStrokeFinished,
+            onStrokesChanged: onStrokesChanged,
             onObjectSelected: onObjectSelected,
             onObjectChanged: onObjectChanged,
             onObjectDeleted: onObjectDeleted
@@ -1491,7 +1560,11 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         view.displayDirection = .vertical
         view.backgroundColor = .clear
         view.pageOverlayViewProvider = context.coordinator
-        view.liveCanvas.delegate = context.coordinator
+        let drawGesture = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleDrawingPan(_:)))
+        drawGesture.maximumNumberOfTouches = 1
+        drawGesture.delegate = context.coordinator
+        view.addGestureRecognizer(drawGesture)
+        context.coordinator.drawingGesture = drawGesture
         context.coordinator.pdfView = view
         NotificationCenter.default.addObserver(
             context.coordinator,
@@ -1504,7 +1577,8 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
 
     func updateUIView(_ view: AnnotatedPDFView, context: Context) {
         context.coordinator.onCurrentPageChanged = onCurrentPageChanged
-        context.coordinator.onPageInkChanged = onPageInkChanged
+        context.coordinator.onStrokeFinished = onStrokeFinished
+        context.coordinator.onStrokesChanged = onStrokesChanged
         context.coordinator.onObjectSelected = onObjectSelected
         context.coordinator.onObjectChanged = onObjectChanged
         context.coordinator.onObjectDeleted = onObjectDeleted
@@ -1524,16 +1598,17 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         }
         context.coordinator.applyToolToVisibleOverlays()
         context.coordinator.applyPDFNavigationMode()
+        context.coordinator.applyCodmesInkAnnotations()
         context.coordinator.applyAnnotationsToVisibleOverlays()
         context.coordinator.applyFocus()
-        context.coordinator.applyLiveCanvasForCurrentPage()
         if let current = view.currentPage, let index = view.document?.index(for: current), index >= 0 {
             onCurrentPageChanged(index)
         }
     }
 
-    final class Coordinator: NSObject, @preconcurrency PDFPageOverlayViewProvider, PKCanvasViewDelegate {
+    final class Coordinator: NSObject, @preconcurrency PDFPageOverlayViewProvider, UIGestureRecognizerDelegate {
         weak var pdfView: AnnotatedPDFView?
+        weak var drawingGesture: UIPanGestureRecognizer?
         var currentURL: URL?
         var annotations: PDFAnnotationDocument?
         var focus: PDFDocumentFocus?
@@ -1543,7 +1618,8 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         var eraserWidth = 18.0
         var selectedObjectId: String?
         var onCurrentPageChanged: (Int) -> Void
-        var onPageInkChanged: (Int, Data, PKDrawing, CGSize) -> Void
+        var onStrokeFinished: (Int, CodmesInkStroke) -> Void
+        var onStrokesChanged: (Int, [CodmesInkStroke]) -> Void
         var onObjectSelected: (PDFAnnotationObject) -> Void
         var onObjectChanged: (PDFAnnotationObject) -> Void
         var onObjectDeleted: (PDFAnnotationObject) -> Void
@@ -1551,16 +1627,21 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         private var highlightViews: [Int: UIView] = [:]
         private var lastFocusKey = ""
         private var applyingProgrammaticDrawing = false
+        private var activePage: PDFPage?
+        private var activePageIndex: Int?
+        private var activeStartTime: TimeInterval = 0
 
         init(
             onCurrentPageChanged: @escaping (Int) -> Void,
-            onPageInkChanged: @escaping (Int, Data, PKDrawing, CGSize) -> Void,
+            onStrokeFinished: @escaping (Int, CodmesInkStroke) -> Void,
+            onStrokesChanged: @escaping (Int, [CodmesInkStroke]) -> Void,
             onObjectSelected: @escaping (PDFAnnotationObject) -> Void,
             onObjectChanged: @escaping (PDFAnnotationObject) -> Void,
             onObjectDeleted: @escaping (PDFAnnotationObject) -> Void
         ) {
             self.onCurrentPageChanged = onCurrentPageChanged
-            self.onPageInkChanged = onPageInkChanged
+            self.onStrokeFinished = onStrokeFinished
+            self.onStrokesChanged = onStrokesChanged
             self.onObjectSelected = onObjectSelected
             self.onObjectChanged = onObjectChanged
             self.onObjectDeleted = onObjectDeleted
@@ -1573,7 +1654,6 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         @objc func visiblePageChanged(_ notification: Notification) {
             guard let pdfView, let page = pdfView.currentPage, let index = pdfView.document?.index(for: page), index >= 0 else { return }
             onCurrentPageChanged(index)
-            applyLiveCanvasForCurrentPage()
         }
 
         func pdfView(_ view: PDFView, overlayViewFor page: PDFPage) -> UIView? {
@@ -1585,7 +1665,6 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
 
             let overlay = PDFPageAnnotationOverlay()
             overlay.canvas.drawingPolicy = .anyInput
-            overlay.canvas.delegate = self
             overlay.canvas.isUserInteractionEnabled = false
             overlays[pageIndex] = overlay
             applyTool(to: overlay)
@@ -1604,23 +1683,6 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             applyHighlight(to: overlay, pageIndex: pageIndex)
         }
 
-        func pdfView(_ pdfView: PDFView, willEndDisplayingOverlayView overlayView: UIView, for page: PDFPage) {
-            guard let overlay = overlayView as? PDFPageAnnotationOverlay,
-                  let pageIndex = pdfView.document?.index(for: page) else { return }
-            onPageInkChanged(pageIndex, overlay.canvas.drawing.dataRepresentation(), overlay.canvas.drawing, overlay.canvas.bounds.size)
-        }
-
-        func canvasViewDrawingDidChange(_ canvasView: PKCanvasView) {
-            guard !applyingProgrammaticDrawing else { return }
-            if let pdfView, canvasView === pdfView.liveCanvas {
-                guard let pageIndex = currentPageIndex() else { return }
-                onPageInkChanged(pageIndex, canvasView.drawing.dataRepresentation(), canvasView.drawing, canvasView.bounds.size)
-                return
-            }
-            guard let pageIndex = overlays.first(where: { $0.value.canvas === canvasView })?.key else { return }
-            onPageInkChanged(pageIndex, canvasView.drawing.dataRepresentation(), canvasView.drawing, canvasView.bounds.size)
-        }
-
         func applyToolToVisibleOverlays() {
             for overlay in overlays.values {
                 applyTool(to: overlay)
@@ -1630,9 +1692,11 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         func applyPDFNavigationMode() {
             guard let pdfView else { return }
             let navigationEnabled = tool == .select
-            pdfView.isInMarkupMode = !navigationEnabled
-            pdfView.liveCanvas.isHidden = navigationEnabled
-            pdfView.liveCanvas.isUserInteractionEnabled = !navigationEnabled
+            pdfView.isInMarkupMode = false
+            pdfView.drawingOverlay.isHidden = navigationEnabled
+            pdfView.drawingOverlay.strokeColor = UIColor(hexString: penColorHex)
+            pdfView.drawingOverlay.lineWidth = CGFloat(tool == .eraser ? eraserWidth : penWidth)
+            drawingGesture?.isEnabled = !navigationEnabled
         }
 
         func applyAnnotationsToVisibleOverlays() {
@@ -1652,23 +1716,6 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             }
             for (pageIndex, overlay) in overlays {
                 applyHighlight(to: overlay, pageIndex: pageIndex)
-            }
-        }
-
-        func applyLiveCanvasForCurrentPage() {
-            guard let pdfView else { return }
-            pdfView.livePage = pdfView.currentPage
-            applyTool(to: pdfView.liveCanvas)
-            guard let pageIndex = currentPageIndex() else {
-                setDrawing(PKDrawing(), on: pdfView.liveCanvas)
-                return
-            }
-            guard let drawing = annotationDrawing(pageIndex: pageIndex) else {
-                setDrawing(PKDrawing(), on: pdfView.liveCanvas)
-                return
-            }
-            if pdfView.liveCanvas.drawing.dataRepresentation() != drawing.dataRepresentation() {
-                setDrawing(drawing, on: pdfView.liveCanvas)
             }
         }
 
@@ -1699,6 +1746,167 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         private func currentPageIndex() -> Int? {
             guard let pdfView, let page = pdfView.currentPage, let index = pdfView.document?.index(for: page), index >= 0 else { return nil }
             return index
+        }
+
+        func applyCodmesInkAnnotations() {
+            guard let document = pdfView?.document else { return }
+            for index in 0..<document.pageCount {
+                guard let page = document.page(at: index) else { continue }
+                for annotation in page.annotations where annotation.contents?.hasPrefix("codmes-ink-") == true {
+                    page.removeAnnotation(annotation)
+                }
+            }
+            guard let annotations else { return }
+            for annotationPage in annotations.pages {
+                guard let page = document.page(at: annotationPage.pageIndex),
+                      let strokes = annotationPage.inkStrokes else { continue }
+                for stroke in strokes {
+                    addInkPreview(stroke, to: page, contentsPrefix: "codmes-ink-preview")
+                }
+            }
+        }
+
+        @objc func handleDrawingPan(_ gesture: UIPanGestureRecognizer) {
+            guard let pdfView else { return }
+            let viewPoint = gesture.location(in: pdfView)
+            let overlayPoint = gesture.location(in: pdfView.drawingOverlay)
+
+            switch gesture.state {
+            case .began:
+                guard tool == .pen || tool == .eraser,
+                      let page = pdfView.page(for: viewPoint, nearest: true),
+                      let document = pdfView.document else { return }
+                let pageIndex = document.index(for: page)
+                guard pageIndex >= 0 else { return }
+                activePage = page
+                activePageIndex = pageIndex
+                activeStartTime = ProcessInfo.processInfo.systemUptime
+                if tool == .pen {
+                    pdfView.drawingOverlay.strokeColor = UIColor(hexString: penColorHex)
+                    pdfView.drawingOverlay.lineWidth = CGFloat(penWidth)
+                    pdfView.drawingOverlay.begin(at: overlayPoint)
+                } else {
+                    pdfView.drawingOverlay.cancel()
+                    eraseStroke(at: viewPoint, page: page)
+                }
+            case .changed:
+                guard let page = activePage else { return }
+                if tool == .pen {
+                    pdfView.drawingOverlay.move(to: overlayPoint)
+                } else {
+                    eraseStroke(at: viewPoint, page: page)
+                }
+            case .ended:
+                defer {
+                    activePage = nil
+                    activePageIndex = nil
+                }
+                guard tool == .pen,
+                      let page = activePage,
+                      let pageIndex = activePageIndex else {
+                    pdfView.drawingOverlay.cancel()
+                    return
+                }
+                pdfView.drawingOverlay.move(to: overlayPoint)
+                let overlayPoints = pdfView.drawingOverlay.finish()
+                guard overlayPoints.count > 1 else { return }
+                let viewPoints = overlayPoints.map { pdfView.convert($0, from: pdfView.drawingOverlay) }
+                let stroke = makeStroke(from: viewPoints, page: page)
+                addInkPreview(stroke, to: page)
+                onStrokeFinished(pageIndex, stroke)
+            case .cancelled, .failed:
+                pdfView.drawingOverlay.cancel()
+                activePage = nil
+                activePageIndex = nil
+            default:
+                break
+            }
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
+            guard tool == .pen || tool == .eraser else { return false }
+            if UIDevice.current.userInterfaceIdiom == .pad {
+                return touch.type == .pencil
+            }
+            return true
+        }
+
+        func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
+            false
+        }
+
+        private func makeStroke(from points: [CGPoint], page: PDFPage) -> CodmesInkStroke {
+            let bounds = page.bounds(for: .mediaBox)
+            let normalizedPoints = points.enumerated().map { offset, point in
+                normalizedPoint(from: point, page: page, timeOffset: Double(offset) * 0.008, pageBounds: bounds)
+            }
+            return CodmesInkStroke(
+                id: UUID().uuidString,
+                tool: "pen",
+                color: penColorHex,
+                width: penWidth,
+                opacity: nil,
+                points: normalizedPoints
+            )
+        }
+
+        private func normalizedPoint(from viewPoint: CGPoint, page: PDFPage, timeOffset: Double? = nil, pageBounds: CGRect? = nil) -> CodmesInkPoint {
+            guard let pdfView else { return CodmesInkPoint(x: 0, y: 0, pressure: nil, timeOffset: timeOffset) }
+            let pagePoint = pdfView.convert(viewPoint, to: page)
+            let bounds = pageBounds ?? page.bounds(for: .mediaBox)
+            let x = min(max((pagePoint.x - bounds.minX) / max(bounds.width, 1), 0), 1)
+            let y = min(max(1 - ((pagePoint.y - bounds.minY) / max(bounds.height, 1)), 0), 1)
+            return CodmesInkPoint(x: x, y: y, pressure: nil, timeOffset: timeOffset)
+        }
+
+        private func pagePoint(_ point: CodmesInkPoint, pageBounds: CGRect) -> CGPoint {
+            CGPoint(
+                x: pageBounds.minX + pageBounds.width * point.x,
+                y: pageBounds.minY + pageBounds.height * (1 - point.y)
+            )
+        }
+
+        private func addInkPreview(_ stroke: CodmesInkStroke, to page: PDFPage, contentsPrefix: String = "codmes-ink-live") {
+            guard stroke.points.count > 1 else { return }
+            let bounds = page.bounds(for: .mediaBox)
+            let annotation = PDFAnnotation(bounds: bounds, forType: .ink, withProperties: nil)
+            annotation.contents = "\(contentsPrefix):\(stroke.id)"
+            annotation.color = UIColor(hexString: stroke.color)
+            let border = PDFBorder()
+            border.lineWidth = CGFloat(max(0.5, stroke.width))
+            annotation.border = border
+            let path = UIBezierPath()
+            path.lineCapStyle = .round
+            path.lineJoinStyle = .round
+            path.lineWidth = CGFloat(max(0.5, stroke.width))
+            path.move(to: pagePoint(stroke.points[0], pageBounds: bounds))
+            for point in stroke.points.dropFirst() {
+                path.addLine(to: pagePoint(point, pageBounds: bounds))
+            }
+            annotation.add(path)
+            page.addAnnotation(annotation)
+        }
+
+        private func eraseStroke(at viewPoint: CGPoint, page: PDFPage) {
+            guard let pdfView, let document = pdfView.document, let annotations else { return }
+            let pageIndex = document.index(for: page)
+            guard pageIndex >= 0,
+                  let annotationPage = annotations.pages.first(where: { $0.pageIndex == pageIndex }),
+                  let strokes = annotationPage.inkStrokes,
+                  !strokes.isEmpty else { return }
+            let normalized = normalizedPoint(from: viewPoint, page: page)
+            let threshold = max(0.006, eraserWidth / 900)
+            let kept = strokes.filter { !stroke($0, isNear: normalized, threshold: threshold) }
+            guard kept.count != strokes.count else { return }
+            onStrokesChanged(pageIndex, kept)
+        }
+
+        private func stroke(_ stroke: CodmesInkStroke, isNear point: CodmesInkPoint, threshold: Double) -> Bool {
+            stroke.points.contains { candidate in
+                let dx = candidate.x - point.x
+                let dy = candidate.y - point.y
+                return (dx * dx + dy * dy).squareRoot() <= threshold
+            }
         }
 
         private func applyAnnotation(to canvas: PKCanvasView, pageIndex: Int) {
