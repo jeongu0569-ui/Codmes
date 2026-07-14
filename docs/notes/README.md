@@ -1,24 +1,19 @@
 # Notes Surface Documentation
 
 This folder is the source of truth for the Codmes Notes surface: note files,
-PDF annotation, attachments, search, and RAG behavior.
+PDF viewing/annotation, attachments shown from Notes, and the Notes chat tool
+mode.
 
 ## Start Here
 
 - [Overview](overview.md): workspace structure, Notes surface responsibilities,
   and current implementation status.
-- [File Types And Attachments](file-types-and-attachments.md): how PDF, Markdown,
-  Office, image, ZIP, and attachment files are classified and indexed.
+- [Content Types And Attachments](content-types-and-attachments.md): how
+  Markdown, PDF, images, and attached files appear inside the Notes surface.
 - [PDF Annotations](pdf-annotations.md): `.codmes` annotation storage, ink,
   text/image objects, read/write modes, and platform behavior.
 - [PDF Ink Debug History](pdf-ink-debug-history.md): why the pen did not appear,
   what was tried, and how the current visible ink path fixed it.
-- [Codmes Search Integration](codmes-search-integration.md): built-in search API,
-  extraction worker, OCR/VLM settings, and annotation OCR.
-- [Codmes Search Explained](codmes-search-explained.md): beginner-friendly search
-  and VLM walkthrough.
-- [RAG Backend Design](rag-backend-design.md): server-side context routing and
-  current RAG limitations.
 
 ## Current Code Pointers
 
@@ -26,7 +21,6 @@ PDF annotation, attachments, search, and RAG behavior.
 - Shared Apple models: `client/apple/Sources/Codmes/Models.swift`
 - Annotation API: `server/index.mjs`
 - Annotation path and document ingest: `server/lib/document-ingest.mjs`
-- Search runtime: `server/lib/search-service.mjs`
 - Notes surface tool mode: `server/lib/runtime/tool-mode-registry.mjs`
 - LLM workspace tools: `server/lib/runtime/workspace-tools.mjs`
 
@@ -51,9 +45,8 @@ The Apple client renders live drawing immediately, commits strokes as PDFKit
 `PUT /api/file/annotations`. The server refreshes the search index for the PDF
 after annotation saves.
 
-RAG uses the built-in Codmes Search index. Text-layer PDFs, Markdown, text,
-Office/HWP/Excel/PPT files, images, and ZIP contents enter the document ingest
-pipeline where supported. Scanned PDF/image OCR is available through the
-configured VLM path. Handwritten ink OCR is not implemented yet; current
-annotation indexing covers text objects and image annotations, not handwriting
-recognition over pen strokes.
+Notes chat can call workspace-wide search tools when a user asks about broader
+context. In Notes-specific terms: PDF source text, text boxes, and image
+annotation OCR can become searchable context; handwritten pen `inkStrokes` are
+stored and rendered, but handwriting OCR over ink is not implemented yet. The
+common search runtime is documented separately under `docs/search`.

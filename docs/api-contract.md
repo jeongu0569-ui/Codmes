@@ -98,7 +98,7 @@ and first-pass PDF/Office/HWP/Excel/image/ZIP extraction through
 `.codmes/index/documents/`.
 
 Codmes Search ownership and incremental indexing are tracked in
-`docs/notes/codmes-search-integration.md`.
+`docs/search/codmes-search-integration.md`.
 
 ## Provider, Auth, And Models
 

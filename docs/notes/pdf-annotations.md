@@ -137,7 +137,7 @@ iPhone write mode:
 - PDF scrolling is locked during an active touch stroke so vertical writing does
   not scroll the page.
 
-## Search And RAG Sync
+## Server Sync Boundary
 
 The PDF file and `.codmes` annotation state are separate but synchronized by the
 server:
@@ -149,9 +149,9 @@ server:
 5. The server writes `Notes/.codmes/annotations/*.codmes.json`.
 6. The server refreshes the search index for the PDF path.
 
-Search indexing combines extracted PDF text with annotation text/image OCR
-blocks where available. Handwritten `inkStrokes` are stored and rendered, but
-handwriting OCR over ink is not implemented yet.
+The server can use the saved PDF and annotation state for derived features such
+as indexing. Handwritten `inkStrokes` are stored and rendered, but handwriting
+OCR over ink is not implemented yet.
 
 ## Still Planned
 
