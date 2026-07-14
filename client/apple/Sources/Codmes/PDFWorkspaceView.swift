@@ -1776,10 +1776,22 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             let shouldReservePencilForDrawing = UIDevice.current.userInterfaceIdiom == .pad
                 && isWritingMode
                 && (tool == .pen || tool == .eraser)
+            let shouldReserveSingleTouchForDrawing = UIDevice.current.userInterfaceIdiom != .pad
+                && isWritingMode
+                && (tool == .pen || tool == .eraser)
             if shouldReservePencilForDrawing {
                 drawingGesture?.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.pencil.rawValue)]
                 for scrollView in pdfView.descendantScrollViews {
                     scrollView.isScrollEnabled = true
+                    scrollView.panGestureRecognizer.minimumNumberOfTouches = 1
+                    scrollView.panGestureRecognizer.allowedTouchTypes = directTouchTypes
+                    scrollView.pinchGestureRecognizer?.allowedTouchTypes = directTouchTypes
+                }
+            } else if shouldReserveSingleTouchForDrawing {
+                drawingGesture?.allowedTouchTypes = directTouchTypes
+                for scrollView in pdfView.descendantScrollViews {
+                    scrollView.isScrollEnabled = true
+                    scrollView.panGestureRecognizer.minimumNumberOfTouches = 2
                     scrollView.panGestureRecognizer.allowedTouchTypes = directTouchTypes
                     scrollView.pinchGestureRecognizer?.allowedTouchTypes = directTouchTypes
                 }
@@ -1787,6 +1799,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                 drawingGesture?.allowedTouchTypes = readingTouchTypes
                 for scrollView in pdfView.descendantScrollViews {
                     scrollView.isScrollEnabled = true
+                    scrollView.panGestureRecognizer.minimumNumberOfTouches = 1
                     scrollView.panGestureRecognizer.allowedTouchTypes = readingTouchTypes
                     scrollView.pinchGestureRecognizer?.allowedTouchTypes = readingTouchTypes
                 }
