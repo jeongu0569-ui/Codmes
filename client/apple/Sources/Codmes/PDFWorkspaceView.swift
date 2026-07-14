@@ -1755,6 +1755,7 @@ private extension UIView {
 
 fileprivate final class PDFPageAnnotationOverlay: UIView {
     let canvas = PKCanvasView()
+    let shapePreviewLayer = CAShapeLayer()
     var objectViews: [String: UIView] = [:]
     var shapeHandleViews: [UIView] = []
 
@@ -1773,6 +1774,10 @@ fileprivate final class PDFPageAnnotationOverlay: UIView {
         canvas.minimumZoomScale = 1
         canvas.maximumZoomScale = 1
         addSubview(canvas)
+        shapePreviewLayer.fillColor = UIColor.clear.cgColor
+        shapePreviewLayer.lineCap = .round
+        shapePreviewLayer.lineJoin = .round
+        layer.addSublayer(shapePreviewLayer)
     }
 
     required init?(coder: NSCoder) {
@@ -1783,6 +1788,7 @@ fileprivate final class PDFPageAnnotationOverlay: UIView {
         super.layoutSubviews()
         canvas.frame = bounds
         canvas.contentSize = bounds.size
+        shapePreviewLayer.frame = bounds
     }
 
     override func hitTest(_ point: CGPoint, with event: UIEvent?) -> UIView? {
@@ -2383,41 +2389,45 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         }
 
         private func fitShape(from points: [CGPoint]) -> ShapeFit? {
+            let points = resampled(points, spacing: 4)
             guard points.count > 8, let bounds = pointBounds(points) else { return nil }
             let diagonal = max(hypot(bounds.width, bounds.height), 1)
             guard diagonal > 20 else { return nil }
 
-            if lineError(points, from: points[0], to: points[points.count - 1]) / diagonal < 0.08 {
+            let lineScore = lineError(points, from: points[0], to: points[points.count - 1]) / diagonal
+            if lineScore < 0.055 {
                 return ShapeFit(kind: "line", points: [points[0], points[points.count - 1]])
             }
 
             let closedDistance = distance(points[0], points[points.count - 1])
-            guard closedDistance / diagonal < 0.28 else { return nil }
+            guard closedDistance / diagonal < 0.34 else { return nil }
 
-            let simplified = simplify(points, epsilon: diagonal * 0.08)
-            if simplified.count >= 4, simplified.count <= 5 {
-                let vertices = Array(simplified.dropLast())
-                if vertices.count == 3 {
-                    return ShapeFit(kind: "triangle", points: vertices + [vertices[0]])
-                }
+            var candidates: [(fit: ShapeFit, score: CGFloat)] = []
+            let vertices = polygonVertices(from: points, epsilon: diagonal * 0.075)
+            if vertices.count == 3 {
+                let triangle = vertices + [vertices[0]]
+                candidates.append((ShapeFit(kind: "triangle", points: triangle), polylineError(points, candidate: triangle) / diagonal))
             }
 
-            if edgeFitRatio(points, bounds: bounds) > 0.72 {
-                let rectPoints = [
-                    CGPoint(x: bounds.minX, y: bounds.minY),
-                    CGPoint(x: bounds.maxX, y: bounds.minY),
-                    CGPoint(x: bounds.maxX, y: bounds.maxY),
-                    CGPoint(x: bounds.minX, y: bounds.maxY),
-                    CGPoint(x: bounds.minX, y: bounds.minY)
-                ]
-                return ShapeFit(kind: "rectangle", points: rectPoints)
+            let rectPoints = [
+                CGPoint(x: bounds.minX, y: bounds.minY),
+                CGPoint(x: bounds.maxX, y: bounds.minY),
+                CGPoint(x: bounds.maxX, y: bounds.maxY),
+                CGPoint(x: bounds.minX, y: bounds.maxY),
+                CGPoint(x: bounds.minX, y: bounds.minY)
+            ]
+            let rectangleScore = min(polylineError(points, candidate: rectPoints) / diagonal, 1 - edgeFitRatio(points, bounds: bounds))
+            if rectangleScore < 0.32 {
+                candidates.append((ShapeFit(kind: "rectangle", points: rectPoints), rectangleScore))
             }
 
-            if ellipseFitError(points, bounds: bounds) < 0.22 {
-                return ShapeFit(kind: "ellipse", points: ellipsePoints(in: bounds, count: 48))
+            let ellipse = ellipsePoints(in: bounds, count: 48)
+            let ellipseScore = ellipseFitError(points, bounds: bounds)
+            if ellipseScore < 0.20 {
+                candidates.append((ShapeFit(kind: "ellipse", points: ellipse), ellipseScore))
             }
 
-            return nil
+            return candidates.min { $0.score < $1.score }?.fit
         }
 
         private func pointBounds(_ points: [CGPoint]) -> CGRect? {
@@ -2477,6 +2487,71 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                 let angle = CGFloat(index) / CGFloat(count) * .pi * 2
                 return CGPoint(x: center.x + cos(angle) * rx, y: center.y + sin(angle) * ry)
             }
+        }
+
+        private func resampled(_ points: [CGPoint], spacing: CGFloat) -> [CGPoint] {
+            guard points.count > 2 else { return points }
+            var result = [points[0]]
+            var previous = points[0]
+            var carry: CGFloat = 0
+            for current in points.dropFirst() {
+                let segment = distance(previous, current)
+                guard segment > 0.001 else { continue }
+                var traveled = spacing - carry
+                while traveled <= segment {
+                    let t = traveled / segment
+                    result.append(CGPoint(
+                        x: previous.x + (current.x - previous.x) * t,
+                        y: previous.y + (current.y - previous.y) * t
+                    ))
+                    traveled += spacing
+                }
+                carry = max(0, segment - (traveled - spacing))
+                previous = current
+            }
+            if result.last.map({ distance($0, points[points.count - 1]) > spacing * 0.5 }) != false {
+                result.append(points[points.count - 1])
+            }
+            return result
+        }
+
+        private func polygonVertices(from points: [CGPoint], epsilon: CGFloat) -> [CGPoint] {
+            guard points.count > 4 else { return points }
+            var open = points
+            if distance(open[0], open[open.count - 1]) < epsilon * 2 {
+                open.removeLast()
+            }
+            guard open.count > 4 else { return open }
+            let anchorIndex = open.indices.max { a, b in
+                distance(open[a], open[0]) < distance(open[b], open[0])
+            } ?? 0
+            let rotated = Array(open[anchorIndex...]) + Array(open[..<anchorIndex]) + [open[anchorIndex]]
+            return Array(simplify(rotated, epsilon: epsilon).dropLast())
+        }
+
+        private func polylineError(_ points: [CGPoint], candidate: [CGPoint]) -> CGFloat {
+            guard candidate.count > 1 else { return .greatestFiniteMagnitude }
+            let total = points.reduce(CGFloat(0)) { sum, point in
+                sum + distanceToPolyline(point, candidate: candidate)
+            }
+            return total / CGFloat(max(points.count, 1))
+        }
+
+        private func distanceToPolyline(_ point: CGPoint, candidate: [CGPoint]) -> CGFloat {
+            var best = CGFloat.greatestFiniteMagnitude
+            for index in 0..<(candidate.count - 1) {
+                best = min(best, distance(point, toSegmentStart: candidate[index], end: candidate[index + 1]))
+            }
+            return best
+        }
+
+        private func distance(_ point: CGPoint, toSegmentStart start: CGPoint, end: CGPoint) -> CGFloat {
+            let dx = end.x - start.x
+            let dy = end.y - start.y
+            let lengthSquared = dx * dx + dy * dy
+            guard lengthSquared > 0.001 else { return distance(point, start) }
+            let t = max(0, min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared))
+            return distance(point, CGPoint(x: start.x + dx * t, y: start.y + dy * t))
         }
 
         private func simplify(_ points: [CGPoint], epsilon: CGFloat) -> [CGPoint] {
@@ -2694,6 +2769,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                 handle.removeFromSuperview()
             }
             overlay.shapeHandleViews.removeAll()
+            overlay.shapePreviewLayer.path = nil
 
             guard isWritingMode,
                   let selected = selectedShapeStroke(pageIndex: pageIndex) else { return }
@@ -2708,6 +2784,26 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                 overlay.bringSubviewToFront(handle)
                 overlay.shapeHandleViews.append(handle)
             }
+        }
+
+        private func updateShapeLayerPreview(_ stroke: CodmesInkStroke, in overlay: PDFPageAnnotationOverlay) {
+            guard stroke.points.count > 1 else {
+                overlay.shapePreviewLayer.path = nil
+                return
+            }
+            let path = UIBezierPath()
+            path.move(to: overlayPoint(stroke.points[0], in: overlay.bounds))
+            for point in stroke.points.dropFirst() {
+                path.addLine(to: overlayPoint(point, in: overlay.bounds))
+            }
+            overlay.shapePreviewLayer.path = path.cgPath
+            overlay.shapePreviewLayer.strokeColor = UIColor(hexString: stroke.color).cgColor
+            overlay.shapePreviewLayer.lineWidth = CGFloat(max(0.5, stroke.width + 1.5))
+            overlay.shapePreviewLayer.opacity = 1
+        }
+
+        private func overlayPoint(_ point: CodmesInkPoint, in bounds: CGRect) -> CGPoint {
+            CGPoint(x: bounds.width * point.x, y: bounds.height * point.y)
         }
 
         private func selectedShapeStroke(pageIndex: Int?) -> (stroke: CodmesInkStroke, kind: String)? {
@@ -2768,6 +2864,11 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             )
             stroke = updateShapeStroke(stroke, kind: handle.kind, handleIndex: handle.handleIndex, to: normalized)
             replaceLocalStrokes(pageIndex: selection.pageIndex, movedStrokes: [stroke], selectedIds: [stroke.id])
+            if gesture.state == .began,
+               let pdfView,
+               let page = pdfView.document?.page(at: selection.pageIndex) {
+                removeCodmesInkAnnotation(id: stroke.id, from: page)
+            }
             if let nextBounds = bounds(for: stroke.points) {
                 lassoSelection = LassoSelection(
                     pageIndex: selection.pageIndex,
@@ -2777,13 +2878,10 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                 )
             }
             handle.center = location
-            if let pdfView,
-               let page = pdfView.document?.page(at: selection.pageIndex) {
-                removeCodmesInkAnnotation(id: stroke.id, from: page)
-                addInkPreview(stroke, to: page, contentsPrefix: "codmes-ink-preview", selected: true)
-            }
+            updateShapeLayerPreview(stroke, in: overlay)
 
             if gesture.state == .ended || gesture.state == .cancelled || gesture.state == .failed {
+                overlay.shapePreviewLayer.path = nil
                 notifyLassoSelectionChanged()
                 onStrokesChanged(selection.pageIndex, strokes(for: selection.pageIndex))
                 applyCodmesInkAnnotations()
