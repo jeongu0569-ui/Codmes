@@ -59,12 +59,13 @@ Implemented:
 - text/markdown file preview
 - markdown/text/code editing and save through `PUT /api/file`
 - PDF rendering through `GET /api/raw` and PDFKit
-- iOS/iPadOS PDF page ink through PencilKit and `GET/PUT /api/file/annotations`
-- iOS/iPadOS PDF markup tools for pen, eraser, lasso, object move/select, text
+- iOS/iPadOS PDF page ink through PDFKit live drawing and
+  `GET/PUT /api/file/annotations`
+- iOS/iPadOS PDF markup tools for pen, partial eraser, object move/select, text
   box insertion, image attachment, object drag, object pinch-resize, text
-  double-tap edit, and long-press delete. Ink strokes are handled through the
-  PencilKit canvas and lasso tool; text/image objects are stored as Codmes PDF
-  annotation objects with page-relative bbox metadata.
+  double-tap edit, and long-press delete. Ink strokes are stored as portable
+  `inkStrokes`; text/image objects are stored as Codmes PDF annotation objects
+  with page-relative bbox metadata.
 - macOS PDF preview renders shared `inkStrokes`, and macOS edit mode can save
   mouse/trackpad pen strokes, erase strokes, select/move text/image objects,
   and delete selected objects with the Delete key through the same
@@ -546,8 +547,8 @@ For example:
 
 - macOS uses `HSplitView`; iOS uses a stacked layout.
 - macOS PDF preview uses `NSViewRepresentable` with PDFKit. iOS uses
-  `UIViewRepresentable` with PDFKit page overlays and PencilKit so ink follows
-  the PDF page during scrolling and zooming.
+  `UIViewRepresentable` with PDFKit, a live drawing overlay, and PDFKit ink
+  annotations so ink follows the PDF page during scrolling and zooming.
 - macOS applies `.windowStyle(.titleBar)` and activation handling; iOS does not.
 
 Terminal support must be designed as a remote server feature, not as a

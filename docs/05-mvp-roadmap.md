@@ -117,9 +117,9 @@ Remaining:
 - Add right-side global chat panel polish.
 - Add upload manager progress and retry UX.
 - Add richer provider OAuth GUI flows.
-- Add native Apple Pencil/PDF annotation UX: first iOS/iPadOS PencilKit page
-  overlay, server sync, text boxes, image attachments, object move/resize,
-  text edit, long-press delete, selected-object inspector, object duplicate,
+- Add native Apple Pencil/PDF annotation UX: first iOS/iPadOS PDFKit ink input,
+  server sync, text boxes, image attachments, object move/resize, text edit,
+  long-press delete, selected-object inspector, object duplicate,
   one-step/to-front/to-back layer ordering, and flattened PDF export/share are
   done for the first iOS/iPadOS pass.
 
@@ -138,8 +138,8 @@ Done for first pass:
 - PDF annotation and Apple Pencil storage/sync for iOS/iPadOS page ink through
   document-folder state files such as
   `Notes/.codmes/annotations/mypage.codmes.json`.
-- Platform-neutral ink storage begins with normalized `inkStrokes` alongside
-  legacy PencilKit `inkDataBase64`.
+- Platform-neutral ink storage uses normalized `inkStrokes`. Legacy
+  `inkDataBase64` can still be read for older Apple state.
 - iOS/iPadOS PDF annotation objects for text boxes and image attachments.
 - Text/image annotation objects can be moved, resized with pinch, edited or
   deleted, and indexed through the Codmes Search annotation path.

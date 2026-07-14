@@ -362,7 +362,7 @@ annotation-text         PDF 위 텍스트 박스
 annotation-image-ocr    PDF 위 첨부 이미지 OCR
 ```
 
-아직 손글씨 필기(`ink`) 자체의 handwriting OCR은 별도 단계입니다. 현재는 PencilKit ink 저장/동기화와 이미지/text annotation 검색 기반을 분리해 둔 상태입니다.
+아직 손글씨 필기(`ink`) 자체의 handwriting OCR은 별도 단계입니다. 현재는 portable `inkStrokes` 저장/동기화와 이미지/text annotation 검색 기반을 분리해 둔 상태입니다.
 
 ## 앞으로 Search 설정에 들어가야 할 것
 

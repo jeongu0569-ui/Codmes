@@ -1,4 +1,4 @@
-# Notes, PDF, Search, And RAG Plan
+# Notes, PDF, Search, And RAG Overview
 
 Codmes should treat notes, PDFs, attachments, and code projects as
 server-owned workspace resources. Clients display and edit them, but indexing
@@ -116,7 +116,7 @@ Phase 2 uses a GoodNotes-style structure with a thin first feature set:
 4. Add extracted text blocks to the search layer.
 5. Store server-owned annotation layers in a hidden state folder inside the
    document folder, such as `Notes/.codmes/annotations/mypage.codmes.json`.
-6. Add iOS/iPadOS page-level PencilKit ink overlays through PDFKit.
+6. Add iOS/iPadOS PDFKit ink input and visible live drawing.
 7. Add page/coordinate-aware PDF search result highlights for text-layer blocks.
 
 PDF annotations should not be stored only inside a client-local app cache. They
@@ -130,9 +130,9 @@ Notes/mypage.pdf
 Notes/.codmes/annotations/mypage.codmes.json
 ```
 
-The current Apple implementation saves PencilKit ink per PDF page and stores
-text/image annotation objects with page-relative bbox metadata. This lets a
-user move or copy a document folder and keep editable Codmes state with it
+The current Apple implementation saves portable `inkStrokes` per PDF page and
+stores text/image annotation objects with page-relative bbox metadata. This lets
+a user move or copy a document folder and keep editable Codmes state with it
 without showing JSON files next to every PDF, while global sessions,
 credentials, and approvals remain in the workspace root `.codmes`.
 
@@ -143,14 +143,37 @@ page, shifts existing annotation page indexes, optionally imports a matching
 `.codmes.json` state file, and asks the server to refresh the changed PDF in the
 search index. True page-level OCR/embedding invalidation is still planned.
 
-Ink storage must remain platform-neutral. PencilKit is treated as the current
-iOS/iPadOS input adapter, not the long-term storage format. Codmes annotation
-state now stores legacy `inkDataBase64` for current Apple rendering and also
-stores normalized `inkStrokes` with points, pressure, color, width, and timing.
-macOS now has a first direct `inkStrokes` render/edit adapter for preview, pen
-input, stroke erasing, and text/image object select/move/delete. Future Windows
-and Android/Galaxy Tab clients should render and edit the same common
-`inkStrokes` and annotation object format directly.
+Ink storage must remain platform-neutral. The current Apple path renders live
+input through PDFKit ink annotations and saves normalized `inkStrokes` with
+points, pressure, color, width, and timing. The model can still read legacy
+`inkDataBase64`, but new clients should use `inkStrokes` directly. macOS has a
+direct `inkStrokes` render/edit adapter for preview, pen input, stroke erasing,
+and text/image object select/move/delete. Future Windows and Android/Galaxy Tab
+clients should render and edit the same common `inkStrokes` and annotation
+object format directly.
+
+For the detailed annotation contract and the pen bug history, see
+[PDF Annotations](pdf-annotations.md) and
+[PDF Ink Debug History](pdf-ink-debug-history.md).
+
+## Notes Surface LLM Tools
+
+The default Notes surface tool mode is defined in
+`server/lib/runtime/tool-mode-registry.mjs`. It exposes read/search tools, not
+code mutation tools:
+
+- `codmes_search`: indexed notes, documents, PDFs, code, and conversation text.
+- `workspace_search`: simple workspace text search path.
+- `read_note_file`: read a specific note, Markdown file, document text, or small
+  workspace file.
+- `read_file_metadata`: read kind, size, hash, and document ingest metadata.
+- `conversation_search`, `conversation_read`, `memory_search`: recall previous
+  chat/session/memory context.
+- `tool_discovery`: temporarily expand safe tools when the current turn needs a
+  focused capability.
+
+By default, Notes surface conversations do not expose Code surface mutation
+tools such as `apply_patch`, `run_checks`, or `run_git_command`.
 
 ## RAG Direction
 
