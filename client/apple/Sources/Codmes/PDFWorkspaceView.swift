@@ -2220,9 +2220,10 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             case .changed:
                 guard let page = activePage else { return }
                 if tool == .pen {
-                    pdfView.drawingOverlay.move(to: overlayPoint)
-                    lastPenPointTime = ProcessInfo.processInfo.systemUptime
-                    activeShapeFit = nil
+                    if activeShapeFit == nil {
+                        pdfView.drawingOverlay.move(to: overlayPoint)
+                        lastPenPointTime = ProcessInfo.processInfo.systemUptime
+                    }
                 } else if tool == .eraser {
                     eraseStroke(at: viewPoint, page: page)
                 } else if tool == .lasso {
@@ -2395,12 +2396,12 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             guard diagonal > 20 else { return nil }
 
             let lineScore = lineError(points, from: points[0], to: points[points.count - 1]) / diagonal
-            if lineScore < 0.055 {
+            if lineScore < 0.095 {
                 return ShapeFit(kind: "line", points: [points[0], points[points.count - 1]])
             }
 
             let closedDistance = distance(points[0], points[points.count - 1])
-            guard closedDistance / diagonal < 0.34 else { return nil }
+            guard closedDistance / diagonal < 0.42 else { return nil }
 
             var candidates: [(fit: ShapeFit, score: CGFloat)] = []
             let vertices = polygonVertices(from: points, epsilon: diagonal * 0.075)
@@ -2417,13 +2418,13 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                 CGPoint(x: bounds.minX, y: bounds.minY)
             ]
             let rectangleScore = min(polylineError(points, candidate: rectPoints) / diagonal, 1 - edgeFitRatio(points, bounds: bounds))
-            if rectangleScore < 0.32 {
+            if rectangleScore < 0.42 {
                 candidates.append((ShapeFit(kind: "rectangle", points: rectPoints), rectangleScore))
             }
 
             let ellipse = ellipsePoints(in: bounds, count: 48)
             let ellipseScore = ellipseFitError(points, bounds: bounds)
-            if ellipseScore < 0.20 {
+            if ellipseScore < 0.32 {
                 candidates.append((ShapeFit(kind: "ellipse", points: ellipse), ellipseScore))
             }
 
