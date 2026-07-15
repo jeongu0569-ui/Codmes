@@ -2399,6 +2399,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                     return
                 }
                 if tool == .pen {
+                    clearLassoSelectionIfNeeded()
                     pdfView.drawingOverlay.strokeColor = UIColor(hexString: penColorHex)
                     pdfView.drawingOverlay.lineWidth = CGFloat(penWidth)
                     pdfView.drawingOverlay.isDashed = false
@@ -2409,6 +2410,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                     pdfView.drawingOverlay.begin(at: overlayPoint)
                     scheduleShapeHoldFit(page: page)
                 } else if tool == .eraser {
+                    clearLassoSelectionIfNeeded()
                     pdfView.drawingOverlay.cancel()
                     eraseStroke(at: viewPoint, page: page)
                 } else {
@@ -2561,7 +2563,6 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         @objc func handlePDFTap(_ gesture: UITapGestureRecognizer) {
             guard gesture.state == .ended,
                   isWritingMode,
-                  tool == .lasso,
                   let selection = lassoSelection,
                   let pdfView else { return }
             let viewPoint = gesture.location(in: pdfView)
@@ -2601,7 +2602,15 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
             let isShapeHandleTouch = isTouchOnShapeHandle(touch)
             if gestureRecognizer === clearSelectionTapGesture {
-                return !isShapeHandleTouch && isWritingMode && tool == .lasso && lassoSelection != nil
+                guard !isShapeHandleTouch,
+                      isWritingMode,
+                      lassoSelection != nil,
+                      let pdfView else { return false }
+                let viewPoint = touch.location(in: pdfView)
+                if !isPointInsideCurrentSelection(viewPoint) {
+                    clearLassoSelection()
+                }
+                return false
             }
             if isShapeHandleTouch {
                 return isWritingMode
@@ -2625,6 +2634,21 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                 }
             }
             return false
+        }
+
+        private func clearLassoSelectionIfNeeded() {
+            guard lassoSelection != nil else { return }
+            clearLassoSelection()
+        }
+
+        private func isPointInsideCurrentSelection(_ viewPoint: CGPoint) -> Bool {
+            guard let pdfView,
+                  let selection = lassoSelection,
+                  let page = pdfView.page(for: viewPoint, nearest: true),
+                  let document = pdfView.document,
+                  document.index(for: page) == selection.pageIndex else { return false }
+            let normalized = normalizedPoint(from: viewPoint, page: page)
+            return contains(normalized, in: selection.bounds)
         }
 
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
