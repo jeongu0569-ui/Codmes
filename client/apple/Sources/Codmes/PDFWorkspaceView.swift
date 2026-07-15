@@ -2079,11 +2079,18 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         drawGesture.cancelsTouchesInView = true
         drawGesture.delegate = context.coordinator
         view.addGestureRecognizer(drawGesture)
+        let objectEditTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePDFObjectDoubleTap(_:)))
+        objectEditTap.numberOfTapsRequired = 2
+        objectEditTap.cancelsTouchesInView = false
+        objectEditTap.delegate = context.coordinator
+        view.addGestureRecognizer(objectEditTap)
         let clearSelectionTap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handlePDFTap(_:)))
         clearSelectionTap.cancelsTouchesInView = false
         clearSelectionTap.delegate = context.coordinator
+        clearSelectionTap.require(toFail: objectEditTap)
         view.addGestureRecognizer(clearSelectionTap)
         context.coordinator.drawingGesture = drawGesture
+        context.coordinator.objectEditTapGesture = objectEditTap
         context.coordinator.clearSelectionTapGesture = clearSelectionTap
         context.coordinator.pdfView = view
         NotificationCenter.default.addObserver(
@@ -2181,6 +2188,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
 
         weak var pdfView: AnnotatedPDFView?
         weak var drawingGesture: UIPanGestureRecognizer?
+        weak var objectEditTapGesture: UITapGestureRecognizer?
         weak var clearSelectionTapGesture: UITapGestureRecognizer?
         var currentURL: URL?
         var annotations: PDFAnnotationDocument?
@@ -2651,12 +2659,15 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             if discardEmptyTextDraftIfNeeded() {
                 return
             }
-            if tool == .text {
-                placeTextObject(at: viewPoint, page: page, pageIndex: pageIndex)
+            if tool == .text || tool == .lasso,
+               let tappedObject = object(at: viewPoint, page: page, pageIndex: pageIndex) {
+                pdfView.endEditing(true)
+                selectTappedObject(tappedObject, pageIndex: pageIndex)
                 return
             }
             if let selection = lassoSelection {
                 guard pageIndex == selection.pageIndex else {
+                    pdfView.endEditing(true)
                     clearLassoSelection()
                     if tool == .lasso {
                         selectTappedLassoContent(at: viewPoint, page: page, pageIndex: pageIndex)
@@ -2665,6 +2676,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                 }
                 let normalized = normalizedPoint(from: viewPoint, page: page)
                 if !contains(normalized, in: selection.bounds) {
+                    pdfView.endEditing(true)
                     clearLassoSelection()
                     if tool == .lasso {
                         selectTappedLassoContent(at: viewPoint, page: page, pageIndex: pageIndex)
@@ -2672,8 +2684,27 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                 }
                 return
             }
+            if tool == .text {
+                placeTextObject(at: viewPoint, page: page, pageIndex: pageIndex)
+                return
+            }
             guard tool == .lasso else { return }
             selectTappedLassoContent(at: viewPoint, page: page, pageIndex: pageIndex)
+        }
+
+        @objc func handlePDFObjectDoubleTap(_ gesture: UITapGestureRecognizer) {
+            guard gesture.state == .ended,
+                  isWritingMode,
+                  tool == .text || tool == .lasso,
+                  let pdfView else { return }
+            let viewPoint = gesture.location(in: pdfView)
+            guard let page = pdfView.page(for: viewPoint, nearest: true),
+                  let document = pdfView.document else { return }
+            let pageIndex = document.index(for: page)
+            guard let object = object(at: viewPoint, page: page, pageIndex: pageIndex),
+                  object.type.lowercased().contains("text") else { return }
+            selectTappedObject(object, pageIndex: pageIndex)
+            editTextObject(object)
         }
 
         private func placeTextObject(at viewPoint: CGPoint, page: PDFPage, pageIndex: Int) {
@@ -2733,9 +2764,12 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer, shouldReceive touch: UITouch) -> Bool {
             let isShapeHandleTouch = isTouchOnShapeHandle(touch)
             let isObjectTouch = isTouchOnObjectView(touch)
+            let isObjectContentTouch = isTouchOnObjectContent(touch)
+            if gestureRecognizer === objectEditTapGesture {
+                return isWritingMode && (tool == .text || tool == .lasso)
+            }
             if gestureRecognizer === clearSelectionTapGesture {
                 guard !isShapeHandleTouch,
-                      !isObjectTouch,
                       isWritingMode,
                       let pdfView else { return false }
                 if tool == .text {
@@ -2753,6 +2787,9 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             }
             if isShapeHandleTouch {
                 return isWritingMode
+            }
+            if isObjectTouch || isObjectContentTouch {
+                return false
             }
             guard isWritingMode, tool == .pen || tool == .eraser || tool == .lasso else { return false }
             if UIDevice.current.userInterfaceIdiom == .pad {
@@ -2787,6 +2824,14 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                 }
             }
             return false
+        }
+
+        private func isTouchOnObjectContent(_ touch: UITouch) -> Bool {
+            guard let pdfView else { return false }
+            let viewPoint = touch.location(in: pdfView)
+            guard let page = pdfView.page(for: viewPoint, nearest: true),
+                  let document = pdfView.document else { return false }
+            return object(at: viewPoint, page: page, pageIndex: document.index(for: page)) != nil
         }
 
         private func clearLassoSelectionIfNeeded() {
@@ -3887,6 +3932,23 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             }
         }
 
+        private func object(at viewPoint: CGPoint, page: PDFPage, pageIndex: Int) -> PDFAnnotationObject? {
+            let point = normalizedPoint(from: viewPoint, page: page)
+            let pageBounds = page.bounds(for: .mediaBox)
+            let hitSlop = max(0.004, 10 / Double(max(min(pageBounds.width, pageBounds.height), 1)))
+            return objects(for: pageIndex).reversed().first { object in
+                guard let box = object.bbox?.normalizedOrSelf else { return false }
+                let expanded = AnnotationBoundingBox(
+                    x: max(0, box.x - hitSlop),
+                    y: max(0, box.y - hitSlop),
+                    width: min(1, box.width + hitSlop * 2),
+                    height: min(1, box.height + hitSlop * 2),
+                    normalized: nil
+                )
+                return contains(point, in: expanded)
+            }
+        }
+
         private func selectTappedStroke(_ stroke: CodmesInkStroke, pageIndex: Int) {
             guard let strokeBounds = bounds(for: stroke.points) else { return }
             lassoSelection = LassoSelection(
@@ -4831,7 +4893,9 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                     textView.textColor = .black
                 }
                 textView.tintColor = .black
-                textView.isEditable = isWritingMode && (tool == .text || selectedObjectId == object.id)
+                let isEditingText = editingTextObjectId == object.id || textView.isFirstResponder
+                textView.isEditable = isWritingMode && isEditingText
+                textView.isSelectable = isWritingMode && isEditingText
                 textView.textContainer.widthTracksTextView = true
             }
             let directlySelected = object.id == selectedObjectId && lassoSelection?.objectIds.contains(object.id) != true
@@ -4881,7 +4945,8 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             let longPress = UILongPressGestureRecognizer(target: self, action: #selector(handleObjectLongPress(_:)))
             tap.numberOfTapsRequired = 2
             selectTap.numberOfTapsRequired = 1
-            selectTap.require(toFail: tap)
+            tap.cancelsTouchesInView = true
+            selectTap.cancelsTouchesInView = true
             view.addGestureRecognizer(pan)
             view.addGestureRecognizer(pinch)
             view.addGestureRecognizer(tap)
@@ -4893,6 +4958,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             guard let view = gesture.view,
                   let id = view.accessibilityIdentifier,
                   let object = object(with: id) else { return }
+            let wasSelected = selectedObjectId == object.id
             selectedObjectId = object.id
             if let pageIndex = object.pageIndex, let box = object.bbox {
                 lassoSelection = LassoSelection(
@@ -4905,7 +4971,9 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                 notifyLassoSelectionChanged()
             }
             onObjectSelected(object)
-            if (tool == .text || tool == .lasso), object.type.lowercased().contains("text"), let textView = view as? UITextView {
+            if wasSelected,
+               object.type.lowercased().contains("text"),
+               let textView = view as? UITextView {
                 beginEditingTextView(textView, object: object)
             }
             applyAnnotationsToVisibleOverlays()
@@ -5016,8 +5084,21 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         private func beginEditingTextView(_ textView: UITextView, object: PDFAnnotationObject) {
             editingTextObjectId = object.id
             textView.isEditable = true
+            textView.isSelectable = true
             textView.becomeFirstResponder()
             configureObjectView(textView, object: object)
+        }
+
+        private func editTextObject(_ object: PDFAnnotationObject) {
+            selectedObjectId = object.id
+            editingTextObjectId = object.id
+            for overlay in overlays.values {
+                guard let textView = overlay.objectViews[object.id] as? UITextView else { continue }
+                beginEditingTextView(textView, object: object)
+                return
+            }
+            pendingFocusTextObjectId = object.id
+            applyAnnotationsToVisibleOverlays()
         }
 
         func applyTextEditRequest(_ request: Int) {
@@ -5040,6 +5121,9 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                   var object = object(with: id),
                   object.type.lowercased().contains("text") else { return }
             object.text = textView.text
+            if deleteEmptyTextObjectIfNeeded(object, textView: textView) {
+                return
+            }
             if !textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 var metadata = object.metadata ?? [:]
                 metadata[textDraftMetadataKey] = nil
@@ -5076,6 +5160,9 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                   object.type.lowercased().contains("text") else { return }
             editingTextObjectId = nil
             object.text = textView.text
+            if deleteEmptyTextObjectIfNeeded(object, textView: textView) {
+                return
+            }
             if !textView.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 var metadata = object.metadata ?? [:]
                 metadata[textDraftMetadataKey] = nil
@@ -5086,6 +5173,20 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             updateSelection(for: object)
             onObjectChanged(object)
             configureObjectView(textView, object: object)
+        }
+
+        private func deleteEmptyTextObjectIfNeeded(_ object: PDFAnnotationObject, textView: UITextView) -> Bool {
+            guard textView.markedTextRange == nil,
+                  (textView.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+            editingTextObjectId = nil
+            pendingFocusTextObjectId = nil
+            if selectedObjectId == object.id {
+                selectedObjectId = nil
+            }
+            onObjectDeleted(object)
+            clearLassoSelection()
+            textView.removeFromSuperview()
+            return true
         }
 
         private func discardEmptyTextDraftIfNeeded() -> Bool {
