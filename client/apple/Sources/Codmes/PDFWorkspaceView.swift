@@ -2592,6 +2592,16 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                 angularStroke: angularStroke
             )
 
+            if roundStroke, edgeFit < 0.8, circleScore < 0.36 {
+                return ShapeFit(kind: "circle", points: circle)
+            }
+            if roundStroke, ellipseScore < 0.48 {
+                return ShapeFit(kind: "ellipse", points: ellipse)
+            }
+            if openPolylineIntent(points: points, diagonal: diagonal, angularStroke: angularStroke) {
+                return ShapeFit(kind: "polyline", points: fittedPolyline(from: points, diagonal: diagonal))
+            }
+
             let rectPoints = [
                 CGPoint(x: bounds.minX, y: bounds.minY),
                 CGPoint(x: bounds.maxX, y: bounds.minY),
@@ -2603,17 +2613,16 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             let rectanglePolylineScore = polylineError(points, candidate: rectPoints) / diagonal
             let rectangleEdgeMissScore = 1 - edgeFit
             let rectangleScore = max(rectanglePolylineScore, rectangleEdgeMissScore)
-            if roundStroke, edgeFit < 0.72, circleScore < 0.28 {
-                return ShapeFit(kind: "circle", points: circle)
-            }
-            if rectangleScore < 0.36 {
+            if rectangleIntent(
+                points: points,
+                diagonal: diagonal,
+                rectangleScore: rectangleScore,
+                edgeFit: edgeFit,
+                circularityScore: circularityScore,
+                roundStroke: roundStroke,
+                angularStroke: angularStroke
+            ) {
                 return ShapeFit(kind: "rectangle", points: rectPoints)
-            }
-            if roundStroke, ellipseScore < 0.42 {
-                return ShapeFit(kind: "ellipse", points: ellipse)
-            }
-            if openPolylineIntent(points: points, diagonal: diagonal, angularStroke: angularStroke) {
-                return ShapeFit(kind: "polyline", points: fittedPolyline(from: points, diagonal: diagonal))
             }
             if let triangle = strokePreservingTriangleCandidate(from: points, diagonal: diagonal) {
                 return triangle
@@ -2758,6 +2767,25 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             }
             let simplified = deduplicatedVertices(simplify(points, epsilon: max(diagonal * 0.035, 4)), diagonal: diagonal)
             return simplified.count >= 3 && simplified.count <= 8
+        }
+
+        private func rectangleIntent(
+            points: [CGPoint],
+            diagonal: CGFloat,
+            rectangleScore: CGFloat,
+            edgeFit: CGFloat,
+            circularityScore: CGFloat,
+            roundStroke: Bool,
+            angularStroke: Bool
+        ) -> Bool {
+            let endpointGap = distance(points[0], points[points.count - 1]) / diagonal
+            guard endpointGap < 0.24,
+                  !roundStroke,
+                  angularStroke,
+                  circularityScore < 0.58,
+                  edgeFit > 0.36,
+                  rectangleScore < 0.32 else { return false }
+            return true
         }
 
         private func closedRoundIntent(
