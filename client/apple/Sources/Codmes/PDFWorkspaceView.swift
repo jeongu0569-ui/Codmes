@@ -2592,12 +2592,6 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                 angularStroke: angularStroke
             )
 
-            if roundStroke, edgeFit < 0.8, circleScore < 0.36 {
-                return ShapeFit(kind: "circle", points: circle)
-            }
-            if roundStroke, ellipseScore < 0.48 {
-                return ShapeFit(kind: "ellipse", points: ellipse)
-            }
             if openPolylineIntent(points: points, diagonal: diagonal, angularStroke: angularStroke) {
                 return ShapeFit(kind: "polyline", points: fittedPolyline(from: points, diagonal: diagonal))
             }
@@ -2623,6 +2617,12 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                 angularStroke: angularStroke
             ) {
                 return ShapeFit(kind: "rectangle", points: rectPoints)
+            }
+            if roundStroke, edgeFit < 0.8, circleScore < 0.36 {
+                return ShapeFit(kind: "circle", points: circle)
+            }
+            if roundStroke, ellipseScore < 0.48 {
+                return ShapeFit(kind: "ellipse", points: ellipse)
             }
             if let triangle = strokePreservingTriangleCandidate(from: points, diagonal: diagonal) {
                 return triangle
