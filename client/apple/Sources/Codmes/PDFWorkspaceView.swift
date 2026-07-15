@@ -2575,6 +2575,9 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             }
 
             let closedDistance = distance(points[0], points[points.count - 1])
+            if let gapTriangle = openGapTriangleCandidate(from: points, bounds: bounds, diagonal: diagonal) {
+                return gapTriangle
+            }
             if let openTriangle = openTriangleCandidate(from: points, diagonal: diagonal) {
                 return openTriangle
             }
@@ -2659,6 +2662,43 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             let score = polylineError(points, candidate: triangle) / diagonal
             guard score < 0.42 else { return nil }
             return ShapeFit(kind: "triangle", points: triangle)
+        }
+
+        private func openGapTriangleCandidate(from points: [CGPoint], bounds: CGRect, diagonal: CGFloat) -> ShapeFit? {
+            guard points.count > 8 else { return nil }
+            let start = points[0]
+            let end = points[points.count - 1]
+            let endpointGap = distance(start, end) / diagonal
+            guard endpointGap > 0.04, endpointGap < 0.5 else { return nil }
+
+            let apex = CGPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2)
+            let hull = convexHull(points)
+            let baseCandidates = hull
+                .filter { distance($0, apex) / diagonal > 0.28 }
+                .sorted { distance($0, apex) > distance($1, apex) }
+            guard baseCandidates.count >= 2 else { return nil }
+
+            var bestPair: (CGPoint, CGPoint, CGFloat)?
+            for firstIndex in 0..<(baseCandidates.count - 1) {
+                for secondIndex in (firstIndex + 1)..<baseCandidates.count {
+                    let first = baseCandidates[firstIndex]
+                    let second = baseCandidates[secondIndex]
+                    let separation = distance(first, second) / diagonal
+                    guard separation > 0.32 else { continue }
+                    let triangle = [apex, first, second, apex]
+                    let score = polylineError(points, candidate: triangle) / diagonal
+                    if bestPair == nil || score < bestPair!.2 {
+                        bestPair = (first, second, score)
+                    }
+                }
+            }
+            guard let bestPair, bestPair.2 < 0.5 else { return nil }
+
+            let center = CGPoint(x: bounds.midX, y: bounds.midY)
+            let orderedBase = [bestPair.0, bestPair.1].sorted {
+                atan2($0.y - center.y, $0.x - center.x) < atan2($1.y - center.y, $1.x - center.x)
+            }
+            return ShapeFit(kind: "triangle", points: [apex, orderedBase[0], orderedBase[1], apex])
         }
 
         private func pointBounds(_ points: [CGPoint]) -> CGRect? {
