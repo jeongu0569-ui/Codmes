@@ -1700,11 +1700,20 @@ private struct SliderRow: View {
 #if os(iOS)
 fileprivate final class AnnotatedPDFView: PDFView {
     let drawingOverlay = PDFDrawingOverlayView()
+    private let shapeDebugLabel = UILabel()
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         drawingOverlay.isUserInteractionEnabled = false
         addSubview(drawingOverlay)
+        shapeDebugLabel.isHidden = true
+        shapeDebugLabel.numberOfLines = 0
+        shapeDebugLabel.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
+        shapeDebugLabel.textColor = .white
+        shapeDebugLabel.backgroundColor = UIColor.black.withAlphaComponent(0.72)
+        shapeDebugLabel.layer.cornerRadius = 8
+        shapeDebugLabel.layer.masksToBounds = true
+        addSubview(shapeDebugLabel)
     }
 
     required init?(coder: NSCoder) {
@@ -1714,7 +1723,21 @@ fileprivate final class AnnotatedPDFView: PDFView {
     override func layoutSubviews() {
         super.layoutSubviews()
         drawingOverlay.frame = bounds
+        let maxWidth = min(bounds.width - 24, 420)
+        shapeDebugLabel.frame = CGRect(x: 12, y: safeAreaInsets.top + 12, width: maxWidth, height: 68)
         bringSubviewToFront(drawingOverlay)
+        bringSubviewToFront(shapeDebugLabel)
+    }
+
+    func showShapeDebug(_ text: String) {
+        shapeDebugLabel.text = "  \(text)"
+        shapeDebugLabel.isHidden = false
+        NSObject.cancelPreviousPerformRequests(withTarget: self, selector: #selector(hideShapeDebug), object: nil)
+        perform(#selector(hideShapeDebug), with: nil, afterDelay: 4)
+    }
+
+    @objc private func hideShapeDebug() {
+        shapeDebugLabel.isHidden = true
     }
 }
 
@@ -2033,6 +2056,32 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             var isClosed: Bool
         }
 
+        private struct ShapeRecognitionDebug {
+            var selected: String
+            var reason: String
+            var pointCount: Int
+            var endpointGap: CGFloat
+            var vertexCount: Int
+            var scores: [(kind: String, score: CGFloat)]
+            var samplePoints: [CGPoint]
+
+            var summary: String {
+                let scoreText = scores
+                    .sorted { $0.score < $1.score }
+                    .prefix(6)
+                    .map { "\($0.kind)=\(String(format: "%.3f", Double($0.score)))" }
+                    .joined(separator: " ")
+                return "shape \(selected) [\(reason)] pts=\(pointCount) gap=\(String(format: "%.2f", Double(endpointGap))) v=\(vertexCount)\n\(scoreText)"
+            }
+
+            var consoleDetails: String {
+                let pointsText = samplePoints.map {
+                    "[\(String(format: "%.1f", Double($0.x))),\(String(format: "%.1f", Double($0.y)))]"
+                }.joined(separator: ",")
+                return "\(summary.replacingOccurrences(of: "\n", with: " | ")) sample=[\(pointsText)]"
+            }
+        }
+
         private struct ShapeHandleDrag {
             var pageIndex: Int
             var strokeId: String
@@ -2069,6 +2118,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         private var didLockScrollForDrawing = false
         private var shapeHoldWorkItem: DispatchWorkItem?
         private var activeShapeFit: ShapeFit?
+        private var lastShapeRecognitionDebug: ShapeRecognitionDebug?
         private var activeShapeDragHandleIndex: Int?
         private var activeShapeHandleDrag: ShapeHandleDrag?
         private var lastPenPointTime: TimeInterval = 0
@@ -2539,14 +2589,24 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                     return
                 }
                 let overlayPoints = pdfView.drawingOverlay.points
-                guard let fit = self.fitShape(from: overlayPoints) else { return }
+                guard let fit = self.fitShape(from: overlayPoints) else {
+                    self.publishShapeRecognitionDebug(on: pdfView)
+                    return
+                }
                 self.activeShapeFit = fit
                 self.activeShapeDragHandleIndex = self.shapeDragHandleIndex(for: fit, near: overlayPoints.last)
                 pdfView.drawingOverlay.replace(with: fit.points)
+                self.publishShapeRecognitionDebug(on: pdfView)
             }
             shapeHoldWorkItem?.cancel()
             shapeHoldWorkItem = workItem
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: workItem)
+        }
+
+        private func publishShapeRecognitionDebug(on pdfView: AnnotatedPDFView) {
+            guard let debug = lastShapeRecognitionDebug else { return }
+            print("[CodmesShapeRecognition] \(debug.consoleDetails)")
+            pdfView.showShapeDebug(debug.summary)
         }
 
         private func shapeDragHandleIndex(for fit: ShapeFit, near point: CGPoint?) -> Int {
@@ -2640,10 +2700,17 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         }
 
         private func fitShape(from points: [CGPoint]) -> ShapeFit? {
+            lastShapeRecognitionDebug = nil
             let points = resampled(points, spacing: 4)
-            guard points.count > 8, let bounds = pointBounds(points) else { return nil }
+            guard points.count > 8, let bounds = pointBounds(points) else {
+                lastShapeRecognitionDebug = ShapeRecognitionDebug(selected: "none", reason: "too-few-points", pointCount: points.count, endpointGap: 0, vertexCount: 0, scores: [], samplePoints: points)
+                return nil
+            }
             let diagonal = max(hypot(bounds.width, bounds.height), 1)
-            guard diagonal > 20 else { return nil }
+            guard diagonal > 20 else {
+                lastShapeRecognitionDebug = ShapeRecognitionDebug(selected: "none", reason: "too-small", pointCount: points.count, endpointGap: 0, vertexCount: 0, scores: [], samplePoints: resampleToCount(points, count: min(32, max(points.count, 2))))
+                return nil
+            }
 
             let endpointGap = distance(points[0], points[points.count - 1]) / diagonal
             if let templateFit = templateRecognizedShape(from: points, bounds: bounds, diagonal: diagonal, endpointGap: endpointGap) {
@@ -2676,6 +2743,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
 
             guard let best = candidates.min(by: { $0.score < $1.score }) else { return nil }
             if best.score < 0.62 {
+                lastShapeRecognitionDebug = shapeDebug(selected: best.fit.kind, reason: "candidate", points: points, diagonal: diagonal, endpointGap: endpointGap, candidates: candidates)
                 return best.fit
             }
 
@@ -2683,9 +2751,11 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                 .filter({ $0.fit.kind == "line" || $0.fit.kind == "polyline" })
                 .min(by: { $0.score < $1.score }),
                fallback.score < 0.78 {
+                lastShapeRecognitionDebug = shapeDebug(selected: fallback.fit.kind, reason: "line-fallback", points: points, diagonal: diagonal, endpointGap: endpointGap, candidates: candidates)
                 return fallback.fit
             }
 
+            lastShapeRecognitionDebug = shapeDebug(selected: "none", reason: "score-threshold", points: points, diagonal: diagonal, endpointGap: endpointGap, candidates: candidates)
             return nil
         }
 
@@ -2710,36 +2780,66 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                let rectangleScore = scored.first(where: { $0.fit.kind == "rectangle" })?.score,
                triangleScore <= rectangleScore + 0.12,
                triangleScore < 0.48 {
+                lastShapeRecognitionDebug = shapeDebug(selected: "triangle", reason: "triangle-guard", points: points, diagonal: diagonal, endpointGap: endpointGap, candidates: scored)
                 return triangle
             }
 
             guard let best = scored.first,
-                  best.score < 0.34 else { return nil }
+                  best.score < 0.34 else {
+                lastShapeRecognitionDebug = shapeDebug(selected: "none", reason: "template-threshold", points: points, diagonal: diagonal, endpointGap: endpointGap, candidates: scored)
+                return nil
+            }
 
             switch best.fit.kind {
             case "line":
+                lastShapeRecognitionDebug = shapeDebug(selected: "line", reason: "template", points: points, diagonal: diagonal, endpointGap: endpointGap, candidates: scored)
                 return ShapeFit(kind: "line", points: [points[0], points[points.count - 1]])
             case "polyline":
+                lastShapeRecognitionDebug = shapeDebug(selected: "polyline", reason: "template", points: points, diagonal: diagonal, endpointGap: endpointGap, candidates: scored)
                 return ShapeFit(kind: "polyline", points: fittedPolyline(from: points, diagonal: diagonal))
             case "triangle":
                 if let triangle = bestTriangleCandidate(from: points, diagonal: diagonal)?.fit {
+                    lastShapeRecognitionDebug = shapeDebug(selected: "triangle", reason: "template", points: points, diagonal: diagonal, endpointGap: endpointGap, candidates: scored)
                     return triangle
                 }
+                lastShapeRecognitionDebug = shapeDebug(selected: "triangle", reason: "template-fallback", points: points, diagonal: diagonal, endpointGap: endpointGap, candidates: scored)
                 return fallbackTriangle(from: points, bounds: bounds, diagonal: diagonal)
             case "rectangle":
                 if let rectangle = closedPolygonCandidates(from: points, diagonal: diagonal)
                     .filter({ $0.fit.kind == "rectangle" })
                     .min(by: { $0.score < $1.score })?.fit {
+                    lastShapeRecognitionDebug = shapeDebug(selected: "rectangle", reason: "template", points: points, diagonal: diagonal, endpointGap: endpointGap, candidates: scored)
                     return rectangle
                 }
+                lastShapeRecognitionDebug = shapeDebug(selected: "rectangle", reason: "template-fallback", points: points, diagonal: diagonal, endpointGap: endpointGap, candidates: scored)
                 return ShapeFit(kind: "rectangle", points: rectanglePoints(from: CGPoint(x: bounds.minX, y: bounds.minY), to: CGPoint(x: bounds.maxX, y: bounds.maxY)))
             case "circle":
+                lastShapeRecognitionDebug = shapeDebug(selected: "circle", reason: "template", points: points, diagonal: diagonal, endpointGap: endpointGap, candidates: scored)
                 return ShapeFit(kind: "circle", points: circlePoints(in: bounds, count: 48))
             case "ellipse":
+                lastShapeRecognitionDebug = shapeDebug(selected: "ellipse", reason: "template", points: points, diagonal: diagonal, endpointGap: endpointGap, candidates: scored)
                 return ShapeFit(kind: "ellipse", points: ellipsePoints(in: bounds, count: 48))
             default:
                 return nil
             }
+        }
+
+        private func shapeDebug(selected: String, reason: String, points: [CGPoint], diagonal: CGFloat, endpointGap: CGFloat, candidates: [ShapeCandidate]) -> ShapeRecognitionDebug {
+            let vertices = deduplicatedVertices(simplify(points, epsilon: max(diagonal * 0.045, 4)), diagonal: diagonal)
+            var bestByKind: [String: CGFloat] = [:]
+            for candidate in candidates {
+                bestByKind[candidate.fit.kind] = min(bestByKind[candidate.fit.kind] ?? .greatestFiniteMagnitude, candidate.score)
+            }
+            let scores = bestByKind.map { (kind: $0.key, score: $0.value) }
+            return ShapeRecognitionDebug(
+                selected: selected,
+                reason: reason,
+                pointCount: points.count,
+                endpointGap: endpointGap,
+                vertexCount: vertices.count,
+                scores: scores,
+                samplePoints: resampleToCount(points, count: 32)
+            )
         }
 
         private func normalizedGesture(_ points: [CGPoint], count: Int) -> [CGPoint]? {
