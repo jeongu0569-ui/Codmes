@@ -54,6 +54,20 @@ This README is user-facing. Implementation details live in the linked docs.
 - Change selected text size.
 - Tap empty space or start another interaction to hide selection handles.
 
+### Text Boxes
+
+- Tap the text tool, then tap a PDF page to create an inline text box at that
+  position.
+- Type directly on the page instead of entering text in a separate popup.
+- Leave a new text box empty and tap away or dismiss the keyboard to discard it.
+- Tap an existing text box with any writing tool to select it.
+- Double-tap a text box to edit its content immediately.
+- Drag a selected text box to move it without scrolling the PDF.
+- Use the left and right resize handles to change text box width. Text wraps
+  onto more lines when the box becomes narrower.
+- Text resize handles are hidden while the text box is moving and return at the
+  final position after the move ends.
+
 ### Undo And Redo
 
 - Undo and redo annotation edits from the PDF toolbar.
@@ -84,6 +98,8 @@ This README is user-facing. Implementation details live in the linked docs.
   behavior for handwriting and auto-completed shapes.
 - [Undo And Redo](undo-redo.md): client-side undo/redo history, stack limit,
   and server persistence boundary.
+- [Text Boxes](textbox.md): inline text box editing, selection, moving,
+  resizing, wrapping, gesture routing, and persistence.
 - [PDF Ink Debug History](pdf-ink-debug-history.md): why ink was invisible
   before and how the current visible ink path works.
 - [Shape Recognition Datasets](shape-recognition-datasets.md): public datasets,
