@@ -121,7 +121,7 @@ python3 scripts/fetch_quickdraw_shape_samples.py \
   --output /tmp/codmes-shape-quickdraw-800.jsonl
 
 python3 scripts/export_shape_exemplar_bank.py \
-  --input /tmp/codmes-shape-quickdraw-800.jsonl \
+  --input /tmp/codmes-shape-bank-1200.jsonl \
   --output client/apple/Sources/Codmes/PDFShapeExemplarBank.swift
 ```
 
@@ -148,6 +148,38 @@ This 90% held-out result is a replay metric, not a guarantee that all real user
 stylus shapes will classify correctly. Real in-app failures should still be
 copied from diagnostics into a local replay corpus and used to grow or rebalance
 the bank.
+
+## Ellipse And Polyline Augments
+
+Quick, Draw! provides useful public vectors for `circle`, `square`, `triangle`,
+and `line`, but it does not directly cover note-taking gestures such as thin
+ellipses or Korean-style bent strokes like `ㄱ`, `ㄴ`, and `ㄹ`. Codmes therefore
+adds synthetic note-shape augments:
+
+```bash
+python3 scripts/generate_shape_augments.py \
+  --ellipse-count 180 \
+  --polyline-count 220 \
+  --output /tmp/codmes-shape-augments.jsonl
+
+cat /tmp/codmes-shape-quickdraw-800.jsonl \
+  /tmp/codmes-shape-augments.jsonl \
+  > /tmp/codmes-shape-bank-1200.jsonl
+```
+
+The generated classes are:
+
+- `ellipse`: elongated closed strokes so thin ovals do not collapse into rectangle/circle.
+- `polyline`: open bent strokes and step strokes so `ㄱ`, `ㄴ`, `ㄹ`, and zigzags do not collapse into line/circle.
+
+Current mixed held-out check, using a different synthetic seed:
+
+```text
+strategy=geometric
+total=600 correct=548 none=3 wrong=49 accuracy=0.9133
+ellipse: ellipse=90
+polyline: polyline=109 rectangle=1
+```
 
 ## In-App Diagnostics
 

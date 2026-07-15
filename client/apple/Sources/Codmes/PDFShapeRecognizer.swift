@@ -80,9 +80,6 @@ struct PDFShapeRecognizer {
         var candidates: [Candidate] = []
 
         if let line = lineCandidate(from: points, diagonal: diagonal, endpointGap: endpointGap) {
-            if line.score < 0.105 {
-                return success(line, selected: "line", reason: "straight-line", points: points, endpointGap: endpointGap, candidates: [line])
-            }
             candidates.append(line)
         }
 
@@ -99,7 +96,7 @@ struct PDFShapeRecognizer {
         }
 
         if let exemplar = exemplarMatch(from: points),
-           let candidate = exemplarCandidate(from: exemplar, points: points, bounds: bounds, diagonal: diagonal, existingCandidates: candidates) {
+           let candidate = exemplarCandidate(from: exemplar, points: points, bounds: bounds, diagonal: diagonal, endpointGap: endpointGap, existingCandidates: candidates) {
             candidates.append(candidate)
             if exemplar.distance <= 0.40 {
                 return success(candidate, selected: candidate.fit.kind, reason: candidate.reason, points: points, endpointGap: endpointGap, candidates: candidates)
@@ -329,11 +326,15 @@ struct PDFShapeRecognizer {
         points: [CGPoint],
         bounds: CGRect,
         diagonal: CGFloat,
+        endpointGap: CGFloat,
         existingCandidates: [Candidate]
     ) -> Candidate? {
         let strictThreshold: CGFloat = 0.40
         let bestExisting = existingCandidates.min(by: { $0.score < $1.score })
         guard match.distance <= strictThreshold || bestExisting == nil else { return nil }
+        if (match.kind == "circle" || match.kind == "ellipse"), endpointGap > 0.55 {
+            return nil
+        }
 
         let matchingExisting = existingCandidates
             .filter { $0.fit.kind == match.kind }
@@ -348,6 +349,15 @@ struct PDFShapeRecognizer {
             case "line":
                 fit = PDFShapeFit(kind: "line", points: [points[0], points[points.count - 1]])
                 vertices = fit.points
+            case "polyline":
+                let polyline = normalizedOpenVertices(
+                    deduplicated(simplify(points, epsilon: max(diagonal * 0.045, 4)), diagonal: diagonal, closed: false),
+                    points: points,
+                    diagonal: diagonal
+                )
+                guard polyline.count >= 3 else { return nil }
+                fit = PDFShapeFit(kind: "polyline", points: polyline)
+                vertices = polyline
             case "rectangle":
                 let rectangle = rectanglePoints(in: bounds)
                 fit = PDFShapeFit(kind: "rectangle", points: rectangle)
@@ -358,6 +368,9 @@ struct PDFShapeRecognizer {
                 vertices = triangle
             case "circle":
                 fit = PDFShapeFit(kind: "circle", points: circlePoints(in: bounds, count: 48))
+                vertices = []
+            case "ellipse":
+                fit = PDFShapeFit(kind: "ellipse", points: ellipsePoints(in: bounds, count: 48))
                 vertices = []
             default:
                 return nil
