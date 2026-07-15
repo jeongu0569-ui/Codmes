@@ -2690,7 +2690,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         }
 
         private func templateRecognizedShape(from points: [CGPoint], bounds: CGRect, diagonal: CGFloat, endpointGap: CGFloat) -> ShapeFit? {
-            let isClosed = endpointGap < 0.55
+            let isClosed = endpointGap < 0.68
             guard let normalized = normalizedGesture(points, count: 64) else { return nil }
             let templates = shapeTemplates(includeClosed: isClosed)
             guard !templates.isEmpty else { return nil }
@@ -2704,6 +2704,14 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                     )
                 }
                 .sorted { $0.score < $1.score }
+
+            if let triangle = openGapTriangleCandidate(from: points, diagonal: diagonal) ?? bestTriangleCandidate(from: points, diagonal: diagonal)?.fit,
+               let triangleScore = scored.first(where: { $0.fit.kind == "triangle" })?.score,
+               let rectangleScore = scored.first(where: { $0.fit.kind == "rectangle" })?.score,
+               triangleScore <= rectangleScore + 0.12,
+               triangleScore < 0.48 {
+                return triangle
+            }
 
             guard let best = scored.first,
                   best.score < 0.34 else { return nil }
@@ -2772,15 +2780,18 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             let aspect = max(bounds.width, bounds.height) / max(min(bounds.width, bounds.height), 1)
             let circularity = closedCircularity(points)
             let vertices = deduplicatedVertices(simplify(points, epsilon: max(diagonal * 0.045, 4)), diagonal: diagonal)
+            let vertexCount = vertices.count
             switch kind {
             case "line":
                 return endpointGap < 0.24 ? 0.18 : min(lineError(points, from: points[0], to: points[points.count - 1]) / diagonal, 0.35)
             case "polyline":
                 return endpointGap < 0.24 ? 0.16 : (vertices.count < 3 ? 0.14 : 0)
             case "triangle":
-                return endpointGap > 0.58 ? 0.24 : abs(CGFloat(vertices.count) - 3) * 0.035 + max(0, circularity - 0.58) * 0.1
+                let vertexPenalty: CGFloat = vertexCount == 3 ? 0 : (vertexCount == 4 ? 0.05 : abs(CGFloat(vertexCount) - 3) * 0.055)
+                return endpointGap > 0.58 ? 0.24 : vertexPenalty + max(0, circularity - 0.58) * 0.1
             case "rectangle":
-                return endpointGap > 0.48 ? 0.22 : abs(CGFloat(vertices.count) - 4) * 0.035 + max(0, circularity - 0.72) * 0.12
+                let vertexPenalty: CGFloat = vertexCount <= 3 ? 0.18 : abs(CGFloat(vertexCount) - 4) * 0.055
+                return endpointGap > 0.48 ? 0.22 : vertexPenalty + max(0, circularity - 0.72) * 0.12
             case "circle":
                 return endpointGap > 0.52 ? 0.2 : abs(aspect - 1) * 0.05 + max(0, 0.58 - circularity) * 0.18 + (vertices.count <= 5 ? 0.08 : 0)
             case "ellipse":
@@ -2798,7 +2809,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         }
 
         private func templatePolyline(_ points: [CGPoint], count: Int) -> [CGPoint] {
-            resampleToCount(points, count: count)
+            normalizedGesture(points, count: count) ?? resampleToCount(points, count: count)
         }
 
         private func resampleToCount(_ points: [CGPoint], count: Int) -> [CGPoint] {
