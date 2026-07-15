@@ -44,7 +44,9 @@ def flatten_strokes(drawing: list[list[list[int]]]) -> list[dict[str, float]]:
     return points
 
 
-def convert_record(record: dict, source_class: str, expected_kind: str) -> dict | None:
+def convert_record(record: dict, source_class: str, expected_kind: str, recognized_only: bool) -> dict | None:
+    if recognized_only and not record.get("recognized", False):
+        return None
     points = flatten_strokes(record.get("drawing", []))
     if len(points) < 8:
         return None
@@ -68,6 +70,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--per-class", type=int, default=80)
     parser.add_argument("--output", default="docs/notes/shape-recognition-quickdraw-samples.jsonl")
+    parser.add_argument(
+        "--include-unrecognized",
+        action="store_true",
+        help="include Quick, Draw! records that Google's game did not recognize",
+    )
     args = parser.parse_args()
 
     output = Path(args.output)
@@ -78,7 +85,12 @@ def main() -> int:
         for source_class, expected_kind in DEFAULT_CLASSES.items():
             count = 0
             for record in iter_quickdraw_records(source_class):
-                converted = convert_record(record, source_class, expected_kind)
+                converted = convert_record(
+                    record,
+                    source_class,
+                    expected_kind,
+                    recognized_only=not args.include_unrecognized,
+                )
                 if not converted:
                     continue
                 handle.write(json.dumps(converted, sort_keys=True, separators=(",", ":")) + "\n")
