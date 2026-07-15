@@ -23,6 +23,9 @@ This README is user-facing. Implementation details live in the linked docs.
 - On iPad, Apple Pencil writes while finger touch can scroll.
 - On iPhone, one finger writes in write mode and two fingers scroll or zoom.
 - On Mac, mouse or trackpad input can draw, erase, and move objects.
+- Current client implementations are Apple-only: iOS/iPadOS and macOS. Windows
+  and Android/Galaxy Tab are planned adapter targets that should reuse the same
+  Codmes annotation state.
 
 ### Pen And Eraser
 
@@ -87,6 +90,8 @@ This README is user-facing. Implementation details live in the linked docs.
 
 ## Documentation Map
 
+Common Notes docs:
+
 - [Overview](overview.md): Notes surface boundaries and workspace structure.
 - [Content Types And Attachments](content-types-and-attachments.md): Markdown,
   PDF, image, and attachment behavior.
@@ -98,16 +103,27 @@ This README is user-facing. Implementation details live in the linked docs.
   behavior for handwriting and auto-completed shapes.
 - [Undo And Redo](undo-redo.md): client-side undo/redo history, stack limit,
   and server persistence boundary.
-- [Text Boxes](textbox.md): inline text box editing, selection, moving,
-  resizing, wrapping, gesture routing, and persistence.
 - [PDF Ink Debug History](pdf-ink-debug-history.md): why ink was invisible
   before and how the current visible ink path works.
 - [Shape Recognition Datasets](shape-recognition-datasets.md): public datasets,
   replay gates, exemplar bank, and recognition tuning.
 
+Platform-specific Notes docs:
+
+- [iOS/iPadOS Text Boxes](ios/textbox.md): `UITextView` overlay editing,
+  selection, moving, resizing, wrapping, and gesture routing.
+- [macOS Text Boxes](mac/textbox.md): `NSTextView` overlay editing, empty
+  draft handling, PDFView-level resize routing, moving, and persistence.
+
 ## Main Code Pointers
 
 - Apple PDF UI: `client/apple/Sources/Codmes/PDFWorkspaceView.swift`
+  - `#if os(iOS)`: shared iPhone/iPad implementation.
+  - `UIDevice.current.userInterfaceIdiom == .pad`: iPad-specific input policy,
+    mainly Apple Pencil drawing plus finger scrolling.
+  - `UIDevice.current.userInterfaceIdiom != .pad`: iPhone-style input policy,
+    mainly one-finger drawing plus two-finger scroll/zoom.
+  - `#if os(macOS)`: Mac AppKit/PDFKit implementation.
 - Shared Apple models: `client/apple/Sources/Codmes/Models.swift`
 - Apple API client: `client/apple/Sources/Codmes/WorkspaceAPI.swift`
 - Annotation API: `server/index.mjs`

@@ -1,7 +1,8 @@
-# Text Boxes
+# iOS And iPadOS Text Boxes
 
-This document explains the Apple PDF text box implementation for Codmes Notes.
-The user-facing summary lives in `docs/notes/README.md`.
+This document explains the iOS and iPadOS PDF text box implementation for
+Codmes Notes. The user-facing summary lives in `docs/notes/README.md`; the
+macOS implementation lives in `docs/notes/mac/textbox.md`.
 
 ## Goal
 
@@ -42,7 +43,7 @@ annotations, but live editing is driven by the Codmes object model.
 
 ## Rendering
 
-Apple PDF rendering is handled in
+The iOS/iPadOS PDF rendering path is handled in
 `client/apple/Sources/Codmes/PDFWorkspaceView.swift`.
 
 `PDFKit` displays the source PDF. For each visible page, `PDFKit` asks the

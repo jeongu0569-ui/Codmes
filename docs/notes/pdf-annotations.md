@@ -103,16 +103,18 @@ Current Apple support:
   selection/move, pen color/width options, eraser width options, text boxes,
   image objects, object selection/move/resize/delete, export/import, and PDF
   insertion.
-- macOS: PDFKit preview, mouse/trackpad pen input, stroke erasing, text/image
-  object selection, object move/resize, text editing, inspector controls, pen
-  color support, colored ink preview, and Delete-key object removal.
+- macOS: PDFKit preview, mouse/trackpad pen input, shape auto-completion,
+  stroke erasing, lasso selection/move, text boxes, text/image object
+  selection, object move/resize/delete, inline text editing, pen/eraser
+  options, colored ink preview, and Delete-key object removal.
 - Undo/redo: client-side annotation snapshots with an 80-step stack limit.
 - Shape partial erase: completed shapes can be partially erased; after the
   first partial erase, the shape is persisted as ordinary pen ink because shape
   handles no longer match the edited geometry.
-- Text boxes are placed by selecting the text tool and tapping the target page
-  location. Existing text/image objects can be selected and edited through the
-  inspector.
+- Text boxes are placed by selecting the text tool and tapping or clicking the
+  target page location. Existing text objects are edited inline on iOS/iPadOS
+  and macOS; object options and inspector controls are platform-specific UI
+  details over the same saved object model.
 - Stored `inkStrokes` are rendered as PDFKit `.ink` annotations so strokes made
   on one Apple platform remain visible on the other.
 
