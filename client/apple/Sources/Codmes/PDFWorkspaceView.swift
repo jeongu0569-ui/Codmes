@@ -2461,6 +2461,7 @@ private final class CodmesMacPDFView: PDFView {
     private var activeShapeFit: PDFShapeFit?
     private var activeShapeHoldWorkItem: DispatchWorkItem?
     private var activeShapeDragAnchorIndex: Int?
+    private var lastMacPenPointTime: TimeInterval = 0
     private var lastActivePreviewTool = "pen"
     private var lassoMoveStartSelection: PDFLassoSelectionSummary?
     private var lassoMoveStartPoint: CodmesInkPoint?
@@ -2547,6 +2548,7 @@ private final class CodmesMacPDFView: PDFView {
         case .pen:
             activePage = page
             activeStartTime = event.timestamp
+            lastMacPenPointTime = ProcessInfo.processInfo.systemUptime
             activePoints = [normalizedPoint(from: point, event: event, page: page, startTime: activeStartTime)]
             updateActivePreview(on: page, pageIndex: pageIndex, tool: "pen")
             scheduleMacShapeHold(page: page, pageIndex: pageIndex)
@@ -2602,6 +2604,7 @@ private final class CodmesMacPDFView: PDFView {
                 activeShapeFit = adjusted
             } else {
                 activePoints.append(normalized)
+                lastMacPenPointTime = ProcessInfo.processInfo.systemUptime
                 scheduleMacShapeHold(page: page, pageIndex: document?.index(for: page) ?? -1)
             }
             if let document {
@@ -2675,9 +2678,15 @@ private final class CodmesMacPDFView: PDFView {
             activePoints.append(normalizedPoint(from: point, event: event, page: page, startTime: activeStartTime))
             let pageIndex = document.index(for: page)
             if pageIndex >= 0, activePoints.count > 1 {
-                let recognized = activeShapeFit.map {
-                    (kind: Optional($0.kind), points: inkPoints(from: $0.points, template: activePoints))
-                } ?? recognizedMacShape(from: activePoints)
+                let recognized: (kind: String?, points: [CodmesInkPoint])
+                if let activeShapeFit {
+                    recognized = (
+                        kind: activeShapeFit.kind,
+                        points: inkPoints(from: activeShapeFit.points, template: activePoints)
+                    )
+                } else {
+                    recognized = (kind: nil, points: activePoints)
+                }
                 let stroke = CodmesInkStroke(
                     id: UUID().uuidString,
                     tool: recognized.kind.map { "shape:\($0)" } ?? "pen",
@@ -2828,6 +2837,11 @@ private final class CodmesMacPDFView: PDFView {
         activeShapeHoldWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self, weak page] in
             guard let self, let page, self.activePage === page, self.tool == .pen, self.activeShapeFit == nil else { return }
+            let now = ProcessInfo.processInfo.systemUptime
+            if now - self.lastMacPenPointTime < 0.5 {
+                self.scheduleMacShapeHold(page: page, pageIndex: pageIndex)
+                return
+            }
             guard let fit = self.recognizedMacShapeFit(from: self.activePoints) else { return }
             self.activeShapeFit = fit
             self.activeShapeDragAnchorIndex = self.macShapeDragAnchorIndex(for: fit)
@@ -3058,6 +3072,7 @@ private final class CodmesMacPDFView: PDFView {
         activeShapeHoldWorkItem = nil
         activeShapeFit = nil
         activeShapeDragAnchorIndex = nil
+        lastMacPenPointTime = 0
     }
 
     private func recognizedMacShape(from points: [CodmesInkPoint]) -> (kind: String?, points: [CodmesInkPoint]) {
@@ -3849,6 +3864,46 @@ fileprivate final class AnnotatedPDFView: PDFView {
     }
 }
 
+fileprivate final class PDFImmediateDrawingGestureRecognizer: UIGestureRecognizer {
+    var maximumNumberOfTouches = 1
+    private var activeTouch: UITouch?
+
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard activeTouch == nil else {
+            state = .cancelled
+            return
+        }
+        guard touches.count <= maximumNumberOfTouches,
+              let touch = touches.first else {
+            state = .failed
+            return
+        }
+        activeTouch = touch
+        state = .began
+    }
+
+    override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard let activeTouch, touches.contains(activeTouch) else { return }
+        state = .changed
+    }
+
+    override func touchesEnded(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard let activeTouch, touches.contains(activeTouch) else { return }
+        state = .ended
+        self.activeTouch = nil
+    }
+
+    override func touchesCancelled(_ touches: Set<UITouch>, with event: UIEvent) {
+        guard let activeTouch, touches.contains(activeTouch) else { return }
+        state = .cancelled
+        self.activeTouch = nil
+    }
+
+    override func reset() {
+        activeTouch = nil
+    }
+}
+
 fileprivate final class PDFDrawingOverlayView: UIView {
     var strokeColor = UIColor.black
     var lineWidth: CGFloat = 2.5
@@ -3879,7 +3934,12 @@ fileprivate final class PDFDrawingOverlayView: UIView {
 
     func move(to point: CGPoint) {
         guard let path else { return }
-        path.addLine(to: point)
+        if let previous = points.last {
+            let mid = CGPoint(x: (previous.x + point.x) / 2, y: (previous.y + point.y) / 2)
+            path.addQuadCurve(to: mid, controlPoint: previous)
+        } else {
+            path.move(to: point)
+        }
         points.append(point)
         setNeedsDisplay()
     }
@@ -4165,7 +4225,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         view.displayDirection = .vertical
         view.backgroundColor = .clear
         view.pageOverlayViewProvider = context.coordinator
-        let drawGesture = UIPanGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleDrawingPan(_:)))
+        let drawGesture = PDFImmediateDrawingGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleDrawingPan(_:)))
         drawGesture.maximumNumberOfTouches = 1
         drawGesture.cancelsTouchesInView = true
         drawGesture.delegate = context.coordinator
@@ -4294,7 +4354,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         }
 
         weak var pdfView: AnnotatedPDFView?
-        weak var drawingGesture: UIPanGestureRecognizer?
+        weak var drawingGesture: PDFImmediateDrawingGestureRecognizer?
         weak var textResizePanGesture: UIPanGestureRecognizer?
         weak var objectMovePanGesture: UIPanGestureRecognizer?
         weak var objectEditTapGesture: UITapGestureRecognizer?
@@ -4578,7 +4638,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             }
         }
 
-        @objc func handleDrawingPan(_ gesture: UIPanGestureRecognizer) {
+        @objc func handleDrawingPan(_ gesture: UIGestureRecognizer) {
             guard let pdfView else { return }
             let viewPoint = gesture.location(in: pdfView)
             let overlayPoint = gesture.location(in: pdfView.drawingOverlay)
@@ -4661,7 +4721,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                         pdfView.drawingOverlay.replace(with: adjusted.points)
                     } else {
                         let movedDistance = lastPenOverlayPoint.map { distance($0, overlayPoint) } ?? .greatestFiniteMagnitude
-                        if movedDistance >= 2.5 {
+                        if movedDistance >= 0.75 {
                             pdfView.drawingOverlay.move(to: overlayPoint)
                             lastPenOverlayPoint = overlayPoint
                             lastPenPointTime = ProcessInfo.processInfo.systemUptime
@@ -6029,7 +6089,8 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
 
         private func makeStroke(from points: [CGPoint], page: PDFPage, tool: String = "pen") -> CodmesInkStroke {
             let bounds = page.bounds(for: .mediaBox)
-            let normalizedPoints = points.enumerated().map { offset, point in
+            let sourcePoints = tool == "pen" ? smoothedStrokePoints(points) : points
+            let normalizedPoints = sourcePoints.enumerated().map { offset, point in
                 normalizedPoint(from: point, page: page, timeOffset: Double(offset) * 0.008, pageBounds: bounds)
             }
             return CodmesInkStroke(
@@ -6040,6 +6101,21 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                 opacity: nil,
                 points: normalizedPoints
             )
+        }
+
+        private func smoothedStrokePoints(_ points: [CGPoint]) -> [CGPoint] {
+            guard points.count > 3 else { return points }
+            var result = points
+            for index in 1..<(points.count - 1) {
+                let previous = points[index - 1]
+                let current = points[index]
+                let next = points[index + 1]
+                result[index] = CGPoint(
+                    x: previous.x * 0.22 + current.x * 0.56 + next.x * 0.22,
+                    y: previous.y * 0.22 + current.y * 0.56 + next.y * 0.22
+                )
+            }
+            return result
         }
 
         private func normalizedPoint(from viewPoint: CGPoint, page: PDFPage, timeOffset: Double? = nil, pageBounds: CGRect? = nil) -> CodmesInkPoint {
