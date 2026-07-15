@@ -2589,6 +2589,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             let circleScore = circleFitError(points, bounds: bounds)
             let angleCoverage = angularCoverage(points, bounds: bounds)
             let circularityScore = closedCircularity(points)
+            let angularStroke = angularStrokeIntent(points, diagonal: diagonal)
             var candidates: [(fit: ShapeFit, score: CGFloat)] = []
 
             let rectPoints = [
@@ -2598,7 +2599,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                 CGPoint(x: bounds.minX, y: bounds.maxY),
                 CGPoint(x: bounds.minX, y: bounds.minY)
             ]
-            if circleScore < 0.24, angleCoverage > 0.68, edgeFit < 0.72 {
+            if circleScore < 0.24, angleCoverage > 0.68, edgeFit < 0.72, !angularStroke {
                 return ShapeFit(kind: "circle", points: circle)
             }
 
@@ -2609,16 +2610,19 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                 candidates.append((ShapeFit(kind: "rectangle", points: rectPoints), rectangleScore))
             }
 
-            if circleScore < 0.34, angleCoverage > 0.58 {
+            if circleScore < 0.34, angleCoverage > 0.58, !angularStroke {
                 candidates.append((ShapeFit(kind: "circle", points: circle), circleScore * 0.55))
             }
 
-            if ellipseScore < 0.5, circularityScore > 0.52 {
+            if ellipseScore < 0.5, circularityScore > 0.52, !angularStroke {
                 candidates.append((ShapeFit(kind: "ellipse", points: ellipse), ellipseScore * 0.7))
             }
 
             if let best = candidates.min(by: { $0.score < $1.score }) {
                 return best.fit
+            }
+            if angularStroke {
+                return ShapeFit(kind: "polyline", points: fittedPolyline(from: points, diagonal: diagonal))
             }
             return ShapeFit(kind: "ellipse", points: ellipse)
         }
@@ -2630,7 +2634,10 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             if let openTriangle = openTriangleCandidate(from: points, diagonal: diagonal) {
                 return openTriangle
             }
-            return closedStrokeTriangleCandidate(from: points, diagonal: diagonal)
+            if let closedTriangle = closedStrokeTriangleCandidate(from: points, diagonal: diagonal) {
+                return closedTriangle
+            }
+            return roughStrokeTriangleCandidate(from: points, diagonal: diagonal)
         }
 
         private func openTriangleCandidate(from points: [CGPoint], diagonal: CGFloat) -> ShapeFit? {
@@ -2665,7 +2672,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             let start = points[0]
             let end = points[points.count - 1]
             let endpointGap = distance(start, end) / diagonal
-            guard endpointGap > 0.04, endpointGap < 0.55 else { return nil }
+            guard endpointGap > 0.015, endpointGap < 0.55 else { return nil }
 
             let apex = CGPoint(x: (start.x + end.x) / 2, y: (start.y + end.y) / 2)
             let orderedPath = [apex] + Array(points.dropFirst().dropLast()) + [apex]
@@ -2717,6 +2724,85 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                 }
             }
             return best?.fit
+        }
+
+        private func roughStrokeTriangleCandidate(from points: [CGPoint], diagonal: CGFloat) -> ShapeFit? {
+            guard angularStrokeIntent(points, diagonal: diagonal) else { return nil }
+            let epsilons: [CGFloat] = [0.025, 0.035, 0.045, 0.06, 0.08, 0.105]
+            var best: (fit: ShapeFit, score: CGFloat)?
+
+            for epsilon in epsilons {
+                let simplified = simplify(points, epsilon: max(diagonal * epsilon, 3.5))
+                let vertices = deduplicatedVertices(simplified, diagonal: diagonal).filter { vertex in
+                    guard let bounds = pointBounds(points) else { return true }
+                    return bounds.insetBy(dx: -diagonal * 0.05, dy: -diagonal * 0.05).contains(vertex)
+                }
+                guard vertices.count >= 3, vertices.count <= 8 else { continue }
+
+                for first in 0..<(vertices.count - 2) {
+                    for second in (first + 1)..<(vertices.count - 1) {
+                        for third in (second + 1)..<vertices.count {
+                            let triangle = [vertices[first], vertices[second], vertices[third], vertices[first]]
+                            let areaRatio = abs(polygonArea(triangle)) / (diagonal * diagonal)
+                            guard areaRatio > 0.026,
+                                  distance(vertices[first], vertices[second]) / diagonal > 0.16,
+                                  distance(vertices[second], vertices[third]) / diagonal > 0.16,
+                                  distance(vertices[third], vertices[first]) / diagonal > 0.16 else { continue }
+
+                            let score = polylineError(points, candidate: triangle) / diagonal
+                            guard score < 0.62 else { continue }
+                            let weighted = score - min(areaRatio, 0.18) * 0.18
+                            if best == nil || weighted < best!.score {
+                                best = (ShapeFit(kind: "triangle", points: triangle), weighted)
+                            }
+                        }
+                    }
+                }
+            }
+            return best?.fit
+        }
+
+        private func angularStrokeIntent(_ points: [CGPoint], diagonal: CGFloat) -> Bool {
+            guard points.count > 8 else { return false }
+            let simplified = deduplicatedVertices(simplify(points, epsilon: max(diagonal * 0.045, 4)), diagonal: diagonal)
+            guard simplified.count >= 3 else { return false }
+            var sharpTurns = 0
+            for index in 1..<(simplified.count - 1) {
+                let angle = turnAngle(previous: simplified[index - 1], current: simplified[index], next: simplified[index + 1])
+                if angle < 2.35 {
+                    sharpTurns += 1
+                }
+            }
+            if distance(points[0], points[points.count - 1]) / diagonal < 0.2, simplified.count > 3 {
+                let angle = turnAngle(previous: simplified[simplified.count - 2], current: simplified[0], next: simplified[1])
+                if angle < 2.35 {
+                    sharpTurns += 1
+                }
+            }
+            return sharpTurns >= 2
+        }
+
+        private func deduplicatedVertices(_ points: [CGPoint], diagonal: CGFloat) -> [CGPoint] {
+            var result: [CGPoint] = []
+            for point in points {
+                if result.last.map({ distance($0, point) / diagonal < 0.035 }) == true {
+                    continue
+                }
+                result.append(point)
+            }
+            if result.count > 2, let first = result.first, let last = result.last, distance(first, last) / diagonal < 0.05 {
+                result.removeLast()
+            }
+            return result
+        }
+
+        private func turnAngle(previous: CGPoint, current: CGPoint, next: CGPoint) -> CGFloat {
+            let first = CGVector(dx: previous.x - current.x, dy: previous.y - current.y)
+            let second = CGVector(dx: next.x - current.x, dy: next.y - current.y)
+            let firstLength = max(hypot(first.dx, first.dy), 0.001)
+            let secondLength = max(hypot(second.dx, second.dy), 0.001)
+            let dot = (first.dx * second.dx + first.dy * second.dy) / (firstLength * secondLength)
+            return acos(max(-1, min(1, dot)))
         }
 
         private func pointBounds(_ points: [CGPoint]) -> CGRect? {
