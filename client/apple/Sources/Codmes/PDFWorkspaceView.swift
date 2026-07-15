@@ -2733,7 +2733,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             }
 
             if endpointGap < 0.62, let triangle = bestTriangleFit(from: points, bounds: bounds, diagonal: diagonal) {
-                let vertexBias: CGFloat = dominantVertices.count == 3 ? -0.035 : (isClosedGesture && dominantVertices.count == 4 ? 0.18 : 0)
+                let vertexBias: CGFloat = dominantVertices.count == 3 ? -0.035 : (isClosedGesture && dominantVertices.count >= 4 ? 0.36 : 0)
                 let openGapPenalty = max(0, endpointGap - 0.34) * 0.1
                 candidates.append(ShapeCandidate(fit: triangle.fit, score: triangle.score + vertexBias + openGapPenalty + 0.015))
             }
@@ -3051,13 +3051,9 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
                 let polygon = vertices + [vertices[0]]
                 let areaRatio = abs(polygonArea(polygon)) / (diagonal * diagonal)
                 guard areaRatio > 0.03 else { continue }
-                if vertices.count == 4 {
-                    guard let bounds = pointBounds(points),
-                          edgeFitRatio(points, bounds: bounds) > 0.48 else { continue }
-                }
                 let score = polylineError(points, candidate: polygon) / diagonal
                     + max(0, endpointGap - 0.18) * 0.18
-                    + (vertices.count == 4 ? 0.025 : 0.015)
+                    + (vertices.count == 4 ? -0.015 : 0.015)
                 let kind = vertices.count == 4 ? "rectangle" : "triangle"
                 result.append(ShapeCandidate(fit: ShapeFit(kind: kind, points: polygon), score: score))
             }
