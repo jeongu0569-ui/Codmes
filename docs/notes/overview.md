@@ -79,8 +79,11 @@ The current Apple implementation saves portable `inkStrokes` per PDF page and
 stores text/image annotation objects with page-relative bbox metadata. It can
 read older `inkDataBase64` state, but new clients should use `inkStrokes`.
 
-For details, see [PDF Annotations](pdf-annotations.md) and
-[PDF Ink Debug History](pdf-ink-debug-history.md).
+For details, see [PDF Annotations](pdf-annotations.md),
+[Annotation Sync And RAG](annotation-sync-and-rag.md),
+[Eraser And Shape Strokes](eraser-and-shape-strokes.md), and
+[Undo And Redo](undo-redo.md). For the original ink visibility debugging
+history, see [PDF Ink Debug History](pdf-ink-debug-history.md).
 
 ## Notes Surface LLM Tools
 
@@ -114,3 +117,6 @@ workspace-wide `codmes_search`.
 PDF source text, text annotation objects, and image annotation OCR blocks can
 enter search/RAG. Handwritten pen `inkStrokes` are stored and rendered, but
 handwriting OCR over ink is not implemented yet.
+
+Undo/redo is currently a client-side convenience feature. The server persists
+only the resulting current annotation document, not the undo history.

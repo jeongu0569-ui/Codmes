@@ -106,6 +106,10 @@ Current Apple support:
 - macOS: PDFKit preview, mouse/trackpad pen input, stroke erasing, text/image
   object selection, object move/resize, text editing, inspector controls, pen
   color support, colored ink preview, and Delete-key object removal.
+- Undo/redo: client-side annotation snapshots with an 80-step stack limit.
+- Shape partial erase: completed shapes can be partially erased; after the
+  first partial erase, the shape is persisted as ordinary pen ink because shape
+  handles no longer match the edited geometry.
 - Text boxes are placed by selecting the text tool and tapping the target page
   location. Existing text/image objects can be selected and edited through the
   inspector.
@@ -153,6 +157,11 @@ server:
 The server can use the saved PDF and annotation state for derived features such
 as indexing. Handwritten `inkStrokes` are stored and rendered, but handwriting
 OCR over ink is not implemented yet.
+
+See [Annotation Sync And RAG](annotation-sync-and-rag.md) for API, storage,
+indexing, OCR, RAG, and Notes chat tool details. See
+[Eraser And Shape Strokes](eraser-and-shape-strokes.md) for the shape partial
+erase behavior and [Undo And Redo](undo-redo.md) for history behavior.
 
 ## Still Planned
 

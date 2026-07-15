@@ -1,52 +1,100 @@
-# Notes Surface Documentation
+# Notes
 
-This folder is the source of truth for the Codmes Notes surface: note files,
-PDF viewing/annotation, attachments shown from Notes, and the Notes chat tool
-mode.
+Codmes Notes is the workspace surface for Markdown notes, PDF reading, PDF
+annotation, attachments, and note-aware chat.
 
-## Start Here
+This README is user-facing. Implementation details live in the linked docs.
 
-- [Overview](overview.md): workspace structure, Notes surface responsibilities,
-  and current implementation status.
-- [Content Types And Attachments](content-types-and-attachments.md): how
-  Markdown, PDF, images, and attached files appear inside the Notes surface.
-- [PDF Annotations](pdf-annotations.md): `.codmes` annotation storage, ink,
-  text/image objects, read/write modes, and platform behavior.
-- [PDF Ink Debug History](pdf-ink-debug-history.md): why the pen did not appear,
-  what was tried, and how the current visible ink path fixed it.
+## What Users Can Do
 
-## Current Code Pointers
+### Notes And Attachments
+
+- Open and edit Markdown or text notes.
+- Store PDFs, images, and other files in the workspace.
+- Attach images to PDFs as movable note objects.
+- Insert PDF pages into an existing PDF note.
+- Export a PDF with annotations flattened into the file.
+- Export a PDF together with its editable Codmes state.
+
+### PDF Reading And Writing
+
+- Use read mode for normal PDF scrolling and zooming.
+- Use write mode for pen, eraser, lasso, text, and image editing.
+- On iPad, Apple Pencil writes while finger touch can scroll.
+- On iPhone, one finger writes in write mode and two fingers scroll or zoom.
+- On Mac, mouse or trackpad input can draw, erase, and move objects.
+
+### Pen And Eraser
+
+- Draw live ink with selectable pen color and width.
+- Use the eraser with selectable width.
+- Erase parts of normal handwriting strokes.
+- Erase parts of auto-completed shapes. After a shape is partially erased, it
+  becomes normal pen ink because the original shape handles no longer describe
+  the edited stroke.
+
+### Shape Auto-Completion
+
+- Draw a line, bent line, rectangle, triangle, circle, or ellipse.
+- Hold briefly without lifting to auto-complete the shape.
+- Resize completed shapes with handles.
+- Ellipses keep their ellipse geometry while being adjusted.
+- Shape recognition is backed by geometric recognition plus replay-tested
+  exemplar data.
+
+### Lasso And Selection
+
+- Draw a dashed lasso around handwriting, shapes, text boxes, or images.
+- Tap with the lasso tool to select nearby handwriting, shapes, text, or images
+  without drawing a full lasso.
+- Move selected content.
+- Resize completed shapes with handles.
+- Delete a selection.
+- Change selected ink color.
+- Change selected text size.
+- Tap empty space or start another interaction to hide selection handles.
+
+### Undo And Redo
+
+- Undo and redo annotation edits from the PDF toolbar.
+- The current implementation keeps up to 80 undo snapshots in client memory.
+- Undo history is not saved to the server. The server stores the current
+  annotation result after edits, undo, or redo.
+
+### Notes Chat
+
+- Notes chat can read specific notes when a user asks about a known file.
+- Notes chat can search indexed notes, PDFs, documents, code, and conversation
+  context when a user asks a broader question.
+- PDF source text, text boxes, and OCR from attached PDF images can become
+  searchable.
+- Handwritten ink is saved and rendered, but handwriting OCR over ink is not
+  implemented yet.
+
+## Documentation Map
+
+- [Overview](overview.md): Notes surface boundaries and workspace structure.
+- [Content Types And Attachments](content-types-and-attachments.md): Markdown,
+  PDF, image, and attachment behavior.
+- [PDF Annotations](pdf-annotations.md): editable PDF annotation model and
+  platform behavior.
+- [Annotation Sync And RAG](annotation-sync-and-rag.md): annotation APIs,
+  `.codmes` storage, indexing, OCR, RAG, and Notes LLM tools.
+- [Eraser And Shape Strokes](eraser-and-shape-strokes.md): partial eraser
+  behavior for handwriting and auto-completed shapes.
+- [Undo And Redo](undo-redo.md): client-side undo/redo history, stack limit,
+  and server persistence boundary.
+- [PDF Ink Debug History](pdf-ink-debug-history.md): why ink was invisible
+  before and how the current visible ink path works.
+- [Shape Recognition Datasets](shape-recognition-datasets.md): public datasets,
+  replay gates, exemplar bank, and recognition tuning.
+
+## Main Code Pointers
 
 - Apple PDF UI: `client/apple/Sources/Codmes/PDFWorkspaceView.swift`
 - Shared Apple models: `client/apple/Sources/Codmes/Models.swift`
+- Apple API client: `client/apple/Sources/Codmes/WorkspaceAPI.swift`
 - Annotation API: `server/index.mjs`
 - Annotation path and document ingest: `server/lib/document-ingest.mjs`
-- Notes surface tool mode: `server/lib/runtime/tool-mode-registry.mjs`
-- LLM workspace tools: `server/lib/runtime/workspace-tools.mjs`
-
-## Current Behavior Snapshot
-
-Notes surface conversations expose read/search tools to the LLM, not code-edit
-tools by default. The default Notes tool mode includes `codmes_search`,
-`workspace_search`, `read_note_file`, `read_file_metadata`,
-`conversation_search`, `conversation_read`, `memory_search`, and
-`tool_discovery`.
-
-PDF ink is not stored only in the PDF file and not only in an Apple local cache.
-The editable state is stored as workspace-owned JSON next to the document:
-
-```text
-Notes/mypage.pdf
-Notes/.codmes/annotations/mypage.codmes.json
-```
-
-The Apple client renders live drawing immediately, commits strokes as PDFKit
-`.ink` annotations for visibility, and saves portable `inkStrokes` back through
-`PUT /api/file/annotations`. The server refreshes the search index for the PDF
-after annotation saves.
-
-Notes chat can call workspace-wide search tools when a user asks about broader
-context. In Notes-specific terms: PDF source text, text boxes, and image
-annotation OCR can become searchable context; handwritten pen `inkStrokes` are
-stored and rendered, but handwriting OCR over ink is not implemented yet. The
-common search runtime is documented separately under `docs/search`.
+- Notes tool mode: `server/lib/runtime/tool-mode-registry.mjs`
+- Workspace/RAG tools: `server/lib/runtime/workspace-tools.mjs`
