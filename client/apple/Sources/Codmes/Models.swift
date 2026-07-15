@@ -232,6 +232,270 @@ struct NormalizedBoundingBox: Codable, Equatable {
     var height: Double
 }
 
+extension AnnotationBoundingBox {
+    var normalizedOrSelf: NormalizedBoundingBox? {
+        if let normalized {
+            return normalized
+        }
+        if x >= 0, y >= 0, width > 0, height > 0, x <= 1, y <= 1, width <= 1, height <= 1 {
+            return NormalizedBoundingBox(x: x, y: y, width: width, height: height)
+        }
+        return nil
+    }
+}
+
+struct CodmesNoteSelection: Equatable {
+    var pageIndex: Int
+    var strokeIds: Set<String>
+    var objectIds: Set<String>
+    var bounds: AnnotationBoundingBox
+    var outline: [CodmesInkPoint]
+}
+
+enum CodmesNoteObjectResizeEdge {
+    case left
+    case right
+    case bottomRight
+}
+
+enum CodmesNoteCanvasModel {
+    static let textDraftMetadataKey = "draft"
+    static let textManualWidthMetadataKey = "manualWidth"
+
+    static func makeTextObject(
+        pageIndex: Int,
+        at point: CodmesInkPoint,
+        width: Double = 0.055,
+        height: Double = 0.035,
+        fontSize: Int = 16,
+        colorHex: String = "#111111"
+    ) -> PDFAnnotationObject {
+        let box = clampedBox(
+            x: point.x,
+            y: point.y,
+            width: width,
+            height: height
+        )
+        return PDFAnnotationObject(
+            id: UUID().uuidString,
+            type: "text",
+            pageIndex: pageIndex,
+            bbox: box,
+            text: "",
+            dataBase64: nil,
+            metadata: [
+                "fontSize": "\(fontSize)",
+                "color": colorHex,
+                textDraftMetadataKey: "true"
+            ]
+        )
+    }
+
+    static func object(at point: CodmesInkPoint, pageIndex: Int, objects: [PDFAnnotationObject]) -> PDFAnnotationObject? {
+        objects.reversed().first { object in
+            guard object.pageIndex == pageIndex, let box = object.bbox?.normalizedOrSelf else { return false }
+            return contains(point, in: box)
+        }
+    }
+
+    static func movedObject(_ object: PDFAnnotationObject, from startBox: NormalizedBoundingBox, deltaX: Double, deltaY: Double) -> PDFAnnotationObject {
+        var next = object
+        next.bbox = clampedBox(
+            x: startBox.x + deltaX,
+            y: startBox.y + deltaY,
+            width: startBox.width,
+            height: startBox.height
+        )
+        return next
+    }
+
+    static func resizedObject(
+        _ object: PDFAnnotationObject,
+        from startBox: NormalizedBoundingBox,
+        edge: CodmesNoteObjectResizeEdge,
+        deltaX: Double,
+        deltaY: Double,
+        minWidth: Double = 0.03,
+        minHeight: Double = 0.025
+    ) -> PDFAnnotationObject {
+        var next = object
+        var box = startBox
+        switch edge {
+        case .left:
+            let proposedX = min(max(0, startBox.x + deltaX), startBox.x + startBox.width - minWidth)
+            box.x = proposedX
+            box.width = startBox.x + startBox.width - proposedX
+        case .right:
+            box.width = max(minWidth, min(1 - startBox.x, startBox.width + deltaX))
+        case .bottomRight:
+            box.width = max(minWidth, min(1 - startBox.x, startBox.width + deltaX))
+            box.height = max(minHeight, min(1 - startBox.y, startBox.height + deltaY))
+        }
+        next.bbox = clampedBox(x: box.x, y: box.y, width: box.width, height: box.height)
+        if next.type.lowercased().contains("text") {
+            var metadata = next.metadata ?? [:]
+            metadata[textManualWidthMetadataKey] = "true"
+            next.metadata = metadata
+        }
+        return next
+    }
+
+    static func selection(
+        pageIndex: Int,
+        outline: [CodmesInkPoint],
+        strokes: [CodmesInkStroke],
+        objects: [PDFAnnotationObject]
+    ) -> CodmesNoteSelection? {
+        guard let bounds = bounds(for: outline) else { return nil }
+        let selectedStrokeIds = Set(strokes.filter {
+            strokeIntersectsLasso($0, polygon: outline, lassoBounds: bounds)
+        }.map(\.id))
+        let selectedObjectIds = Set(objects.filter { object in
+            guard object.pageIndex == pageIndex, let box = object.bbox?.normalizedOrSelf else { return false }
+            return objectIntersectsLasso(box: box, polygon: outline, lassoBounds: bounds)
+        }.map(\.id))
+        guard !selectedStrokeIds.isEmpty || !selectedObjectIds.isEmpty else { return nil }
+        return CodmesNoteSelection(
+            pageIndex: pageIndex,
+            strokeIds: selectedStrokeIds,
+            objectIds: selectedObjectIds,
+            bounds: bounds,
+            outline: outline
+        )
+    }
+
+    static func bounds(for points: [CodmesInkPoint]) -> AnnotationBoundingBox? {
+        guard let first = points.first else { return nil }
+        var minX = first.x
+        var maxX = first.x
+        var minY = first.y
+        var maxY = first.y
+        for point in points.dropFirst() {
+            minX = min(minX, point.x)
+            maxX = max(maxX, point.x)
+            minY = min(minY, point.y)
+            maxY = max(maxY, point.y)
+        }
+        return AnnotationBoundingBox(
+            x: minX,
+            y: minY,
+            width: max(0.01, maxX - minX),
+            height: max(0.01, maxY - minY),
+            normalized: nil
+        )
+    }
+
+    static func contains(_ point: CodmesInkPoint, in box: NormalizedBoundingBox) -> Bool {
+        point.x >= box.x &&
+            point.x <= box.x + box.width &&
+            point.y >= box.y &&
+            point.y <= box.y + box.height
+    }
+
+    static func contains(_ point: CodmesInkPoint, in polygon: [CodmesInkPoint]) -> Bool {
+        guard polygon.count > 2 else { return false }
+        var inside = false
+        var previous = polygon[polygon.count - 1]
+        for current in polygon {
+            let crosses = (current.y > point.y) != (previous.y > point.y)
+            if crosses {
+                let denominator = previous.y - current.y
+                guard abs(denominator) > 0.000001 else {
+                    previous = current
+                    continue
+                }
+                let x = (previous.x - current.x) * (point.y - current.y) / denominator + current.x
+                if point.x < x {
+                    inside.toggle()
+                }
+            }
+            previous = current
+        }
+        return inside
+    }
+
+    static func boxesIntersect(_ a: NormalizedBoundingBox, _ b: NormalizedBoundingBox) -> Bool {
+        a.x < b.x + b.width &&
+            a.x + a.width > b.x &&
+            a.y < b.y + b.height &&
+            a.y + a.height > b.y
+    }
+
+    static func clampedBox(x: Double, y: Double, width: Double, height: Double) -> AnnotationBoundingBox {
+        let safeWidth = min(max(width, 0.001), 1)
+        let safeHeight = min(max(height, 0.001), 1)
+        let safeX = min(max(x, 0), max(0, 1 - safeWidth))
+        let safeY = min(max(y, 0), max(0, 1 - safeHeight))
+        return AnnotationBoundingBox(
+            x: safeX,
+            y: safeY,
+            width: safeWidth,
+            height: safeHeight,
+            normalized: nil
+        )
+    }
+
+    private static func strokeIntersectsLasso(_ stroke: CodmesInkStroke, polygon: [CodmesInkPoint], lassoBounds: AnnotationBoundingBox) -> Bool {
+        guard stroke.points.count > 1 else { return false }
+        if stroke.points.contains(where: { contains($0, in: polygon) }) {
+            return true
+        }
+        if let strokeBounds = bounds(for: stroke.points)?.normalizedOrSelf,
+           let lassoBox = lassoBounds.normalizedOrSelf,
+           !boxesIntersect(strokeBounds, lassoBox) {
+            return false
+        }
+        let lassoSegments = polygonSegments(polygon)
+        for strokeSegment in zip(stroke.points, stroke.points.dropFirst()) {
+            if lassoSegments.contains(where: { segmentsIntersect(strokeSegment.0, strokeSegment.1, $0.0, $0.1) }) {
+                return true
+            }
+            if polygon.contains(where: { distance($0, toSegmentStart: strokeSegment.0, end: strokeSegment.1) < 0.006 }) {
+                return true
+            }
+        }
+        return false
+    }
+
+    private static func objectIntersectsLasso(box: NormalizedBoundingBox, polygon: [CodmesInkPoint], lassoBounds: AnnotationBoundingBox) -> Bool {
+        let center = CodmesInkPoint(x: box.x + box.width / 2, y: box.y + box.height / 2, pressure: nil, timeOffset: nil)
+        let corners = [
+            CodmesInkPoint(x: box.x, y: box.y, pressure: nil, timeOffset: nil),
+            CodmesInkPoint(x: box.x + box.width, y: box.y, pressure: nil, timeOffset: nil),
+            CodmesInkPoint(x: box.x, y: box.y + box.height, pressure: nil, timeOffset: nil),
+            CodmesInkPoint(x: box.x + box.width, y: box.y + box.height, pressure: nil, timeOffset: nil)
+        ]
+        return contains(center, in: polygon)
+            || corners.contains { contains($0, in: polygon) }
+            || (lassoBounds.normalizedOrSelf.map { boxesIntersect(box, $0) } ?? false)
+    }
+
+    private static func polygonSegments(_ polygon: [CodmesInkPoint]) -> [(CodmesInkPoint, CodmesInkPoint)] {
+        guard polygon.count > 1 else { return [] }
+        return Array(zip(polygon, polygon.dropFirst())) + [(polygon[polygon.count - 1], polygon[0])]
+    }
+
+    private static func segmentsIntersect(_ a: CodmesInkPoint, _ b: CodmesInkPoint, _ c: CodmesInkPoint, _ d: CodmesInkPoint) -> Bool {
+        func ccw(_ p1: CodmesInkPoint, _ p2: CodmesInkPoint, _ p3: CodmesInkPoint) -> Bool {
+            (p3.y - p1.y) * (p2.x - p1.x) > (p2.y - p1.y) * (p3.x - p1.x)
+        }
+        return ccw(a, c, d) != ccw(b, c, d) && ccw(a, b, c) != ccw(a, b, d)
+    }
+
+    private static func distance(_ point: CodmesInkPoint, toSegmentStart start: CodmesInkPoint, end: CodmesInkPoint) -> Double {
+        let dx = end.x - start.x
+        let dy = end.y - start.y
+        let lengthSquared = dx * dx + dy * dy
+        guard lengthSquared > 0 else {
+            return hypot(point.x - start.x, point.y - start.y)
+        }
+        let t = max(0, min(1, ((point.x - start.x) * dx + (point.y - start.y) * dy) / lengthSquared))
+        let projectedX = start.x + t * dx
+        let projectedY = start.y + t * dy
+        return hypot(point.x - projectedX, point.y - projectedY)
+    }
+}
+
 extension PDFAnnotationDocument {
     func noteElements(pageIndex: Int) -> [CodmesNoteElement] {
         var result: [CodmesNoteElement] = []
