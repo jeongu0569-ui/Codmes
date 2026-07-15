@@ -92,6 +92,8 @@ struct PDFWorkspaceView: View {
     @EnvironmentObject private var store: WorkspaceStore
     let rawFile: RawFilePreview
     @State private var annotations: PDFAnnotationDocument?
+    @State private var undoStack: [PDFAnnotationDocument] = []
+    @State private var redoStack: [PDFAnnotationDocument] = []
     @State private var statusText = ""
     @State private var saveTask: Task<Void, Never>?
 
@@ -308,6 +310,27 @@ struct PDFWorkspaceView: View {
             }
 
             Spacer()
+
+            Button {
+                undoAnnotationChange()
+            } label: {
+                Image(systemName: "arrow.uturn.backward")
+            }
+            .buttonStyle(.plain)
+            .disabled(undoStack.isEmpty)
+            .accessibilityLabel("Undo annotation change")
+
+            Button {
+                redoAnnotationChange()
+            } label: {
+                Image(systemName: "arrow.uturn.forward")
+            }
+            .buttonStyle(.plain)
+            .disabled(redoStack.isEmpty)
+            .accessibilityLabel("Redo annotation change")
+
+            Divider()
+                .frame(height: 18)
 
             #if os(iOS)
             Picker("PDF mode", selection: $isWritingMode) {
@@ -676,6 +699,8 @@ struct PDFWorkspaceView: View {
             var loaded = try await api.fileAnnotations(path: rawFile.path)
             loaded.syncNoteElementsFromLegacy()
             annotations = loaded
+            undoStack = []
+            redoStack = []
             statusText = annotations?.pages.isEmpty == false ? "Annotations loaded" : "Ready"
         } catch {
             annotations = PDFAnnotationDocument(
@@ -685,6 +710,8 @@ struct PDFWorkspaceView: View {
                 pages: [],
                 objects: []
             )
+            undoStack = []
+            redoStack = []
             statusText = "Annotation sync unavailable"
         }
     }
@@ -1180,11 +1207,54 @@ struct PDFWorkspaceView: View {
     }
     #endif
 
-    private func commitAnnotationDocument(_ document: PDFAnnotationDocument) {
+    private func commitAnnotationDocument(_ document: PDFAnnotationDocument, registerUndo: Bool = true) {
         var synced = document
         synced.syncNoteElementsFromLegacy()
+        if registerUndo,
+           let current = annotations?.syncedNoteElementsFromLegacy(),
+           !annotationDocumentsEqual(current, synced) {
+            undoStack.append(current)
+            if undoStack.count > 80 {
+                undoStack.removeFirst(undoStack.count - 80)
+            }
+            redoStack = []
+        }
         annotations = synced
         scheduleSave(synced)
+    }
+
+    private func undoAnnotationChange() {
+        guard let current = annotations?.syncedNoteElementsFromLegacy(),
+              let previous = undoStack.popLast() else { return }
+        redoStack.append(current)
+        clearCurrentSelectionState()
+        commitAnnotationDocument(previous, registerUndo: false)
+        statusText = "Undone"
+    }
+
+    private func redoAnnotationChange() {
+        guard let current = annotations?.syncedNoteElementsFromLegacy(),
+              let next = redoStack.popLast() else { return }
+        undoStack.append(current)
+        clearCurrentSelectionState()
+        commitAnnotationDocument(next, registerUndo: false)
+        statusText = "Redone"
+    }
+
+    private func clearCurrentSelectionState() {
+        #if os(iOS)
+        selectedObjectId = nil
+        lassoSelection = nil
+        #endif
+        #if os(macOS)
+        macSelectedObjectId = nil
+        #endif
+    }
+
+    private func annotationDocumentsEqual(_ lhs: PDFAnnotationDocument, _ rhs: PDFAnnotationDocument) -> Bool {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return (try? encoder.encode(lhs)) == (try? encoder.encode(rhs))
     }
 
     private func emptyAnnotationDocument() -> PDFAnnotationDocument {
@@ -5418,10 +5488,14 @@ private func splitStrokes(_ strokes: [CodmesInkStroke], erasingAt point: CodmesI
 }
 
 private func splitStroke(_ stroke: CodmesInkStroke, erasingAt point: CodmesInkPoint, threshold: Double) -> [CodmesInkStroke] {
-    guard stroke.points.count > 1 else { return [stroke] }
+    let sourceStroke = stroke.isCodmesShapeStroke
+        ? stroke.asDensifiedPenStroke(maxSegmentLength: max(0.002, threshold * 0.45))
+        : stroke
+    guard sourceStroke.points.count > 1 else { return [stroke] }
     var segments: [[CodmesInkPoint]] = []
     var current: [CodmesInkPoint] = []
-    let points = stroke.points
+    let points = sourceStroke.points
+    var didErase = false
 
     for index in points.indices {
         let candidate = points[index]
@@ -5432,6 +5506,7 @@ private func splitStroke(_ stroke: CodmesInkStroke, erasingAt point: CodmesInkPo
             || next.map { inkDistanceToSegment(point, candidate, $0) <= threshold } == true
 
         if isHit {
+            didErase = true
             if current.count > 1 {
                 segments.append(current)
             }
@@ -5445,14 +5520,15 @@ private func splitStroke(_ stroke: CodmesInkStroke, erasingAt point: CodmesInkPo
         segments.append(current)
     }
 
+    guard didErase else { return [stroke] }
     guard !segments.isEmpty else { return [] }
-    if segments.count == 1, segments[0].count == stroke.points.count {
+    if !stroke.isCodmesShapeStroke, segments.count == 1, segments[0].count == stroke.points.count {
         return [stroke]
     }
     return segments.map { segment in
         CodmesInkStroke(
             id: UUID().uuidString,
-            tool: stroke.tool,
+            tool: sourceStroke.tool,
             color: stroke.color,
             width: stroke.width,
             opacity: stroke.opacity,
@@ -5482,6 +5558,47 @@ private func inkDistanceToSegment(_ point: CodmesInkPoint, _ start: CodmesInkPoi
         timeOffset: nil
     )
     return inkDistance(point, projection)
+}
+
+private extension CodmesInkStroke {
+    var isCodmesShapeStroke: Bool {
+        tool.hasPrefix("shape:")
+            || tool == "line"
+            || tool == "polyline"
+            || tool == "triangle"
+            || tool == "rectangle"
+            || tool == "circle"
+            || tool == "ellipse"
+    }
+
+    func asDensifiedPenStroke(maxSegmentLength: Double) -> CodmesInkStroke {
+        guard points.count > 1 else {
+            var copy = self
+            copy.tool = "pen"
+            return copy
+        }
+        var dense: [CodmesInkPoint] = []
+        for (start, end) in zip(points, points.dropFirst()) {
+            if dense.isEmpty {
+                dense.append(start)
+            }
+            let distance = inkDistance(start, end)
+            let steps = max(1, Int(ceil(distance / max(maxSegmentLength, 0.0005))))
+            for step in 1...steps {
+                let t = Double(step) / Double(steps)
+                dense.append(CodmesInkPoint(
+                    x: start.x + (end.x - start.x) * t,
+                    y: start.y + (end.y - start.y) * t,
+                    pressure: nil,
+                    timeOffset: nil
+                ))
+            }
+        }
+        var copy = self
+        copy.tool = "pen"
+        copy.points = dense
+        return copy
+    }
 }
 
 private extension AnnotationBoundingBox {
