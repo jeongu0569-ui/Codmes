@@ -3,24 +3,18 @@
 이 폴더에는 현재 코드와 함께 유지해야 하는 문서만 둔다. 완료된 마이그레이션
 메모, 일회성 점검 결과, 복제된 API 설명은 Git 기록에서 확인한다.
 
-## 시작점
+## 분류
 
 - [제품 범위](product.md)
-- [아키텍처](architecture.md)
-- [데이터와 저장 경로](data-model.md)
-- [HTTP 및 WebSocket API](api-contract.md)
-- [Apple 클라이언트](apple-client.md)
-- [실행과 검증](runbook.md)
 - [남은 작업](roadmap.md)
-
-## 기능별 문서
-
-- [Notes와 PDF](notes/README.md)
-  - `common`: iOS와 macOS가 공유하는 데이터 및 동작
-  - `ios`: iPhone과 iPad 전용 UI 및 입력 처리
-  - `macos`: macOS 전용 UI 및 입력 처리
-- [Search](search/README.md)
-- [문제 해결 기록](debug/)
+- [Server](server/README.md): architecture, data와 API
+- [Client](client/README.md): Apple 앱의 공통 및 플랫폼 구현
+- [Notes](notes/README.md): Notes, PDF, annotation과 플랫폼별 편집 동작
+- [Search](search/README.md): 사용자 검색, 문서 추출과 LLM 검색
+- [UI/UX](ui-ux/README.md): 화면과 interaction 원칙
+- [Code](code/README.md): Code surface와 code agent 흐름
+- [실행과 검증](runbook.md)
+- [Debug](debug/): 재발 가능한 문제의 원인과 검증 절차
 
 ## 문서 원칙
 

@@ -64,4 +64,4 @@
 `annotations.json`은 schema version, document path, 페이지별 stroke, text/image
 object, 공통 element 배열을 저장한다. 좌표는 페이지 기준 정규화 값이므로 화면
 크기와 Apple UI 클래스에 의존하지 않는다. 자세한 계약은
-[Notes 공통 annotation 문서](notes/common/pdf-annotations.md)를 참고한다.
+[Notes 공통 annotation 문서](../notes/common/pdf-annotations.md)를 참고한다.
