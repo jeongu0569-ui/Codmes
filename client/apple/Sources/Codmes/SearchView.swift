@@ -8,6 +8,7 @@ struct SearchView: View {
     @State private var query = ""
     @State private var surface = GlobalSearchSurface.all
     @State private var isSearching = false
+    @State private var isLoadingMore = false
     @State private var liveSearchTask: Task<Void, Never>?
     @State private var searchRequestSerial = 0
     @FocusState private var isSearchFieldFocused: Bool
@@ -113,7 +114,8 @@ struct SearchView: View {
                                             NoteSearchFileGroupView(
                                                 fileGroup: fileGroup,
                                                 query: submittedQuery,
-                                                thumbnailURL: { result, crop in thumbnailURL(for: result, crop: crop) }
+                                                thumbnailURL: { result, crop in thumbnailURL(for: result, crop: crop) },
+                                                onResultsAppear: loadMoreIfNeeded(resultIDs:)
                                             ) { result in
                                                 openResult(result)
                                             }
@@ -130,12 +132,21 @@ struct SearchView: View {
                                             }
                                             .buttonStyle(.plain)
                                             .background(Color.secondary.opacity(0.07))
+                                            .onAppear {
+                                                loadMoreIfNeeded(resultIDs: [result.id])
+                                            }
                                         }
                                     }
                                 }
                                 .clipShape(RoundedRectangle(cornerRadius: 8))
                                 .padding(.horizontal, 12)
                             }
+                        }
+
+                        if isLoadingMore {
+                            ProgressView()
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
                         }
                     }
                     .padding(.vertical, 14)
@@ -240,6 +251,7 @@ struct SearchView: View {
         guard !searchQuery.isEmpty else {
             query = ""
             isSearching = false
+            isLoadingMore = false
             store.globalSearchResponse = nil
             return
         }
@@ -264,6 +276,7 @@ struct SearchView: View {
         guard let api = store.api else { return }
         query = searchQuery
         isSearching = true
+        isLoadingMore = false
         Task {
             do {
                 let response = try await api.globalSearch(query: searchQuery, surface: surfaceValue)
@@ -278,6 +291,57 @@ struct SearchView: View {
                     guard searchRequestSerial == requestID else { return }
                     store.statusMessage = error.localizedDescription
                     isSearching = false
+                }
+            }
+        }
+    }
+
+    private func loadMoreIfNeeded(resultIDs: [String]) {
+        guard !isSearching, !isLoadingMore,
+              let response = store.globalSearchResponse,
+              response.query == submittedQuery,
+              response.surface == surface.rawValue,
+              let cursor = response.nextCursor,
+              let lastResultID = response.results.last?.id,
+              resultIDs.contains(lastResultID),
+              let api = store.api else { return }
+        let requestID = searchRequestSerial
+        let searchQuery = submittedQuery
+        let surfaceValue = surface.rawValue
+        isLoadingMore = true
+        Task {
+            do {
+                let nextPage = try await api.globalSearch(
+                    query: searchQuery,
+                    surface: surfaceValue,
+                    cursor: cursor
+                )
+                await MainActor.run {
+                    guard searchRequestSerial == requestID,
+                          submittedQuery == searchQuery,
+                          surface.rawValue == surfaceValue else { return }
+                    let currentResults = store.globalSearchResponse?.results ?? []
+                    var seen = Set(currentResults.map(\.id))
+                    let newResults = nextPage.results.filter { seen.insert($0.id).inserted }
+                    let mergedResults = currentResults + newResults
+                    store.globalSearchResponse = GlobalSearchResponse(
+                        provider: nextPage.provider,
+                        query: nextPage.query,
+                        surface: nextPage.surface,
+                        resultCount: nextPage.resultCount,
+                        returnedCount: mergedResults.count,
+                        nextCursor: nextPage.nextCursor,
+                        hasMore: nextPage.hasMore,
+                        results: mergedResults
+                    )
+                    store.statusMessage = "\(mergedResults.count) of \(nextPage.resultCount) global results"
+                    isLoadingMore = false
+                }
+            } catch {
+                await MainActor.run {
+                    guard searchRequestSerial == requestID else { return }
+                    store.statusMessage = error.localizedDescription
+                    isLoadingMore = false
                 }
             }
         }
@@ -332,6 +396,7 @@ private struct NoteSearchFileGroupView: View {
     let fileGroup: NoteSearchFileGroup
     let query: String
     let thumbnailURL: (GlobalSearchResult, NormalizedBoundingBox?) -> URL?
+    let onResultsAppear: ([String]) -> Void
     let onOpen: (GlobalSearchResult) -> Void
 
     private var previewResults: [NoteSearchPreview] {
@@ -341,7 +406,7 @@ private struct NoteSearchFileGroupView: View {
         let pagePreviews = groupedByPage.keys.sorted().flatMap { page in
             makePagePreviews(groupedByPage[page] ?? [])
         }
-        return [NoteSearchPreview(result: coverResult, crop: nil, matchCount: 0)] + pagePreviews
+        return [NoteSearchPreview(result: coverResult, crop: nil, matchCount: 0, resultIDs: [coverResult.id])] + pagePreviews
     }
 
     private var coverResult: GlobalSearchResult {
@@ -403,6 +468,9 @@ private struct NoteSearchFileGroupView: View {
                             )
                         }
                         .buttonStyle(.plain)
+                        .onAppear {
+                            onResultsAppear(preview.resultIDs)
+                        }
                     }
                 }
                 .padding(.bottom, 2)
@@ -485,6 +553,7 @@ private struct NoteSearchPreview: Identifiable {
     let result: GlobalSearchResult
     let crop: NormalizedBoundingBox?
     let matchCount: Int
+    let resultIDs: [String]
 
     var id: String {
         guard let crop else { return "cover:\(result.target.path ?? result.id)" }
@@ -511,7 +580,12 @@ private func makePagePreviews(_ results: [GlobalSearchResult]) -> [NoteSearchPre
         clusters[clusters.count - 1].append(result)
     }
     return clusters.map { cluster in
-        NoteSearchPreview(result: cluster[0], crop: boundingBox(for: cluster), matchCount: cluster.count)
+        NoteSearchPreview(
+            result: cluster[0],
+            crop: boundingBox(for: cluster),
+            matchCount: cluster.count,
+            resultIDs: cluster.map(\.id)
+        )
     }
 }
 

@@ -752,6 +752,9 @@ struct GlobalSearchResponse: Codable {
     let query: String
     let surface: String
     let resultCount: Int
+    let returnedCount: Int?
+    let nextCursor: String?
+    let hasMore: Bool?
     let results: [GlobalSearchResult]
 }
 

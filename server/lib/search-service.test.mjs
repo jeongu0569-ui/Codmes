@@ -216,6 +216,49 @@ test("global search returns PDF occurrences beyond the former 40-result limit", 
   assert.equal(result.results.at(-1).target.page, 56);
 });
 
+test("global search paginates without truncating the total result set", async () => {
+  const root = await fixtureWorkspace();
+  const indexPath = path.join(root, ".codmes", "index", "search.json");
+  const chunks = Array.from({ length: 205 }, (_, index) => ({
+    id: `oracle-page-${index}`,
+    path: "Notes/large-database.pdf",
+    kind: "pdf",
+    page: index + 1,
+    chunkIndex: index,
+    text: `Oracle result ${index + 1}`
+  }));
+  await fs.mkdir(path.dirname(indexPath), { recursive: true });
+  await fs.writeFile(indexPath, JSON.stringify({
+    builtAt: new Date(0).toISOString(),
+    items: [{ path: "Notes/large-database.pdf", kind: "pdf", modifiedAt: new Date(0).toISOString() }],
+    chunks
+  }), "utf8");
+
+  const first = await globalSearch(root, { query: "oracle", surface: "notes", limit: 100 });
+  const second = await globalSearch(root, {
+    query: "oracle",
+    surface: "notes",
+    limit: 100,
+    cursor: first.nextCursor
+  });
+  const third = await globalSearch(root, {
+    query: "oracle",
+    surface: "notes",
+    limit: 100,
+    cursor: second.nextCursor
+  });
+
+  assert.equal(first.resultCount, 205);
+  assert.equal(first.results.length, 100);
+  assert.equal(first.hasMore, true);
+  assert.equal(second.results.length, 100);
+  assert.equal(second.hasMore, true);
+  assert.equal(third.results.length, 5);
+  assert.equal(third.hasMore, false);
+  assert.equal(third.nextCursor, null);
+  assert.equal(new Set([...first.results, ...second.results, ...third.results].map((hit) => hit.id)).size, 205);
+});
+
 test("searches extracted PDF text and caches it", async () => {
   const root = await fixtureWorkspace();
   await fs.mkdir(path.join(root, "Documents"), { recursive: true });

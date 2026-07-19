@@ -1438,7 +1438,8 @@ async function runGlobalSearch(url) {
   return await globalSearch(WORKSPACE_ROOT, {
     query: url.searchParams.get("q") || url.searchParams.get("query") || "",
     surface: url.searchParams.get("surface") || "all",
-    maxResults: url.searchParams.get("limit") || url.searchParams.get("maxResults") || 100
+    limit: url.searchParams.get("limit") || url.searchParams.get("maxResults") || 100,
+    cursor: url.searchParams.get("cursor") || null
   });
 }
 

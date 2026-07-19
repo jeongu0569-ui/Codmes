@@ -220,13 +220,22 @@ struct WorkspaceAPI {
         return try await post("/api/search", body: body)
     }
 
-    func globalSearch(query: String, surface: String) async throws -> GlobalSearchResponse {
+    func globalSearch(
+        query: String,
+        surface: String,
+        cursor: String? = nil,
+        limit: Int = 100
+    ) async throws -> GlobalSearchResponse {
         var components = try components("/api/global-search")
-        components.queryItems = [
+        var queryItems = [
             URLQueryItem(name: "q", value: query),
             URLQueryItem(name: "surface", value: surface),
-            URLQueryItem(name: "limit", value: "100")
+            URLQueryItem(name: "limit", value: String(min(max(limit, 1), 100)))
         ]
+        if let cursor, !cursor.isEmpty {
+            queryItems.append(URLQueryItem(name: "cursor", value: cursor))
+        }
+        components.queryItems = queryItems
         return try await request(components)
     }
 

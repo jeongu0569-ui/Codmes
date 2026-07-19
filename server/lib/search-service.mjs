@@ -108,7 +108,9 @@ export async function searchWorkspace(workspaceRoot, request = {}) {
   const query = String(request.query || "").trim();
   if (!query) throw Object.assign(new Error("Missing search query."), { status: 400 });
   const scopePath = resolveWorkspacePath(workspaceRoot, request.scopePath || "").relativePath;
-  const maxResults = clampNumber(request.maxResults, 1, 100, DEFAULT_MAX_RESULTS);
+  const maxResults = request.unbounded
+    ? Number.POSITIVE_INFINITY
+    : clampNumber(request.maxResults, 1, 100, DEFAULT_MAX_RESULTS);
   if (!request.forceScan) {
     const indexed = await searchBuiltIndex(workspaceRoot, { ...request, query, scopePath, maxResults });
     if (indexed) return indexed;
@@ -139,26 +141,62 @@ export async function globalSearch(workspaceRoot, request = {}) {
   const query = String(request.query || request.q || "").trim();
   if (!query) throw Object.assign(new Error("Missing search query."), { status: 400 });
   const surface = normalizeGlobalSurface(request.surface || "all");
-  const maxResults = clampNumber(request.maxResults || request.limit, 1, 100, 100);
-  const fileResults = await searchGlobalFileIndex(workspaceRoot, { query, surface, maxResults: maxResults * 2 });
+  const pageSize = clampNumber(request.limit || request.maxResults, 1, 100, 100);
+  const afterResultId = decodeGlobalSearchCursor(request.cursor, query, surface);
+  const fileResults = await searchGlobalFileIndex(workspaceRoot, { query, surface });
   const conversationResults = await searchGlobalConversations(workspaceRoot, {
     query,
     surface,
-    maxResults: maxResults * 2
+    unbounded: true
   });
-  const results = [...fileResults, ...conversationResults]
+  const allResults = [...fileResults, ...conversationResults]
     .filter((result) => result.surface && surfaceMatches(result.surface, surface))
     .filter((result) => !isInternalSearchPath(result.target?.path || ""))
-    .sort((a, b) => b.score - a.score || String(b.updatedAt || "").localeCompare(String(a.updatedAt || "")))
-    .slice(0, maxResults);
+    .sort((a, b) => (
+      b.score - a.score
+      || String(b.updatedAt || "").localeCompare(String(a.updatedAt || ""))
+      || String(a.target?.path || "").localeCompare(String(b.target?.path || ""))
+      || Number(a.target?.page || 0) - Number(b.target?.page || 0)
+      || a.id.localeCompare(b.id)
+    ));
+  const cursorIndex = afterResultId
+    ? allResults.findIndex((result) => result.id === afterResultId)
+    : -1;
+  if (afterResultId && cursorIndex < 0) {
+    throw Object.assign(new Error("Global search cursor expired. Run the search again."), { status: 409 });
+  }
+  const offset = cursorIndex + 1;
+  const results = allResults.slice(offset, offset + pageSize);
+  const nextOffset = offset + results.length;
   return {
     provider: "codmes-global-search",
     query,
     surface,
     scope: { type: "global" },
-    resultCount: results.length,
+    resultCount: allResults.length,
+    returnedCount: results.length,
+    nextCursor: nextOffset < allResults.length
+      ? encodeGlobalSearchCursor(results.at(-1)?.id, query, surface)
+      : null,
+    hasMore: nextOffset < allResults.length,
     results
   };
+}
+
+function encodeGlobalSearchCursor(afterResultId, query, surface) {
+  return Buffer.from(JSON.stringify({ version: 1, afterResultId, query, surface }), "utf8").toString("base64url");
+}
+
+function decodeGlobalSearchCursor(cursor, query, surface) {
+  if (!cursor) return null;
+  try {
+    const decoded = JSON.parse(Buffer.from(String(cursor), "base64url").toString("utf8"));
+    if (decoded.version !== 1 || decoded.query !== query || decoded.surface !== surface) throw new Error();
+    if (typeof decoded.afterResultId !== "string" || !decoded.afterResultId) throw new Error();
+    return decoded.afterResultId;
+  } catch {
+    throw Object.assign(new Error("Invalid or expired global search cursor."), { status: 400 });
+  }
 }
 
 export function searchIndexPath(workspaceRoot) {
@@ -286,7 +324,9 @@ async function searchBuiltIndex(workspaceRoot, request) {
   if (!index || !Array.isArray(index.chunks)) return null;
   const query = String(request.query || "").trim();
   const scopePath = String(request.scopePath || "").replace(/^\/+|\/+$/g, "");
-  const maxResults = clampNumber(request.maxResults, 1, 100, DEFAULT_MAX_RESULTS);
+  const maxResults = request.unbounded
+    ? Number.POSITIVE_INFINITY
+    : clampNumber(request.maxResults, 1, 100, DEFAULT_MAX_RESULTS);
   const chunks = index.chunks.filter((chunk) => inScope(chunk.path, scopePath) && !isInternalSearchPath(chunk.path));
   const kinds = requestedKinds(request);
   const scored = [];
@@ -351,7 +391,7 @@ async function searchGlobalFileIndex(workspaceRoot, request) {
     if (match.score <= 0) continue;
     scored.push(toGlobalFileResult(chunk, item, resultSurface, match, query));
   }
-  return dedupeGlobalResults(scored, request.maxResults);
+  return dedupeGlobalResults(scored);
 }
 
 async function searchGlobalFileScan(workspaceRoot, request) {
@@ -359,7 +399,8 @@ async function searchGlobalFileScan(workspaceRoot, request) {
   const legacy = await searchWorkspace(workspaceRoot, {
     query: request.query,
     scopePath,
-    maxResults: request.maxResults,
+    unbounded: true,
+    maxScanFiles: 5000,
     forceScan: true
   }).catch(() => ({ results: [] }));
   return (legacy.results || [])
@@ -392,7 +433,7 @@ async function searchGlobalFileScan(workspaceRoot, request) {
 async function searchGlobalConversations(workspaceRoot, request) {
   const sessionsById = await readConversationSessionsById(workspaceRoot);
   const hits = await searchConversationIndex(workspaceRoot, request.query, {
-    maxResults: request.maxResults,
+    unbounded: request.unbounded,
     includeArchived: false
   }).catch(() => []);
   return hits
@@ -522,7 +563,7 @@ function scoreGlobalChunk(chunk, item, query) {
   };
 }
 
-function dedupeGlobalResults(results, maxResults) {
+function dedupeGlobalResults(results, maxResults = Number.POSITIVE_INFINITY) {
   const seen = new Set();
   const deduped = [];
   for (const result of results.sort((a, b) => b.score - a.score || a.title.localeCompare(b.title))) {

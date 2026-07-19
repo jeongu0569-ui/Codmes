@@ -188,9 +188,9 @@ export async function searchConversationIndex(workspaceRoot, query, options = {}
   }
 
   // Sort by score desc, then date desc
-  return results
-    .sort((a, b) => b.score - a.score || parseTime(b.createdAt) - parseTime(a.createdAt))
-    .slice(0, options.maxResults || 10);
+  const sorted = results
+    .sort((a, b) => b.score - a.score || parseTime(b.createdAt) - parseTime(a.createdAt));
+  return options.unbounded ? sorted : sorted.slice(0, options.maxResults || 10);
 }
 
 function calculateScore(text, query, session, options = {}) {
