@@ -42,6 +42,11 @@ try:
 except Exception:  # pragma: no cover - optional dependency
     pymupdf4llm = None
 
+try:
+    import pdfplumber
+except Exception:  # pragma: no cover - optional dependency
+    pdfplumber = None
+
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".webp", ".bmp", ".tif", ".tiff", ".heic"}
 OFFICE_EXTS = {".doc", ".docx", ".ppt", ".pptx", ".hwp", ".hwpx", ".odt", ".odp"}
@@ -86,9 +91,11 @@ def extract_bytes(data: bytes, name: str, args: argparse.Namespace, depth: int) 
     ext = Path(name.lower()).suffix
     warnings: list[str] = []
     blocks: list[dict[str, Any]] = []
+    markdown = ""
+    tables: list[dict[str, Any]] = []
 
     if ext == ".pdf":
-        text, pdf_blocks, pdf_warnings = extract_pdf(data, name)
+        text, markdown, tables, pdf_blocks, pdf_warnings = extract_pdf(data, name)
         blocks.extend(pdf_blocks)
         warnings.extend(pdf_warnings)
     elif ext in IMAGE_EXTS:
@@ -148,22 +155,29 @@ def extract_bytes(data: bytes, name: str, args: argparse.Namespace, depth: int) 
         blocks.append(block(name, normalized, source="text", page=None, kind=kind_for_path(name)))
 
     return {
-        "schemaVersion": 1,
+        "schemaVersion": 2,
         "path": name,
         "kind": kind_for_path(name),
         "text": normalized,
+        "markdown": markdown or normalized,
+        "tables": tables,
         "blocks": blocks,
         "warnings": warnings,
         "extractor": "codmes-document-worker",
     }
 
 
-def extract_pdf(data: bytes, name: str) -> tuple[str, list[dict[str, Any]], list[str]]:
+def extract_pdf(data: bytes, name: str) -> tuple[str, str, list[dict[str, Any]], list[dict[str, Any]], list[str]]:
     warnings: list[str] = []
     blocks: list[dict[str, Any]] = []
-    structured_text, structured_warning = pymupdf4llm_pdf_to_markdown(data)
+    structured_text, tables, structured_warning = pymupdf4llm_pdf_to_markdown(data, name)
     if structured_warning:
         warnings.append(structured_warning)
+
+    fallback_tables, fallback_warning = pdfplumber_fallback_tables(data, name, tables)
+    tables.extend(fallback_tables)
+    if fallback_warning:
+        warnings.append(fallback_warning)
 
     _pymupdf_text, pymupdf_blocks, pymupdf_warning = pymupdf_pdf_to_blocks(data, name)
     if pymupdf_warning:
@@ -173,23 +187,25 @@ def extract_pdf(data: bytes, name: str) -> tuple[str, list[dict[str, Any]], list
             blocks.extend(pymupdf_blocks)
         else:
             blocks.append(block(name, structured_text, source="pdf-markdown", page=None, kind="pdf", metadata={"pdfEngine": "pymupdf4llm"}))
-        return structured_text, blocks, warnings
+        markdown = append_recovered_tables(structured_text, fallback_tables)
+        return structured_text, markdown, tables, blocks, warnings
 
-    return "", blocks, warnings or ["PyMuPDF4LLM produced no PDF text."]
+    return "", "", tables, blocks, warnings or ["PyMuPDF4LLM produced no PDF text."]
 
 
-def pymupdf4llm_pdf_to_markdown(data: bytes) -> tuple[str, str | None]:
+def pymupdf4llm_pdf_to_markdown(data: bytes, name: str) -> tuple[str, list[dict[str, Any]], str | None]:
     if pymupdf4llm is None:
-        return "", "PyMuPDF4LLM not installed; PDF Markdown/table extraction unavailable."
+        return "", [], "PyMuPDF4LLM not installed; PDF Markdown/table extraction unavailable."
     if fitz is None:
-        return "", "PyMuPDF not installed; PyMuPDF4LLM unavailable."
+        return "", [], "PyMuPDF not installed; PyMuPDF4LLM unavailable."
     try:
         doc = fitz.open(stream=data, filetype="pdf")
     except Exception as exc:
-        return "", f"PyMuPDF4LLM could not open PDF: {exc}"
+        return "", [], f"PyMuPDF4LLM could not open PDF: {exc}"
     try:
-        markdown = pymupdf4llm.to_markdown(
+        page_chunks = pymupdf4llm.to_markdown(
             doc,
+            page_chunks=True,
             write_images=False,
             embed_images=False,
             ignore_images=True,
@@ -197,12 +213,224 @@ def pymupdf4llm_pdf_to_markdown(data: bytes) -> tuple[str, str | None]:
             table_strategy=os.getenv("CODMES_PDF_TABLE_STRATEGY", "lines_strict"),
             show_progress=False,
         )
+        markdown = "\n\n".join(str(page.get("text") or "").strip() for page in page_chunks).strip()
+        tables = markdown_tables_from_page_chunks(page_chunks, doc, name)
         text = normalize_text(markdown)
-        return text, None if text else "PyMuPDF4LLM returned no text."
+        return text, tables, None if text else "PyMuPDF4LLM returned no text."
     except Exception as exc:
-        return "", f"PyMuPDF4LLM failed: {exc}"
+        return "", [], f"PyMuPDF4LLM failed: {exc}"
     finally:
         doc.close()
+
+
+def markdown_tables_from_page_chunks(page_chunks: list[dict[str, Any]], doc: Any, name: str) -> list[dict[str, Any]]:
+    tables: list[dict[str, Any]] = []
+    for page_chunk in page_chunks:
+        page_number = int((page_chunk.get("metadata") or {}).get("page_number") or len(tables) + 1)
+        page_text = str(page_chunk.get("text") or "")
+        page = doc[page_number - 1]
+        for box in page_chunk.get("page_boxes") or []:
+            if box.get("class") != "table":
+                continue
+            start, end = (box.get("pos") or [0, 0])[:2]
+            table_markdown = page_text[int(start):int(end)].strip()
+            parsed = parse_markdown_table(table_markdown)
+            if not parsed:
+                continue
+            tables.append(table_record(
+                name,
+                page_number,
+                len(tables) + 1,
+                parsed[0],
+                parsed[1],
+                table_markdown,
+                box.get("bbox"),
+                float(page.rect.width),
+                float(page.rect.height),
+                "pymupdf4llm",
+            ))
+    return tables
+
+
+def parse_markdown_table(markdown: str) -> tuple[list[str], list[list[str]]] | None:
+    lines = [line.strip() for line in str(markdown or "").splitlines() if line.strip().startswith("|")]
+    parsed = [split_markdown_row(line) for line in lines]
+    parsed = [row for row in parsed if row and not all(re.fullmatch(r":?-{3,}:?", cell.replace(" ", "")) for cell in row)]
+    if len(parsed) < 2 or len(parsed[0]) < 2:
+        return None
+    width = max(len(row) for row in parsed)
+    normalized = [row + [""] * (width - len(row)) for row in parsed]
+    return normalize_table_headers(normalized[0]), normalized[1:]
+
+
+def split_markdown_row(line: str) -> list[str]:
+    value = line.strip().strip("|")
+    cells = re.split(r"(?<!\\)\|", value)
+    return [clean_table_cell(cell) for cell in cells]
+
+
+def clean_table_cell(value: Any) -> str:
+    text = "" if value is None else str(value)
+    text = re.sub(r"<br\s*/?>", " ", text, flags=re.IGNORECASE)
+    text = text.replace("**", "").replace("__", "").replace("\\|", "|")
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def normalize_table_headers(headers: list[str]) -> list[str]:
+    normalized = [clean_table_cell(header) for header in headers]
+    for index in range(len(normalized) - 1):
+        left = normalized[index]
+        right = normalized[index + 1]
+        if not re.match(r"^Pri\b", left, flags=re.IGNORECASE) or not re.match(r"^ce\b", right, flags=re.IGNORECASE):
+            continue
+        left_body = re.sub(r"^Pri\b", "", left, flags=re.IGNORECASE).strip()
+        right_body = re.sub(r"^ce\b", "", right, flags=re.IGNORECASE).strip()
+        left_body = re.sub(r"\bInput$", "", left_body, flags=re.IGNORECASE).strip()
+        right_body = re.sub(r"\bOutput$", "", right_body, flags=re.IGNORECASE).strip()
+        shared = re.sub(r"\s+", " ", f"Price {left_body} {right_body}").strip()
+        normalized[index] = f"{shared} Input"
+        normalized[index + 1] = f"{shared} Output"
+    return normalized
+
+
+def table_record(
+    name: str,
+    page: int,
+    index: int,
+    headers: list[str],
+    rows: list[list[str]],
+    markdown: str,
+    bbox_values: Any,
+    page_width: float,
+    page_height: float,
+    engine: str,
+) -> dict[str, Any]:
+    bbox = None
+    if bbox_values and len(bbox_values) >= 4:
+        x0, y0, x1, y1 = map(float, bbox_values[:4])
+        bbox = {
+            "unit": "pdf-point",
+            "x": x0,
+            "y": y0,
+            "width": max(0.0, x1 - x0),
+            "height": max(0.0, y1 - y0),
+            "pageWidth": page_width,
+            "pageHeight": page_height,
+            "normalized": {
+                "x": x0 / page_width if page_width else 0,
+                "y": y0 / page_height if page_height else 0,
+                "width": max(0.0, x1 - x0) / page_width if page_width else 0,
+                "height": max(0.0, y1 - y0) / page_height if page_height else 0,
+            },
+        }
+    return {
+        "id": f"table-page-{page}-{index}",
+        "path": name,
+        "page": page,
+        "source": "pdf-table",
+        "headers": headers,
+        "rows": rows,
+        "markdown": markdown.strip() or markdown_table(headers, rows),
+        "bbox": bbox,
+        "metadata": {"tableEngine": engine, "rowCount": len(rows), "columnCount": len(headers)},
+    }
+
+
+def markdown_table(headers: list[str], rows: list[list[str]]) -> str:
+    def row(values: list[str]) -> str:
+        return "| " + " | ".join(str(value or "").replace("\n", "<br>").replace("|", "\\|") for value in values) + " |"
+    return "\n".join([row(headers), row(["---"] * len(headers)), *(row(item) for item in rows)])
+
+
+def append_recovered_tables(markdown: str, tables: list[dict[str, Any]]) -> str:
+    if not tables:
+        return markdown
+    sections = [markdown.rstrip(), "", "## Recovered tables"]
+    for table in tables:
+        sections.extend([
+            "",
+            f"### Page {int(table.get('page') or 0)}",
+            "",
+            str(table.get("markdown") or "").strip(),
+        ])
+    return "\n".join(sections).strip()
+
+
+def pdfplumber_fallback_tables(
+    data: bytes,
+    name: str,
+    existing: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], str | None]:
+    if pdfplumber is None:
+        return [], "pdfplumber not installed; fallback table extraction unavailable."
+    existing_pages = {int(table.get("page") or 0) for table in existing}
+    results: list[dict[str, Any]] = []
+    try:
+        with pdfplumber.open(io.BytesIO(data)) as document:
+            for page_number, page in enumerate(document.pages, start=1):
+                if page_number in existing_pages:
+                    continue
+                for candidate in page.find_tables():
+                    extracted = candidate.extract() or []
+                    headers = normalize_table_headers(list(extracted[0] if extracted else []))
+                    if sum(bool(value) for value in headers) < 2:
+                        continue
+                    rows = [[clean_table_cell(value) for value in row] for row in extracted[1:]]
+                    bbox = list(candidate.bbox)
+                    if not rows:
+                        expanded = expand_header_table(page, candidate)
+                        if expanded:
+                            headers, rows, bbox = expanded
+                    rows = [row for row in rows if any(row)]
+                    if not rows:
+                        continue
+                    width = max(len(headers), *(len(row) for row in rows))
+                    headers += [""] * (width - len(headers))
+                    rows = [row + [""] * (width - len(row)) for row in rows]
+                    results.append(table_record(
+                        name,
+                        page_number,
+                        len(existing) + len(results) + 1,
+                        headers,
+                        rows,
+                        markdown_table(headers, rows),
+                        bbox,
+                        float(page.width),
+                        float(page.height),
+                        "pdfplumber",
+                    ))
+        return results, None
+    except Exception as exc:
+        return results, f"pdfplumber table extraction failed: {exc}"
+
+
+def expand_header_table(page: Any, candidate: Any) -> tuple[list[str], list[list[str]], list[float]] | None:
+    x0, top, x1, bottom = map(float, candidate.bbox)
+    boundaries = sorted({round(float(cell[0]), 3) for cell in candidate.cells} | {round(float(cell[2]), 3) for cell in candidate.cells})
+    if len(boundaries) < 3:
+        return None
+    horizontal_edges = [
+        edge for edge in page.horizontal_edges
+        if float(edge.get("top", -1)) >= top - 2
+        and min(float(edge.get("x1", 0)), x1) - max(float(edge.get("x0", 0)), x0) >= (x1 - x0) * 0.65
+    ]
+    if len(horizontal_edges) < 3:
+        return None
+    extended_bottom = max(float(edge["top"]) for edge in horizontal_edges)
+    cropped = page.crop((x0, top, x1, min(float(page.height), extended_bottom + 1)))
+    extracted = cropped.extract_table({
+        "vertical_strategy": "explicit",
+        "explicit_vertical_lines": boundaries,
+        "horizontal_strategy": "lines",
+        "snap_tolerance": 4,
+        "join_tolerance": 4,
+        "intersection_tolerance": 5,
+    }) or []
+    if len(extracted) < 2:
+        return None
+    headers = normalize_table_headers(list(extracted[0]))
+    rows = [[clean_table_cell(value) for value in row] for row in extracted[1:]]
+    return headers, rows, [x0, top, x1, extended_bottom]
 
 
 def pymupdf_pdf_to_blocks(data: bytes, name: str) -> tuple[str, list[dict[str, Any]], str | None]:

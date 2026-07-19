@@ -36,6 +36,7 @@ const DOCUMENT_EXTENSIONS = new Set([
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(__dirname, "..", "..");
 const WORKER_PATH = path.resolve(__dirname, "..", "workers", "document-ingest", "extract_document.py");
+const DOCUMENT_INGEST_CACHE_VERSION = 2;
 
 export function isDocumentIngestFile(relativePath) {
   return DOCUMENT_EXTENSIONS.has(path.extname(String(relativePath || "")).toLowerCase());
@@ -49,9 +50,13 @@ export function documentIngestCachePath(workspaceRoot, relativePath, stat) {
   const stamp = stat ? `${stat.size}:${stat.mtimeMs}` : "";
   const key = crypto
     .createHash("sha256")
-    .update(`${String(relativePath || "").replace(/\\/g, "/")}\n${stamp}`)
+    .update(`v${DOCUMENT_INGEST_CACHE_VERSION}\n${String(relativePath || "").replace(/\\/g, "/")}\n${stamp}`)
     .digest("hex");
   return path.join(documentIngestCacheDirectory(workspaceRoot), `${key}.json`);
+}
+
+export function documentIngestMarkdownPath(workspaceRoot, relativePath, stat) {
+  return documentIngestCachePath(workspaceRoot, relativePath, stat).replace(/\.json$/, ".md");
 }
 
 export function annotationsPathForDocument(workspaceRoot, relativePath) {
@@ -86,12 +91,14 @@ export async function getDocumentIngestMetadata(workspaceRoot, absolutePath, rel
   let cached = false;
   let textLength = 0;
   let blockCount = 0;
+  let tableCount = 0;
   let warnings = [];
   try {
     const cachedJson = JSON.parse(await fs.readFile(cachePath, "utf8"));
     cached = true;
     textLength = String(cachedJson.text || "").length;
     blockCount = Array.isArray(cachedJson.blocks) ? cachedJson.blocks.length : 0;
+    tableCount = Array.isArray(cachedJson.tables) ? cachedJson.tables.length : 0;
     warnings = Array.isArray(cachedJson.warnings) ? cachedJson.warnings : [];
   } catch {}
   return {
@@ -99,8 +106,10 @@ export async function getDocumentIngestMetadata(workspaceRoot, absolutePath, rel
     cached,
     textLength,
     blockCount,
+    tableCount,
     warnings,
     cachePath: path.relative(workspaceRoot, cachePath).replace(/\\/g, "/"),
+    markdownPath: path.relative(workspaceRoot, cachePath.replace(/\.json$/, ".md")).replace(/\\/g, "/"),
     supported: isDocumentIngestFile(relativePath)
   };
 }
@@ -113,8 +122,11 @@ export async function extractAndCacheDocumentText(workspaceRoot, absolutePath, r
 export async function extractAndCacheDocument(workspaceRoot, absolutePath, relativePath, stat = null) {
   const fileStat = stat || await fs.stat(absolutePath);
   const cachePath = documentIngestCachePath(workspaceRoot, relativePath, fileStat);
+  const markdownPath = documentIngestMarkdownPath(workspaceRoot, relativePath, fileStat);
   try {
-    return JSON.parse(await fs.readFile(cachePath, "utf8"));
+    const cached = JSON.parse(await fs.readFile(cachePath, "utf8"));
+    await ensureDocumentMarkdown(markdownPath, cached);
+    return cached;
   } catch {}
 
   const result = await runDocumentWorker({ absolutePath, relativePath });
@@ -126,7 +138,21 @@ export async function extractAndCacheDocument(workspaceRoot, absolutePath, relat
   );
   await fs.mkdir(path.dirname(cachePath), { recursive: true });
   await fs.writeFile(cachePath, JSON.stringify(normalized, null, 2) + "\n", "utf8");
+  await fs.writeFile(markdownPath, documentMarkdown(normalized), "utf8");
   return normalized;
+}
+
+async function ensureDocumentMarkdown(markdownPath, document) {
+  try {
+    await fs.access(markdownPath);
+  } catch {
+    await fs.writeFile(markdownPath, documentMarkdown(document), "utf8");
+  }
+}
+
+function documentMarkdown(document = {}) {
+  const markdown = String(document.markdown || document.text || "").trim();
+  return markdown ? `${markdown}\n` : "";
 }
 
 export async function extractDocumentAnnotationBlocks(workspaceRoot, relativePath) {
@@ -581,11 +607,28 @@ function normalizeWorkerResult(result = {}, relativePath) {
       metadata: block.metadata && typeof block.metadata === "object" ? block.metadata : {}
     })).filter((block) => block.text.trim())
     : [];
+  const tables = Array.isArray(result.tables)
+    ? result.tables.map((table, index) => ({
+      id: String(table.id || `table-${index + 1}`),
+      path: String(table.path || relativePath),
+      source: String(table.source || "document-table"),
+      page: Number.isFinite(Number(table.page)) ? Number(table.page) : null,
+      headers: Array.isArray(table.headers) ? table.headers.map((value) => String(value || "")) : [],
+      rows: Array.isArray(table.rows)
+        ? table.rows.map((row) => Array.isArray(row) ? row.map((value) => String(value || "")) : [])
+        : [],
+      markdown: String(table.markdown || ""),
+      bbox: table.bbox || null,
+      metadata: table.metadata && typeof table.metadata === "object" ? table.metadata : {}
+    })).filter((table) => table.headers.length > 1 && table.rows.length > 0)
+    : [];
   return {
-    schemaVersion: 1,
+    schemaVersion: DOCUMENT_INGEST_CACHE_VERSION,
     path: String(result.path || relativePath),
     kind: String(result.kind || "file"),
     text: String(result.text || blocks.map((block) => block.text).join("\n\n")).trim(),
+    markdown: String(result.markdown || result.text || "").trim(),
+    tables,
     blocks,
     warnings: Array.isArray(result.warnings) ? result.warnings.map(String) : [],
     extractor: String(result.extractor || "codmes-document-worker")

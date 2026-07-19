@@ -11,6 +11,7 @@ import {
   contentScopedAnnotationsPathForDocument,
   extractAndCacheDocument,
   extractDocumentAnnotationBlocks,
+  documentIngestMarkdownPath,
   getDocumentIngestMetadata,
   isDocumentIngestFile,
   legacyAnnotationsPathForDocument
@@ -39,6 +40,33 @@ test("document ingest extracts and caches PDF text through the worker", async ()
 
   const second = await extractAndCacheDocument(root, pdfPath, "Documents/manual.pdf");
   assert.deepEqual(second.text, first.text);
+});
+
+test("document ingest stores structured PDF tables and a Markdown sidecar", async () => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "document-ingest-table-"));
+  await fs.mkdir(path.join(root, "Documents"), { recursive: true });
+  const relativePath = "Documents/schedule.pdf";
+  const pdfPath = path.join(root, relativePath);
+  await createTablePdf(pdfPath);
+
+  const result = await extractAndCacheDocument(root, pdfPath, relativePath);
+  assert.equal(result.schemaVersion, 2);
+  assert.ok(result.tables.length >= 1);
+  const table = result.tables.find((item) => item.headers.includes("Event"));
+  assert.ok(table);
+  assert.deepEqual(table.headers.slice(0, 3), ["Month", "Event", "Place"]);
+  assert.deepEqual(table.rows[0].slice(0, 3), ["March", "GTC", "San Jose"]);
+  assert.equal(table.page, 1);
+  assert.ok(table.bbox?.normalized);
+
+  const stat = await fs.stat(pdfPath);
+  const markdownPath = documentIngestMarkdownPath(root, relativePath, stat);
+  const markdown = await fs.readFile(markdownPath, "utf8");
+  assert.match(markdown, /\|\s*Month\s*\|\s*Event\s*\|\s*Place\s*\|/);
+
+  const metadata = await getDocumentIngestMetadata(root, pdfPath, relativePath, stat);
+  assert.ok(metadata.tableCount >= 1);
+  assert.match(metadata.markdownPath, /\.md$/);
 });
 
 test("document ingest extracts DOCX text without LibreOffice through OpenXML", async () => {
@@ -313,6 +341,31 @@ page.insert_text((72, 72), text, fontsize=14)
 doc.save(path)
 `;
   await execFileAsync(process.env.CODMES_PYTHON || ".codmes-runtime/bin/python", ["-c", script, filePath, text]);
+}
+
+async function createTablePdf(filePath) {
+  const script = `
+import fitz, sys
+path = sys.argv[1]
+doc = fitz.open()
+page = doc.new_page(width=500, height=400)
+xs = [60, 150, 300, 440]
+ys = [70, 105, 140, 175]
+for x in xs:
+    page.draw_line((x, ys[0]), (x, ys[-1]), color=(0, 0, 0), width=1)
+for y in ys:
+    page.draw_line((xs[0], y), (xs[-1], y), color=(0, 0, 0), width=1)
+rows = [
+    ["Month", "Event", "Place"],
+    ["March", "GTC", "San Jose"],
+    ["April", "ICLR", "Rio"]
+]
+for row_index, row in enumerate(rows):
+    for column_index, value in enumerate(row):
+        page.insert_text((xs[column_index] + 6, ys[row_index] + 22), value, fontsize=11)
+doc.save(path)
+`;
+  await execFileAsync(process.env.CODMES_PYTHON || ".codmes-runtime/bin/python", ["-c", script, filePath]);
 }
 
 async function createImageOnlyPdf(filePath) {

@@ -310,7 +310,9 @@ test("searches extracted PDF text and caches it", async () => {
   assert.match(result.results[0].snippet, /semantic workspace/i);
 
   const cacheEntries = await fs.readdir(path.join(root, ".codmes", "index", "documents"));
-  assert.equal(cacheEntries.length, 1);
+  assert.equal(cacheEntries.length, 2);
+  assert.equal(cacheEntries.filter((entry) => entry.endsWith(".json")).length, 1);
+  assert.equal(cacheEntries.filter((entry) => entry.endsWith(".md")).length, 1);
 });
 
 test("indexes searchable PDF annotation text and image OCR blocks", async () => {
