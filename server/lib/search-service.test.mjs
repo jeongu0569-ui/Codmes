@@ -193,6 +193,34 @@ test("global search keeps PDF filename matches and separate content occurrences"
   assert.equal(filenameResult.results[0].target.page, null);
 });
 
+test("search normalizes composed Korean queries against decomposed PDF paths and text", async () => {
+  const root = await fixtureWorkspace();
+  const indexPath = path.join(root, ".codmes", "index", "search.json");
+  const decomposedPath = "Notes/AI브리프_3월_260303.pdf".normalize("NFD");
+  await fs.mkdir(path.dirname(indexPath), { recursive: true });
+  await fs.writeFile(indexPath, JSON.stringify({
+    builtAt: new Date(0).toISOString(),
+    items: [{ path: decomposedPath, kind: "pdf", modifiedAt: new Date(0).toISOString() }],
+    chunks: [{
+      id: "korean-page",
+      path: decomposedPath,
+      kind: "pdf",
+      page: 3,
+      chunkIndex: 0,
+      text: "3월 주요 일정".normalize("NFD")
+    }]
+  }), "utf8");
+
+  const filenameResult = await globalSearch(root, { query: "AI브리프", surface: "notes" });
+  assert.equal(filenameResult.documents[0].path, decomposedPath);
+  assert.equal(filenameResult.documents[0].titleMatch, "prefix");
+
+  const monthResult = await searchWorkspace(root, { query: "3월", scopePath: "Notes" });
+  assert.equal(monthResult.resultCount, 1);
+  assert.equal(monthResult.results[0].path, decomposedPath);
+  assert.match(monthResult.results[0].snippet, /3월 주요 일정/);
+});
+
 test("global search ranks documents by filename match and document match counts", async () => {
   const root = await fixtureWorkspace();
   const indexPath = path.join(root, ".codmes", "index", "search.json");

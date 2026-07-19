@@ -540,9 +540,9 @@ function toGlobalItemResult(item, surface) {
 
 function classifyFileNameMatch(filePath, query) {
   const fileName = path.basename(filePath || "");
-  const lowerFileName = fileName.toLocaleLowerCase();
+  const lowerFileName = normalizeSearchText(fileName);
   const lowerTitle = lowerFileName.replace(path.extname(lowerFileName), "");
-  const phrase = query.toLocaleLowerCase();
+  const phrase = normalizeSearchText(query);
   if (lowerTitle === phrase || lowerFileName === phrase) return "exact";
   if (lowerTitle.startsWith(phrase) || lowerFileName.startsWith(phrase)) return "prefix";
   if (lowerFileName.includes(phrase)) return "contains";
@@ -550,9 +550,9 @@ function classifyFileNameMatch(filePath, query) {
 }
 
 function matchGlobalChunk(chunk, query) {
-  const text = String(chunk.text || "");
-  const lowerText = text.toLocaleLowerCase();
-  const phrase = query.toLocaleLowerCase();
+  const text = String(chunk.text || "").normalize("NFC");
+  const lowerText = normalizeSearchText(text);
+  const phrase = normalizeSearchText(query);
   const exactIndex = lowerText.indexOf(phrase);
   const tokens = phrase.split(/\s+/).filter(Boolean);
   const matched = exactIndex >= 0 || (tokens.length > 1 && tokens.every((token) => lowerText.includes(token)));
@@ -828,8 +828,8 @@ function shouldSkipDirectoryEntry(workspaceRoot, parentAbsolutePath, entryName) 
 }
 
 async function searchFile(workspaceRoot, file, query) {
-  const needle = query.toLocaleLowerCase();
-  const filenameIndex = file.path.toLocaleLowerCase().indexOf(needle);
+  const needle = normalizeSearchText(query);
+  const filenameIndex = normalizeSearchText(file.path).indexOf(needle);
   if (filenameIndex >= 0) {
     return {
       path: file.path,
@@ -847,7 +847,8 @@ async function searchFile(workspaceRoot, file, query) {
     return null;
   }
   if (!text) return null;
-  const haystack = text.toLocaleLowerCase();
+  const normalizedText = text.normalize("NFC");
+  const haystack = normalizeSearchText(normalizedText);
   const index = haystack.indexOf(needle);
   if (index < 0) return null;
   return {
@@ -855,8 +856,8 @@ async function searchFile(workspaceRoot, file, query) {
     kind: file.kind,
     size: file.size,
     modifiedAt: file.modifiedAt,
-    score: scoreHit(text, query, index),
-    snippet: snippet(text, index, query.length)
+    score: scoreHit(normalizedText, query, index),
+    snippet: snippet(normalizedText, index, needle.length)
   };
 }
 
@@ -954,6 +955,10 @@ function snippet(text, index, length) {
   return prefix + text.slice(start, end).replace(/\s+/g, " ").trim() + suffix;
 }
 
+function normalizeSearchText(value) {
+  return String(value || "").normalize("NFC").toLocaleLowerCase();
+}
+
 function chunkText(text, options) {
   const chunks = [];
   text = String(options.text ?? text ?? "");
@@ -983,10 +988,10 @@ function findChunkEnd(text, start, hardEnd) {
 }
 
 function scoreIndexedChunk(chunk, query) {
-  const text = String(chunk.text || "");
-  const lowerText = text.toLocaleLowerCase();
-  const lowerPath = String(chunk.path || "").toLocaleLowerCase();
-  const phrase = query.toLocaleLowerCase();
+  const text = String(chunk.text || "").normalize("NFC");
+  const lowerText = normalizeSearchText(text);
+  const lowerPath = normalizeSearchText(chunk.path);
+  const phrase = normalizeSearchText(query);
   const terms = queryTerms(query);
   let score = 0;
   let index = lowerText.indexOf(phrase);
@@ -1011,8 +1016,7 @@ function scoreIndexedChunk(chunk, query) {
 }
 
 function queryTerms(query) {
-  return Array.from(new Set(String(query || "")
-    .toLocaleLowerCase()
+  return Array.from(new Set(normalizeSearchText(query)
     .split(/[^\p{L}\p{N}_-]+/u)
     .map((term) => term.trim())
     .filter((term) => term.length >= 2)));
