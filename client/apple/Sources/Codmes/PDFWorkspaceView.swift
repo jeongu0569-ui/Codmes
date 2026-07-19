@@ -74,6 +74,33 @@ fileprivate struct PDFExportShare: Identifiable {
     let id = UUID()
     let urls: [URL]
 }
+
+fileprivate enum PDFExportPageScope: Equatable {
+    case currentPage
+    case pageSelection
+    case allPages
+}
+
+fileprivate enum PDFExportFormat: String, CaseIterable, Identifiable {
+    case pdf
+    case editableCodmes
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .pdf: "PDF"
+        case .editableCodmes: "Editable Codmes"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .pdf: "doc.richtext"
+        case .editableCodmes: "shippingbox"
+        }
+    }
+}
 #endif
 
 fileprivate struct PDFLassoSelectionSummary: Equatable {
@@ -143,9 +170,13 @@ struct PDFWorkspaceView: View {
     @State private var lassoSelection: PDFLassoSelectionSummary?
     @State private var textEditRequest = 0
     @State private var isInspectorPresented = false
+    @State private var isExportScopePresented = false
     @State private var isExportOptionsPresented = false
+    @State private var exportPageScope = PDFExportPageScope.allPages
+    @State private var exportFormat = PDFExportFormat.pdf
     @State private var exportIncludesAnnotations = true
     @State private var exportPageRange = ""
+    @State private var exportPageCount = 0
     @State private var isExportingPDF = false
     @State private var exportedPDFShare: PDFExportShare?
     @State private var isImportingPDFPages = false
@@ -347,19 +378,24 @@ struct PDFWorkspaceView: View {
         }
         .sheet(isPresented: $isExportOptionsPresented) {
             PDFExportOptionsView(
+                pageScope: exportPageScope,
+                currentPageNumber: currentPageIndex + 1,
+                pageCount: exportPageCount,
+                exportFormat: $exportFormat,
                 includeAnnotations: $exportIncludesAnnotations,
                 pageRange: $exportPageRange,
                 isExporting: isExportingPDF,
-                onExportPDF: {
+                onExport: {
                     isExportOptionsPresented = false
-                    exportPDF(includeAnnotations: exportIncludesAnnotations)
-                },
-                onExportCodmesState: {
-                    isExportOptionsPresented = false
-                    exportPDFWithCodmesState()
+                    switch exportFormat {
+                    case .pdf:
+                        exportPDF(includeAnnotations: exportIncludesAnnotations)
+                    case .editableCodmes:
+                        exportPDFWithCodmesState()
+                    }
                 }
             )
-            .presentationDetents([.height(330), .medium])
+            .presentationDetents([.height(exportPageScope == .pageSelection ? 390 : 340), .medium])
         }
         .fileImporter(isPresented: $isImportingPDFPages, allowedContentTypes: [.pdf, .json], allowsMultipleSelection: true) { result in
             switch result {
@@ -511,13 +547,22 @@ struct PDFWorkspaceView: View {
             .accessibilityLabel("Annotation inspector")
 
             Button {
-                isExportOptionsPresented = true
+                exportPageCount = PDFDocument(url: rawFile.url)?.pageCount ?? 0
+                isExportScopePresented = true
             } label: {
                 Image(systemName: isExportingPDF ? "hourglass" : "square.and.arrow.up")
             }
             .buttonStyle(.plain)
             .disabled(isExportingPDF)
             .accessibilityLabel("Export PDF")
+            .popover(isPresented: $isExportScopePresented, attachmentAnchor: .rect(.bounds), arrowEdge: .top) {
+                PDFExportPageScopeView(
+                    currentPageNumber: currentPageIndex + 1,
+                    pageCount: exportPageCount,
+                    onSelect: prepareExport(scope:)
+                )
+                .presentationCompactAdaptation(.popover)
+            }
 
             Button {
                 isWritingMode = true
@@ -1486,6 +1531,22 @@ struct PDFWorkspaceView: View {
                     statusText = "Export failed"
                 }
             }
+        }
+    }
+
+    private func prepareExport(scope: PDFExportPageScope) {
+        exportPageScope = scope
+        switch scope {
+        case .currentPage:
+            exportPageRange = "\(currentPageIndex + 1)"
+        case .pageSelection, .allPages:
+            exportPageRange = ""
+        }
+        isExportScopePresented = false
+
+        // Let the anchored popover finish dismissing before presenting the modal sheet.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            isExportOptionsPresented = true
         }
     }
 
@@ -8392,52 +8453,177 @@ private struct PDFAnnotationInspectorView: View {
     }
 }
 
+private struct PDFExportPageScopeView: View {
+    let currentPageNumber: Int
+    let pageCount: Int
+    let onSelect: (PDFExportPageScope) -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            scopeButton(
+                title: "Current Page",
+                detail: "Page \(currentPageNumber)",
+                systemImage: "doc.text",
+                scope: .currentPage
+            )
+            Divider()
+            scopeButton(
+                title: "Page Selection",
+                detail: "Enter pages to export",
+                systemImage: "text.badge.checkmark",
+                scope: .pageSelection
+            )
+            Divider()
+            scopeButton(
+                title: "All Pages",
+                detail: pageCount > 0 ? "\(pageCount) pages" : "Full document",
+                systemImage: "square.stack.3d.up",
+                scope: .allPages
+            )
+        }
+        .frame(width: 240)
+        .padding(.vertical, 6)
+    }
+
+    private func scopeButton(
+        title: String,
+        detail: String,
+        systemImage: String,
+        scope: PDFExportPageScope
+    ) -> some View {
+        Button {
+            onSelect(scope)
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 17))
+                    .foregroundStyle(Color.accentColor)
+                    .frame(width: 24)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.body.weight(.medium))
+                        .foregroundStyle(.primary)
+                    Text(detail)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 8)
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
+            .padding(.horizontal, 14)
+            .frame(height: 58)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
 private struct PDFExportOptionsView: View {
+    @Environment(\.dismiss) private var dismiss
+    let pageScope: PDFExportPageScope
+    let currentPageNumber: Int
+    let pageCount: Int
+    @Binding var exportFormat: PDFExportFormat
     @Binding var includeAnnotations: Bool
     @Binding var pageRange: String
     let isExporting: Bool
-    let onExportPDF: () -> Void
-    let onExportCodmesState: () -> Void
+    let onExport: () -> Void
+    @FocusState private var isPageRangeFocused: Bool
 
     var body: some View {
         NavigationStack {
             VStack(alignment: .leading, spacing: 16) {
-                Toggle("Include annotations", isOn: $includeAnnotations)
-                    .font(.headline)
-
-                TextField("Pages, for example 1-3, 5", text: $pageRange)
-                    .textInputAutocapitalization(.never)
-                    .keyboardType(.numbersAndPunctuation)
-                    .textFieldStyle(.roundedBorder)
-
-                Button {
-                    onExportPDF()
-                } label: {
-                    Label(includeAnnotations ? "Export annotated PDF" : "Export original PDF", systemImage: "doc.richtext")
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                LabeledContent("Pages") {
+                    Text(pageSummary)
+                        .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(isExporting)
 
-                Button {
-                    onExportCodmesState()
-                } label: {
-                    Label("Export editable Codmes PDF", systemImage: "shippingbox")
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                if pageScope == .pageSelection {
+                    VStack(alignment: .leading, spacing: 6) {
+                        TextField("For example 1-3, 5", text: $pageRange)
+                            .textInputAutocapitalization(.never)
+                            .keyboardType(.numbersAndPunctuation)
+                            .textFieldStyle(.roundedBorder)
+                            .focused($isPageRangeFocused)
+
+                        Text(pageRangeHelp)
+                            .font(.footnote)
+                            .foregroundStyle(pageRange.isEmpty || isPageRangeValid ? Color.secondary : Color.red)
+                    }
                 }
-                .buttonStyle(.bordered)
-                .disabled(isExporting)
 
-                Text("Leave pages empty to export the full PDF. An editable Codmes PDF is one portable .codmespdf file that restores the PDF with editable handwriting, text boxes, and image objects on another device.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
+                Picker("Format", selection: $exportFormat) {
+                    ForEach(PDFExportFormat.allCases) { format in
+                        Text(format.label).tag(format)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                if exportFormat == .pdf {
+                    Toggle("Include annotations", isOn: $includeAnnotations)
+                } else {
+                    Text("Editable Codmes keeps handwriting, text boxes, and images editable when opened on another device.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
 
                 Spacer(minLength: 0)
+
+                Button(action: onExport) {
+                    Label("Export", systemImage: exportFormat.systemImage)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isExporting || !canExport)
+
+                Text(exportFormat == .pdf
+                     ? "A PDF with annotations is flattened so it can be viewed in other PDF apps."
+                     : "The .codmespdf package contains the selected PDF pages and their editable Codmes annotations.")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
             }
             .padding()
             .navigationTitle("Export")
             .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") { dismiss() }
+                }
+            }
+            .task {
+                guard pageScope == .pageSelection else { return }
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                isPageRangeFocused = true
+            }
         }
+    }
+
+    private var pageSummary: String {
+        switch pageScope {
+        case .currentPage:
+            "Current page (\(currentPageNumber))"
+        case .pageSelection:
+            "Selected pages"
+        case .allPages:
+            pageCount > 0 ? "All \(pageCount) pages" : "All pages"
+        }
+    }
+
+    private var isPageRangeValid: Bool {
+        isValidPDFPageRange(pageRange, pageCount: pageCount)
+    }
+
+    private var canExport: Bool {
+        pageScope != .pageSelection || isPageRangeValid
+    }
+
+    private var pageRangeHelp: String {
+        guard !pageRange.isEmpty else { return "Enter pages such as 1-3, 5." }
+        return isPageRangeValid
+            ? "Only the entered pages will be exported."
+            : "Enter page numbers between 1 and \(max(pageCount, 1))."
     }
 }
 
@@ -8480,6 +8666,27 @@ private func parsePDFPageRange(_ value: String) -> [Int] {
         }
     }
     return pages.sorted()
+}
+
+private func isValidPDFPageRange(_ value: String, pageCount: Int) -> Bool {
+    let cleaned = value.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !cleaned.isEmpty, pageCount > 0 else { return false }
+
+    let tokens = cleaned.split(separator: ",", omittingEmptySubsequences: false)
+    guard !tokens.isEmpty else { return false }
+    for token in tokens {
+        let part = String(token).trimmingCharacters(in: .whitespacesAndNewlines)
+        let bounds = part.split(separator: "-", omittingEmptySubsequences: false)
+        guard bounds.count == 1 || bounds.count == 2 else { return false }
+        let pageNumbers = bounds.compactMap {
+            Int(String($0).trimmingCharacters(in: .whitespacesAndNewlines))
+        }
+        guard pageNumbers.count == bounds.count,
+              pageNumbers.allSatisfy({ (1...pageCount).contains($0) }) else {
+            return false
+        }
+    }
+    return true
 }
 
 private func normalizedPageIndexes(_ requested: [Int], pageCount: Int) -> [Int] {
