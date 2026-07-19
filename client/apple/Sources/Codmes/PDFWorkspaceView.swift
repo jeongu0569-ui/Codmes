@@ -299,6 +299,13 @@ struct PDFWorkspaceView: View {
                     .offset(x: pdfCanvasOffset(for: stageProxy.size))
                     #endif
 
+                    historyControls
+                        .padding(.leading, 12)
+                        .padding(.top, 12)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .offset(x: historyControlsOffset(for: stageProxy.size.width))
+                        .zIndex(0.5)
+
                     if isPageBrowserPresented, usesOverlayPageBrowser {
                         Color.black.opacity(0.14)
                             .contentShape(Rectangle())
@@ -325,8 +332,16 @@ struct PDFWorkspaceView: View {
         .task(id: rawFile.path) {
             await loadAnnotations()
         }
+        .onChange(of: statusText, initial: true) { _, value in
+            store.activePDFStatusPath = rawFile.path
+            store.activePDFStatusText = value
+        }
         .onDisappear {
             saveTask?.cancel()
+            if store.activePDFStatusPath == rawFile.path {
+                store.activePDFStatusPath = ""
+                store.activePDFStatusText = ""
+            }
         }
         #if os(iOS)
         .fileImporter(isPresented: $isImportingImage, allowedContentTypes: [.image], allowsMultipleSelection: false) { result in
@@ -374,68 +389,100 @@ struct PDFWorkspaceView: View {
     }
 
     private var header: some View {
-        HStack(spacing: 10) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.25)) {
-                    isPageBrowserPresented.toggle()
+        GeometryReader { proxy in
+            let compact = proxy.size.width < 600
+
+            ZStack {
+                HStack(spacing: compact ? 4 : 8) {
+                    pageBrowserButton
+                    pdfModePicker(compact: compact)
+
+                    Spacer(minLength: 8)
+
+                    documentActionControls(compact: compact)
                 }
-            } label: {
-                Image(systemName: "rectangle.grid.2x2")
-                    .foregroundStyle(isPageBrowserPresented ? Color.accentColor : Color.secondary)
-                    .frame(width: 28, height: 28)
-                    .background(isPageBrowserPresented ? Color.accentColor.opacity(0.14) : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+
+                centeredToolControls(compact: compact)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Page thumbnails")
+            .padding(.horizontal, compact ? 8 : 16)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .frame(height: 42)
+        .background(.quaternary.opacity(0.08))
+    }
 
-            Label("PDF", systemImage: "doc.richtext")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
-
-            if !statusText.isEmpty {
-                Text(statusText)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
+    private var pageBrowserButton: some View {
+        Button {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                isPageBrowserPresented.toggle()
             }
+        } label: {
+            Image(systemName: "rectangle.grid.2x2")
+                .foregroundStyle(isPageBrowserPresented ? Color.accentColor : Color.secondary)
+                .frame(width: 28, height: 28)
+                .background(isPageBrowserPresented ? Color.accentColor.opacity(0.14) : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Page thumbnails")
+    }
 
-            Spacer()
-
-            Button {
-                undoAnnotationChange()
-            } label: {
-                Image(systemName: "arrow.uturn.backward")
-            }
-            .buttonStyle(.plain)
-            .disabled(undoStack.isEmpty)
-            .accessibilityLabel("Undo annotation change")
-
-            Button {
-                redoAnnotationChange()
-            } label: {
-                Image(systemName: "arrow.uturn.forward")
-            }
-            .buttonStyle(.plain)
-            .disabled(redoStack.isEmpty)
-            .accessibilityLabel("Redo annotation change")
-
-            Divider()
-                .frame(height: 18)
-
-            #if os(iOS)
+    @ViewBuilder
+    private func pdfModePicker(compact: Bool) -> some View {
+        #if os(iOS)
             Picker("PDF mode", selection: $isWritingMode) {
+                Image(systemName: "hand.draw").tag(false)
+                Image(systemName: "pencil.tip").tag(true)
+            }
+            .pickerStyle(.segmented)
+            .frame(width: compact ? 72 : 92)
+            .accessibilityLabel("PDF mode")
+        #elseif os(macOS)
+            Picker("PDF mode", selection: $isMacWritingMode) {
                 Image(systemName: "hand.draw").tag(false)
                 Image(systemName: "pencil.tip").tag(true)
             }
             .pickerStyle(.segmented)
             .frame(width: 92)
             .accessibilityLabel("PDF mode")
+        #endif
+    }
 
-            HStack(spacing: 4) {
+    @ViewBuilder
+    private func centeredToolControls(compact: Bool) -> some View {
+        #if os(iOS)
+            HStack(spacing: compact ? 0 : 4) {
                 pdfToolButton(.pen)
                 pdfToolButton(.eraser)
                 pdfToolButton(.lasso)
+
+                Button {
+                    isWritingMode = true
+                    markupTool = .text
+                    toolOptions = nil
+                    didConfirmCurrentTool = false
+                } label: {
+                    Image(systemName: "textformat")
+                        .font(.system(size: 15, weight: markupTool == .text ? .semibold : .regular))
+                        .foregroundStyle(markupTool == .text ? Color.accentColor : Color.secondary)
+                        .frame(width: 28, height: 28)
+                        .background(markupTool == .text ? Color.accentColor.opacity(0.14) : Color.clear)
+                        .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Place text box")
+
+                Button {
+                    isWritingMode = true
+                    markupTool = .lasso
+                    isImportingImage = true
+                } label: {
+                    Image(systemName: "photo.badge.plus")
+                        .foregroundStyle(Color.secondary)
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Attach image")
             }
             .popover(item: $toolOptions) { selectedTool in
                 PDFToolOptionsPopover(
@@ -447,41 +494,36 @@ struct PDFWorkspaceView: View {
                 .frame(width: 260)
                 .padding(14)
             }
-
-            Divider()
-                .frame(height: 18)
-
-            Button {
-                isWritingMode = true
-                markupTool = .text
-                toolOptions = nil
-                didConfirmCurrentTool = false
-            } label: {
-                Image(systemName: "textformat")
-                    .font(.system(size: 15, weight: markupTool == .text ? .semibold : .regular))
-                    .foregroundStyle(markupTool == .text ? Color.accentColor : Color.secondary)
-                    .frame(width: 28, height: 28)
-                    .background(markupTool == .text ? Color.accentColor.opacity(0.14) : Color.clear)
-                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        #elseif os(macOS)
+            HStack(spacing: 4) {
+                macPDFToolButton(.pen)
+                macPDFToolButton(.eraser)
+                macPDFToolButton(.lasso)
+                macPDFToolButton(.text)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Place text box")
-
-            Button {
-                isWritingMode = true
-                markupTool = .lasso
-                isImportingImage = true
-            } label: {
-                Image(systemName: "photo.badge.plus")
+            .popover(item: $macToolOptions) { selectedTool in
+                MacPDFToolOptionsPopover(
+                    tool: selectedTool,
+                    penColorHex: $macPenColorHex,
+                    penWidth: $macPenWidth,
+                    eraserWidth: $macEraserWidth
+                )
+                .frame(width: 260)
+                .padding(14)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel("Attach image")
+        #endif
+    }
 
+    @ViewBuilder
+    private func documentActionControls(compact: Bool) -> some View {
+        #if os(iOS)
+        HStack(spacing: compact ? 0 : 8) {
             Button {
                 exportPageCount = PDFDocument(url: rawFile.url)?.pageCount ?? 0
                 isExportScopePresented = true
             } label: {
                 Image(systemName: isExportingPDF ? "hourglass" : "square.and.arrow.up")
+                    .frame(width: 28, height: 28)
             }
             .buttonStyle(.plain)
             .disabled(isExportingPDF)
@@ -501,40 +543,49 @@ struct PDFWorkspaceView: View {
                 isImportingPDFPages = true
             } label: {
                 Image(systemName: "doc.badge.plus")
+                    .frame(width: 28, height: 28)
             }
             .buttonStyle(.plain)
             .disabled(isExportingPDF)
             .accessibilityLabel("Insert PDF pages after current page")
-            #elseif os(macOS)
-            Picker("PDF mode", selection: $isMacWritingMode) {
-                Image(systemName: "hand.draw").tag(false)
-                Image(systemName: "pencil.tip").tag(true)
-            }
-            .pickerStyle(.segmented)
-            .frame(width: 92)
-            .accessibilityLabel("PDF mode")
-
-            HStack(spacing: 4) {
-                macPDFToolButton(.pen)
-                macPDFToolButton(.eraser)
-                macPDFToolButton(.lasso)
-                macPDFToolButton(.text)
-            }
-            .popover(item: $macToolOptions) { selectedTool in
-                MacPDFToolOptionsPopover(
-                    tool: selectedTool,
-                    penColorHex: $macPenColorHex,
-                    penWidth: $macPenWidth,
-                    eraserWidth: $macEraserWidth
-                )
-                .frame(width: 260)
-                .padding(14)
-            }
-            #endif
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 7)
-        .background(.quaternary.opacity(0.08))
+        #elseif os(macOS)
+        EmptyView()
+        #endif
+    }
+
+    private var historyControls: some View {
+        HStack(spacing: 0) {
+            Button {
+                undoAnnotationChange()
+            } label: {
+                Image(systemName: "arrow.uturn.backward")
+                    .frame(width: 34, height: 34)
+            }
+            .buttonStyle(.plain)
+            .disabled(undoStack.isEmpty)
+            .accessibilityLabel("Undo annotation change")
+
+            Divider()
+                .frame(height: 20)
+
+            Button {
+                redoAnnotationChange()
+            } label: {
+                Image(systemName: "arrow.uturn.forward")
+                    .frame(width: 34, height: 34)
+            }
+            .buttonStyle(.plain)
+            .disabled(redoStack.isEmpty)
+            .accessibilityLabel("Redo annotation change")
+        }
+        .padding(2)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(.quaternary, lineWidth: 1)
+        }
+        .shadow(color: .black.opacity(0.10), radius: 4, y: 1)
     }
 
     private func pageBrowserPanel(width: CGFloat) -> some View {
@@ -578,6 +629,11 @@ struct PDFWorkspaceView: View {
 
         // In landscape, center the page in the area remaining to the right of the sidebar.
         return pageBrowserWidth(for: containerSize.width) / 2
+    }
+
+    private func historyControlsOffset(for containerWidth: CGFloat) -> CGFloat {
+        guard isPageBrowserPresented, !usesOverlayPageBrowser else { return 0 }
+        return pageBrowserWidth(for: containerWidth)
     }
 
     private var pdfCanvasScale: CGFloat {

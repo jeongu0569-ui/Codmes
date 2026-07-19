@@ -75,7 +75,7 @@ struct FileBrowserPane: View {
     var body: some View {
         VStack(spacing: 0) {
             if showsHeader {
-                HeaderView(title: title, subtitle: store.sectionSubtitle(root: root))
+                HeaderView(title: title, subtitle: headerSubtitle)
             }
             if isSelectingItems {
                 HStack(spacing: 8) {
@@ -436,6 +436,17 @@ struct FileBrowserPane: View {
 
     private var workspaceRootName: String {
         root == "code" ? "Code" : "Notes"
+    }
+
+    private var headerSubtitle: String {
+        guard root == "notes",
+              let rawFile = store.selectedRawFile,
+              rawFile.kind == "pdf",
+              rawFile.path == store.activePDFStatusPath,
+              !store.activePDFStatusText.isEmpty else {
+            return store.sectionSubtitle(root: root)
+        }
+        return store.activePDFStatusText
     }
 
     private var visibleTreeEntries: [FileTreeEntry] {

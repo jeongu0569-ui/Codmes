@@ -29,6 +29,8 @@ final class WorkspaceStore: ObservableObject {
     @Published var chatContextScope: ChatContextScope = .currentFile
     @Published var activeChatSurface = "chat"
     @Published var statusMessage = "Not connected"
+    @Published var activePDFStatusText = ""
+    @Published var activePDFStatusPath = ""
     @Published var isWorkspaceConnected = false
     @Published var connectionDetail = "Enter the Workspace Server URL and connect."
     @Published var connectionStep = "Idle"

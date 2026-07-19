@@ -141,6 +141,14 @@ struct RootView: View {
         return store.selectedRawFile?.name ?? store.selectedFile?.name
     }
 
+    private var activePDFStatus: String? {
+        guard let rawFile = store.selectedRawFile,
+              rawFile.kind == "pdf",
+              rawFile.path == store.activePDFStatusPath,
+              !store.activePDFStatusText.isEmpty else { return nil }
+        return store.activePDFStatusText
+    }
+
     private var visibleWorkspaceSections: [WorkspaceSection] {
         WorkspaceSection.allCases.filter { section in
             store.surfaceEnabled(section.runtimeSurfaceId)
@@ -239,12 +247,23 @@ struct RootView: View {
                 .frame(width: 34, height: 34)
                 .contentShape(Rectangle())
 
-                Text(activeSurfaceTitle)
-                    .font(.headline.weight(.semibold))
+                VStack(alignment: .leading, spacing: 0) {
+                    HStack(spacing: 5) {
+                        Text(activeSurfaceTitle)
+                            .font(.headline.weight(.semibold))
 
-                Circle()
-                    .fill(store.isWorkspaceConnected ? .green : .orange)
-                    .frame(width: 7, height: 7)
+                        Circle()
+                            .fill(store.isWorkspaceConnected ? .green : .orange)
+                            .frame(width: 7, height: 7)
+                    }
+
+                    if let activePDFStatus {
+                        Text(activePDFStatus)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                }
             }
             .lineLimit(1)
             .frame(maxWidth: 150, alignment: .leading)
