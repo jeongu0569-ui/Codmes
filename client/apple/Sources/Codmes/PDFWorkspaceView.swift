@@ -12,6 +12,12 @@ import AppKit
 #endif
 
 #if os(iOS)
+fileprivate typealias PDFPagePreviewImage = UIImage
+#else
+fileprivate typealias PDFPagePreviewImage = NSImage
+#endif
+
+#if os(iOS)
 fileprivate enum PDFMarkupTool: String, CaseIterable, Identifiable {
     case pen
     case eraser
@@ -103,6 +109,8 @@ struct PDFWorkspaceView: View {
     @State private var redoStack: [PDFAnnotationDocument] = []
     @State private var statusText = ""
     @State private var saveTask: Task<Void, Never>?
+    @State private var currentPageIndex = 0
+    @State private var isPageBrowserPresented = false
 
     #if os(iOS)
     @State private var markupTool: PDFMarkupTool = .pen
@@ -112,7 +120,6 @@ struct PDFWorkspaceView: View {
     @State private var penColorHex = "#111111"
     @State private var penWidth = 2.5
     @State private var eraserWidth = 18.0
-    @State private var currentPageIndex = 0
     @State private var isImportingImage = false
     @State private var selectedObjectId: String?
     @State private var lassoSelection: PDFLassoSelectionSummary?
@@ -144,8 +151,10 @@ struct PDFWorkspaceView: View {
         VStack(spacing: 0) {
             header
 
-            #if os(iOS)
-            AnnotatedPDFKitView(
+            GeometryReader { stageProxy in
+                ZStack(alignment: .leading) {
+                    #if os(iOS)
+                    AnnotatedPDFKitView(
                 url: rawFile.url,
                 annotations: annotations,
                 focus: store.selectedPDFFocus?.path == rawFile.path ? store.selectedPDFFocus : nil,
@@ -165,31 +174,36 @@ struct PDFWorkspaceView: View {
                 onObjectDeleted: deleteAnnotationObject(_:),
                 onLassoSelectionChanged: { lassoSelection = $0 },
                 onFocusCleared: { store.selectedPDFFocus = nil }
-            )
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .overlay {
-                GeometryReader { proxy in
-                    if let selection = lassoSelection,
-                       !selection.isMoving,
-                       let anchor = selection.optionAnchor,
-                       isWritingMode {
-                        PDFLassoOptionsBar(
-                            selection: selection,
-                            hasTextSelection: hasTextObject(in: selection),
-                            onDelete: { deleteLassoSelection(selection) },
-                            onColor: { recolorLassoSelection(selection, colorHex: $0) },
-                            onFontSize: { adjustLassoTextSize(selection, delta: $0) },
-                            onEditText: { editLassoText(selection) }
-                        )
-                        .position(
-                            x: min(max(anchor.x, 92), proxy.size.width - 92),
-                            y: min(max(anchor.y, 28), proxy.size.height - 28)
-                        )
+                    )
+                    .frame(
+                        width: stageProxy.size.width,
+                        height: stageProxy.size.height
+                    )
+                    .overlay {
+                        GeometryReader { proxy in
+                            if let selection = lassoSelection,
+                               !selection.isMoving,
+                               let anchor = selection.optionAnchor,
+                               isWritingMode {
+                                PDFLassoOptionsBar(
+                                    selection: selection,
+                                    hasTextSelection: hasTextObject(in: selection),
+                                    onDelete: { deleteLassoSelection(selection) },
+                                    onColor: { recolorLassoSelection(selection, colorHex: $0) },
+                                    onFontSize: { adjustLassoTextSize(selection, delta: $0) },
+                                    onEditText: { editLassoText(selection) }
+                                )
+                                .position(
+                                    x: min(max(anchor.x, 92), proxy.size.width - 92),
+                                    y: min(max(anchor.y, 28), proxy.size.height - 28)
+                                )
+                            }
+                        }
                     }
-                }
-            }
-            #else
-            MacAnnotatedPDFKitView(
+                    .scaleEffect(pdfCanvasScale, anchor: .center)
+                    .offset(x: pdfCanvasOffset(for: stageProxy.size.width))
+                    #else
+                    MacAnnotatedPDFKitView(
                 url: rawFile.url,
                 focus: store.selectedPDFFocus?.path == rawFile.path ? store.selectedPDFFocus : nil,
                 annotations: annotations,
@@ -207,6 +221,7 @@ struct PDFWorkspaceView: View {
                 onObjectChanged: updateMacAnnotationObject(_:),
                 onObjectDeleted: deleteMacAnnotationObject(_:),
                 onLassoSelectionChanged: { macLassoSelection = $0 },
+                onCurrentPageChanged: { currentPageIndex = $0 },
                 onObjectEditRequested: {
                     macSelectedObjectId = $0.id
                     if $0.type.lowercased().contains("text") {
@@ -217,29 +232,56 @@ struct PDFWorkspaceView: View {
                         isMacInspectorPresented = true
                     }
                 }
-            )
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .overlay {
-                    GeometryReader { proxy in
-                        if let selection = macLassoSelection,
-                           !selection.isMoving,
-                           let anchor = selection.optionAnchor,
-                           isMacWritingMode {
-                            MacPDFLassoOptionsBar(
-                                hasTextSelection: hasMacTextObject(in: selection),
-                                onDelete: { deleteMacLassoSelection(selection) },
-                                onColor: { recolorMacLassoSelection(selection, colorHex: $0) },
-                                onFontSize: { adjustMacLassoTextSize(selection, delta: $0) },
-                                onEditText: { editMacLassoText(selection) }
-                            )
-                            .position(
-                                x: min(max(anchor.x, 92), proxy.size.width - 92),
-                                y: min(max(anchor.y, 28), proxy.size.height - 28)
-                            )
+                    )
+                    .frame(
+                        width: stageProxy.size.width,
+                        height: stageProxy.size.height
+                    )
+                    .overlay {
+                        GeometryReader { proxy in
+                            if let selection = macLassoSelection,
+                               !selection.isMoving,
+                               let anchor = selection.optionAnchor,
+                               isMacWritingMode {
+                                MacPDFLassoOptionsBar(
+                                    hasTextSelection: hasMacTextObject(in: selection),
+                                    onDelete: { deleteMacLassoSelection(selection) },
+                                    onColor: { recolorMacLassoSelection(selection, colorHex: $0) },
+                                    onFontSize: { adjustMacLassoTextSize(selection, delta: $0) },
+                                    onEditText: { editMacLassoText(selection) }
+                                )
+                                .position(
+                                    x: min(max(anchor.x, 92), proxy.size.width - 92),
+                                    y: min(max(anchor.y, 28), proxy.size.height - 28)
+                                )
+                            }
                         }
                     }
+                    .scaleEffect(pdfCanvasScale, anchor: .center)
+                    .offset(x: pdfCanvasOffset(for: stageProxy.size.width))
+                    #endif
+
+                    if isPageBrowserPresented, usesOverlayPageBrowser {
+                        Color.black.opacity(0.14)
+                            .contentShape(Rectangle())
+                            .onTapGesture {
+                                withAnimation(.easeInOut(duration: 0.25)) {
+                                    isPageBrowserPresented = false
+                                }
+                            }
+                            .transition(.opacity)
+                            .zIndex(1)
+                    }
+
+                    if isPageBrowserPresented {
+                        pageBrowserPanel(width: pageBrowserWidth(for: stageProxy.size.width))
+                            .transition(.move(edge: .leading).combined(with: .opacity))
+                            .zIndex(2)
+                    }
                 }
-            #endif
+                .clipped()
+                .animation(.easeInOut(duration: 0.25), value: isPageBrowserPresented)
+            }
         }
         .task(id: rawFile.path) {
             await loadAnnotations()
@@ -337,6 +379,20 @@ struct PDFWorkspaceView: View {
 
     private var header: some View {
         HStack(spacing: 10) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    isPageBrowserPresented.toggle()
+                }
+            } label: {
+                Image(systemName: "rectangle.grid.2x2")
+                    .foregroundStyle(isPageBrowserPresented ? Color.accentColor : Color.secondary)
+                    .frame(width: 28, height: 28)
+                    .background(isPageBrowserPresented ? Color.accentColor.opacity(0.14) : Color.clear)
+                    .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Page thumbnails")
+
             Label("PDF", systemImage: "doc.richtext")
                 .font(.caption.weight(.semibold))
                 .foregroundStyle(.secondary)
@@ -496,6 +552,58 @@ struct PDFWorkspaceView: View {
         .padding(.horizontal, 16)
         .padding(.vertical, 7)
         .background(.quaternary.opacity(0.08))
+    }
+
+    private func pageBrowserPanel(width: CGFloat) -> some View {
+        PDFPageThumbnailBrowser(
+            url: rawFile.url,
+            currentPageIndex: currentPageIndex,
+            onSelectPage: navigateToPage(_:),
+            onClose: {
+                withAnimation(.easeInOut(duration: 0.25)) {
+                    isPageBrowserPresented = false
+                }
+            }
+        )
+        .frame(width: width)
+        .frame(maxHeight: .infinity)
+        .overlay(alignment: .trailing) {
+            Divider()
+        }
+        .shadow(color: .black.opacity(0.16), radius: 12, x: 4, y: 0)
+    }
+
+    private var usesOverlayPageBrowser: Bool {
+        #if os(iOS)
+        UIDevice.current.userInterfaceIdiom == .phone
+        #else
+        false
+        #endif
+    }
+
+    private func pageBrowserWidth(for containerWidth: CGFloat) -> CGFloat {
+        if usesOverlayPageBrowser {
+            return min(max(containerWidth * 0.84, 280), 360)
+        }
+        return min(max(containerWidth * 0.34, 320), 360)
+    }
+
+    private func pdfCanvasOffset(for containerWidth: CGFloat) -> CGFloat {
+        guard isPageBrowserPresented, !usesOverlayPageBrowser else { return 0 }
+        return (1 - pdfCanvasScale) * containerWidth / 2
+    }
+
+    private var pdfCanvasScale: CGFloat {
+        isPageBrowserPresented && !usesOverlayPageBrowser ? 0.88 : 1
+    }
+
+    private func navigateToPage(_ pageIndex: Int) {
+        currentPageIndex = pageIndex
+        store.selectedPDFFocus = PDFDocumentFocus(
+            path: rawFile.path,
+            page: pageIndex + 1,
+            bbox: nil
+        )
     }
 
     #if os(iOS)
@@ -1578,6 +1686,158 @@ struct PDFWorkspaceView: View {
     }
 }
 
+private struct PDFPageThumbnailBrowser: View {
+    let url: URL
+    let currentPageIndex: Int
+    let onSelectPage: (Int) -> Void
+    let onClose: () -> Void
+    @State private var document: PDFDocument?
+    @State private var didFailToLoad = false
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Image(systemName: "rectangle.grid.2x2")
+                    .foregroundStyle(.secondary)
+                Text("Pages")
+                    .font(.headline)
+                if let document {
+                    Text("\(min(currentPageIndex + 1, document.pageCount)) / \(document.pageCount)")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .frame(width: 28, height: 28)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close page thumbnails")
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+
+            Divider()
+
+            if let document {
+                GeometryReader { proxy in
+                    ScrollViewReader { scrollProxy in
+                        ScrollView {
+                            LazyVGrid(columns: gridColumns(for: proxy.size.width), spacing: 12) {
+                                ForEach(0..<document.pageCount, id: \.self) { pageIndex in
+                                    if let page = document.page(at: pageIndex) {
+                                        PDFPageThumbnailCell(
+                                            page: page,
+                                            pageIndex: pageIndex,
+                                            isCurrent: pageIndex == currentPageIndex,
+                                            onSelect: { onSelectPage(pageIndex) }
+                                        )
+                                        .id(pageIndex)
+                                    }
+                                }
+                            }
+                            .padding(12)
+                        }
+                        .task {
+                            try? await Task.sleep(nanoseconds: 120_000_000)
+                            scrollProxy.scrollTo(currentPageIndex, anchor: .center)
+                        }
+                        .onChange(of: currentPageIndex) { _, pageIndex in
+                            withAnimation(.easeInOut(duration: 0.18)) {
+                                scrollProxy.scrollTo(pageIndex, anchor: .center)
+                            }
+                        }
+                    }
+                }
+            } else if didFailToLoad {
+                ContentUnavailableView("PDF unavailable", systemImage: "doc.questionmark")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ProgressView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .background(.background)
+        .task(id: url) {
+            document = PDFDocument(url: url)
+            didFailToLoad = document == nil
+        }
+    }
+
+    private func gridColumns(for width: CGFloat) -> [GridItem] {
+        #if os(iOS)
+        let minimumTwoColumnWidth: CGFloat = UIDevice.current.userInterfaceIdiom == .phone ? 300 : 320
+        let columnCount = width >= minimumTwoColumnWidth ? 2 : 1
+        #else
+        let columnCount = width >= 320 ? 2 : 1
+        #endif
+        return Array(repeating: GridItem(.flexible(), spacing: 12), count: columnCount)
+    }
+}
+
+private struct PDFPageThumbnailCell: View {
+    let page: PDFPage
+    let pageIndex: Int
+    let isCurrent: Bool
+    let onSelect: () -> Void
+    @State private var image: PDFPagePreviewImage?
+
+    var body: some View {
+        Button(action: onSelect) {
+            VStack(spacing: 7) {
+                ZStack {
+                    Color.white
+                    if let image {
+                        platformImage(image)
+                            .resizable()
+                            .scaledToFit()
+                    } else {
+                        ProgressView()
+                            .controlSize(.small)
+                    }
+                }
+                .aspectRatio(0.72, contentMode: .fit)
+                .clipped()
+                .overlay {
+                    Rectangle()
+                        .stroke(Color.black.opacity(0.12), lineWidth: 1)
+                }
+
+                Text("Page \(pageIndex + 1)")
+                    .font(.caption.weight(isCurrent ? .semibold : .regular))
+                    .foregroundStyle(isCurrent ? Color.accentColor : Color.primary)
+                    .monospacedDigit()
+                    .lineLimit(1)
+            }
+            .padding(7)
+            .frame(maxWidth: 270)
+            .background(isCurrent ? Color.accentColor.opacity(0.12) : Color.clear)
+            .overlay {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .stroke(isCurrent ? Color.accentColor : Color.clear, lineWidth: 2)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Page \(pageIndex + 1)")
+        .accessibilityAddTraits(isCurrent ? .isSelected : [])
+        .task(id: pageIndex) {
+            guard image == nil else { return }
+            await Task.yield()
+            image = page.thumbnail(of: CGSize(width: 320, height: 440), for: .cropBox)
+        }
+    }
+
+    @ViewBuilder
+    private func platformImage(_ image: PDFPagePreviewImage) -> Image {
+        #if os(iOS)
+        Image(uiImage: image)
+        #else
+        Image(nsImage: image)
+        #endif
+    }
+}
+
 #if os(macOS)
 private struct MacAnnotatedPDFKitView: NSViewRepresentable {
     let url: URL
@@ -1597,6 +1857,7 @@ private struct MacAnnotatedPDFKitView: NSViewRepresentable {
     var onObjectChanged: (PDFAnnotationObject) -> Void
     var onObjectDeleted: (PDFAnnotationObject) -> Void
     var onLassoSelectionChanged: (PDFLassoSelectionSummary?) -> Void
+    var onCurrentPageChanged: (Int) -> Void
     var onObjectEditRequested: (PDFAnnotationObject) -> Void
 
     func makeCoordinator() -> Coordinator {
@@ -1609,7 +1870,8 @@ private struct MacAnnotatedPDFKitView: NSViewRepresentable {
             onObjectSelected: onObjectSelected,
             onObjectChanged: onObjectChanged,
             onObjectDeleted: onObjectDeleted,
-            onStrokesChanged: onStrokesChanged
+            onStrokesChanged: onStrokesChanged,
+            onCurrentPageChanged: onCurrentPageChanged
         )
     }
 
@@ -1621,6 +1883,12 @@ private struct MacAnnotatedPDFKitView: NSViewRepresentable {
         view.backgroundColor = .clear
         view.pageOverlayViewProvider = context.coordinator
         context.coordinator.pdfView = view
+        NotificationCenter.default.addObserver(
+            context.coordinator,
+            selector: #selector(Coordinator.visiblePageChanged(_:)),
+            name: Notification.Name.PDFViewPageChanged,
+            object: view
+        )
         return view
     }
 
@@ -1634,6 +1902,7 @@ private struct MacAnnotatedPDFKitView: NSViewRepresentable {
         context.coordinator.onObjectChanged = onObjectChanged
         context.coordinator.onObjectDeleted = onObjectDeleted
         context.coordinator.onStrokesChanged = onStrokesChanged
+        context.coordinator.onCurrentPageChanged = onCurrentPageChanged
         context.coordinator.applyTextEditRequest(textEditRequest)
         view.tool = tool
         view.isWritingMode = isWritingMode
@@ -1656,6 +1925,9 @@ private struct MacAnnotatedPDFKitView: NSViewRepresentable {
         view.applyCodmesInkAnnotations(annotations)
         context.coordinator.applyFocus(focus, to: view)
         context.coordinator.refreshVisibleOverlays()
+        if let current = view.currentPage, let index = view.document?.index(for: current), index >= 0 {
+            onCurrentPageChanged(index)
+        }
     }
 
     @MainActor
@@ -1677,6 +1949,7 @@ private struct MacAnnotatedPDFKitView: NSViewRepresentable {
         var onObjectChanged: (PDFAnnotationObject) -> Void
         var onObjectDeleted: (PDFAnnotationObject) -> Void
         var onStrokesChanged: (Int, [CodmesInkStroke]) -> Void
+        var onCurrentPageChanged: (Int) -> Void
         private var overlays: [Int: MacPDFPageAnnotationOverlay] = [:]
         private var lastTextEditRequest = 0
         private var pendingTextEditObjectId: String?
@@ -1691,7 +1964,8 @@ private struct MacAnnotatedPDFKitView: NSViewRepresentable {
             onObjectSelected: @escaping (PDFAnnotationObject) -> Void,
             onObjectChanged: @escaping (PDFAnnotationObject) -> Void,
             onObjectDeleted: @escaping (PDFAnnotationObject) -> Void,
-            onStrokesChanged: @escaping (Int, [CodmesInkStroke]) -> Void
+            onStrokesChanged: @escaping (Int, [CodmesInkStroke]) -> Void,
+            onCurrentPageChanged: @escaping (Int) -> Void
         ) {
             self.annotations = annotations
             self.selectedObjectId = selectedObjectId
@@ -1702,6 +1976,15 @@ private struct MacAnnotatedPDFKitView: NSViewRepresentable {
             self.onObjectChanged = onObjectChanged
             self.onObjectDeleted = onObjectDeleted
             self.onStrokesChanged = onStrokesChanged
+            self.onCurrentPageChanged = onCurrentPageChanged
+        }
+
+        @objc func visiblePageChanged(_ notification: Notification) {
+            guard let view = notification.object as? PDFView,
+                  let page = view.currentPage,
+                  let index = view.document?.index(for: page),
+                  index >= 0 else { return }
+            onCurrentPageChanged(index)
         }
 
         func pdfView(_ view: PDFView, overlayViewFor page: PDFPage) -> NSView? {

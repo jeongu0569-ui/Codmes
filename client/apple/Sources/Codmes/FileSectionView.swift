@@ -92,6 +92,9 @@ struct FileBrowserPane: View {
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
 
+                    Image(systemName: "house")
+                        .foregroundStyle(dropTargetPath == workspaceRootName ? Color.accentColor : Color.primary.opacity(0.72))
+
                     Spacer()
 
                     Button {
@@ -122,6 +125,10 @@ struct FileBrowserPane: View {
                         .fill(.quaternary.opacity(0.35))
                         .frame(height: 1)
                 }
+                .background(rootDropBackground)
+                .overlay { rootDropBorder }
+                .contentShape(Rectangle())
+                .dropDestination(for: FileTreeDragItem.self, action: dropIntoRoot, isTargeted: updateRootDropTarget)
             } else {
                 HStack(spacing: 8) {
                 Button {
@@ -164,11 +171,7 @@ struct FileBrowserPane: View {
                 .buttonStyle(.plain)
                 .frame(width: 30, height: 30)
                 .contentShape(Rectangle())
-                .dropDestination(for: FileTreeDragItem.self, action: { items, _ in
-                    moveDraggedItems(items.first?.paths ?? [], into: nil)
-                }, isTargeted: { isTargeted in
-                    dropTargetPath = isTargeted ? workspaceRootName : nil
-                })
+                .foregroundStyle(dropTargetPath == workspaceRootName ? Color.accentColor : Color.primary)
                 .help("Use root folder")
 
                 Text(store.currentPath(for: root).isEmpty ? "/" : store.currentPath(for: root))
@@ -187,6 +190,10 @@ struct FileBrowserPane: View {
                         .fill(.quaternary.opacity(0.35))
                         .frame(height: 1)
                 }
+                .background(rootDropBackground)
+                .overlay { rootDropBorder }
+                .contentShape(Rectangle())
+                .dropDestination(for: FileTreeDragItem.self, action: dropIntoRoot, isTargeted: updateRootDropTarget)
             }
 
             UploadStatusPanel(root: root)
@@ -592,6 +599,30 @@ struct FileBrowserPane: View {
             clearTreeSelection()
         }
         return true
+    }
+
+    private var rootDropBackground: Color {
+        dropTargetPath == workspaceRootName ? Color.accentColor.opacity(0.22) : Color.clear
+    }
+
+    @ViewBuilder
+    private var rootDropBorder: some View {
+        if dropTargetPath == workspaceRootName {
+            Rectangle()
+                .stroke(Color.accentColor, lineWidth: 2)
+        }
+    }
+
+    private func dropIntoRoot(_ items: [FileTreeDragItem], _: CGPoint) -> Bool {
+        moveDraggedItems(items.first?.paths ?? [], into: nil)
+    }
+
+    private func updateRootDropTarget(_ isTargeted: Bool) {
+        if isTargeted {
+            dropTargetPath = workspaceRootName
+        } else if dropTargetPath == workspaceRootName {
+            dropTargetPath = nil
+        }
     }
 
     private var selectedTreeItems: [WorkspaceItem] {
