@@ -138,7 +138,7 @@ struct RootView: View {
 
     private var activeDocumentTitle: String? {
         guard activeSurfaceId == "notes" || activeSurfaceId == "code" else { return nil }
-        return store.selectedRawFile?.name ?? store.selectedFile?.name
+        return store.loadingRawFile?.name ?? store.selectedRawFile?.name ?? store.selectedFile?.name
     }
 
     private var activePDFStatus: String? {
@@ -1012,7 +1012,52 @@ struct WorkspaceSettingsView: View {
             }
             .padding(14)
             .background(.quaternary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Label("Local file cache", systemImage: "internaldrive")
+                        .font(.headline)
+                    Spacer()
+                    Text(formatBytes(store.localFileCacheUsageBytes))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+
+                Stepper(
+                    value: Binding(
+                        get: { store.localFileCacheLimitGB },
+                        set: { store.setLocalFileCacheLimitGB($0) }
+                    ),
+                    in: 1...50,
+                    step: 1
+                ) {
+                    Text("Maximum \(store.localFileCacheLimitGB) GB")
+                        .monospacedDigit()
+                }
+
+                HStack {
+                    Text("Older files are removed first when the cache reaches this size.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button(role: .destructive) {
+                        Task { await store.clearLocalFileCache() }
+                    } label: {
+                        Label("Clear", systemImage: "trash")
+                    }
+                    .buttonStyle(.borderless)
+                }
+            }
+            .padding(14)
+            .background(.quaternary.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
         }
+        .task {
+            await store.refreshLocalFileCacheUsage()
+        }
+    }
+
+    private func formatBytes(_ bytes: Int64) -> String {
+        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
     }
 }
 

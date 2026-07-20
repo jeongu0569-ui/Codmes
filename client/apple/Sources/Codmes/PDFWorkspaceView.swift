@@ -105,6 +105,119 @@ fileprivate struct PDFLassoSelectionSummary: Equatable {
     var isMoving: Bool
 }
 
+@MainActor
+final class StreamedPDFSession: ObservableObject {
+    typealias CachedPageLoader = @Sendable (Int) async -> URL?
+    typealias PageCacheWriter = @Sendable (URL, Int) async throws -> URL
+
+    let path: String
+    let name: String
+    let metadata: PDFMetadataResponse
+    let document: PDFDocument
+    @Published private(set) var revision = 0
+    @Published private(set) var loadedPageIndexes = Set<Int>()
+    @Published private(set) var failedPageIndexes = Set<Int>()
+    @Published private(set) var lastInstalledPageIndex: Int?
+
+    private let api: WorkspaceAPI
+    private let cachedPageLoader: CachedPageLoader
+    private let pageCacheWriter: PageCacheWriter
+    private var loadingPageIndexes = Set<Int>()
+    private var retainedPageDocuments: [Int: PDFDocument] = [:]
+
+    init?(
+        path: String,
+        name: String,
+        metadata: PDFMetadataResponse,
+        skeletonURL: URL,
+        api: WorkspaceAPI,
+        cachedPageLoader: @escaping CachedPageLoader,
+        pageCacheWriter: @escaping PageCacheWriter
+    ) {
+        guard let document = PDFDocument(url: skeletonURL), document.pageCount == metadata.pageCount else {
+            return nil
+        }
+        self.path = path
+        self.name = name
+        self.metadata = metadata
+        self.document = document
+        self.api = api
+        self.cachedPageLoader = cachedPageLoader
+        self.pageCacheWriter = pageCacheWriter
+    }
+
+    func requestPages(around pageIndex: Int) {
+        guard metadata.pageCount > 0 else { return }
+        let current = min(max(pageIndex, 0), metadata.pageCount - 1)
+        let priority = [current, current + 1, current - 1, current + 2, current - 2]
+        for index in priority where index >= 0 && index < metadata.pageCount {
+            requestPage(index)
+        }
+    }
+
+    func requestPage(_ pageIndex: Int) {
+        guard pageIndex >= 0,
+              pageIndex < metadata.pageCount,
+              !loadedPageIndexes.contains(pageIndex),
+              !loadingPageIndexes.contains(pageIndex) else { return }
+        loadingPageIndexes.insert(pageIndex)
+        failedPageIndexes.remove(pageIndex)
+
+        Task { [weak self] in
+            await self?.loadPage(pageIndex)
+        }
+    }
+
+    func preparePage(_ pageIndex: Int) async {
+        guard pageIndex >= 0, pageIndex < metadata.pageCount else { return }
+        if loadedPageIndexes.contains(pageIndex) { return }
+        if loadingPageIndexes.contains(pageIndex) {
+            while loadingPageIndexes.contains(pageIndex) {
+                try? await Task.sleep(nanoseconds: 20_000_000)
+            }
+            return
+        }
+        loadingPageIndexes.insert(pageIndex)
+        failedPageIndexes.remove(pageIndex)
+        await loadPage(pageIndex)
+    }
+
+    private func loadPage(_ pageIndex: Int) async {
+        do {
+            let pageURL: URL
+            if let cached = await cachedPageLoader(pageIndex) {
+                pageURL = cached
+            } else {
+                let downloaded = try await api.downloadPDFPage(path: path, page: pageIndex + 1, name: name)
+                pageURL = try await pageCacheWriter(downloaded, pageIndex)
+            }
+            guard !Task.isCancelled,
+                  let pageDocument = PDFDocument(url: pageURL),
+                  let page = pageDocument.page(at: 0) else {
+                throw CocoaError(.fileReadCorruptFile)
+            }
+            retainedPageDocuments[pageIndex] = pageDocument
+            install(page, at: pageIndex)
+        } catch {
+            loadingPageIndexes.remove(pageIndex)
+            failedPageIndexes.insert(pageIndex)
+        }
+    }
+
+    private func install(_ page: PDFPage, at pageIndex: Int) {
+        guard !loadedPageIndexes.contains(pageIndex), pageIndex < document.pageCount else {
+            loadingPageIndexes.remove(pageIndex)
+            return
+        }
+        document.removePage(at: pageIndex)
+        document.insert(page, at: pageIndex)
+        loadingPageIndexes.remove(pageIndex)
+        loadedPageIndexes.insert(pageIndex)
+        lastInstalledPageIndex = pageIndex
+        revision += 1
+    }
+}
+
 #if os(macOS)
 fileprivate enum MacPDFMarkupTool: String, CaseIterable, Identifiable {
     case pen
@@ -142,6 +255,8 @@ fileprivate enum MacPDFObjectInteraction {
 struct PDFWorkspaceView: View {
     @EnvironmentObject private var store: WorkspaceStore
     let rawFile: RawFilePreview
+    var streamSession: StreamedPDFSession? = nil
+    var streamRevision = 0
     @State private var annotations: PDFAnnotationDocument?
     @State private var undoStack: [PDFAnnotationDocument] = []
     @State private var redoStack: [PDFAnnotationDocument] = []
@@ -196,6 +311,9 @@ struct PDFWorkspaceView: View {
                     #if os(iOS)
                     AnnotatedPDFKitView(
                 url: rawFile.url,
+                documentOverride: streamSession?.document,
+                documentRevision: streamRevision,
+                forceDocumentReload: streamSession?.lastInstalledPageIndex == currentPageIndex,
                 annotations: annotations,
                 focus: store.selectedPDFFocus?.path == rawFile.path ? store.selectedPDFFocus : nil,
                 tool: markupTool,
@@ -206,7 +324,10 @@ struct PDFWorkspaceView: View {
                 selectedObjectId: selectedObjectId,
                 lassoSelection: lassoSelection,
                 textEditRequest: textEditRequest,
-                onCurrentPageChanged: { currentPageIndex = $0 },
+                onCurrentPageChanged: {
+                    currentPageIndex = $0
+                    streamSession?.requestPages(around: $0)
+                },
                 onStrokeFinished: appendInkStroke(pageIndex:stroke:),
                 onStrokesChanged: replaceInkStrokes(pageIndex:strokes:),
                 onObjectSelected: { selectedObjectId = $0.id },
@@ -245,6 +366,9 @@ struct PDFWorkspaceView: View {
                     #else
                     MacAnnotatedPDFKitView(
                 url: rawFile.url,
+                documentOverride: streamSession?.document,
+                documentRevision: streamRevision,
+                forceDocumentReload: streamSession?.lastInstalledPageIndex == currentPageIndex,
                 focus: store.selectedPDFFocus?.path == rawFile.path ? store.selectedPDFFocus : nil,
                 annotations: annotations,
                 tool: macMarkupTool,
@@ -261,7 +385,10 @@ struct PDFWorkspaceView: View {
                 onObjectChanged: updateMacAnnotationObject(_:),
                 onObjectDeleted: deleteMacAnnotationObject(_:),
                 onLassoSelectionChanged: { macLassoSelection = $0 },
-                onCurrentPageChanged: { currentPageIndex = $0 },
+                onCurrentPageChanged: {
+                    currentPageIndex = $0
+                    streamSession?.requestPages(around: $0)
+                },
                 onObjectEditRequested: {
                     macSelectedObjectId = $0.id
                     if $0.type.lowercased().contains("text") {
@@ -309,6 +436,23 @@ struct PDFWorkspaceView: View {
                             .zIndex(0.5)
                     }
 
+                    if let streamSession,
+                       !streamSession.loadedPageIndexes.contains(currentPageIndex) {
+                        HStack(spacing: 7) {
+                            ProgressView()
+                                .controlSize(.small)
+                            Text("Loading page \(currentPageIndex + 1)")
+                                .font(.caption.monospacedDigit())
+                        }
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 10)
+                        .frame(height: 34)
+                        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+                        .padding(10)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
+                        .zIndex(0.6)
+                    }
+
                     if isPageBrowserPresented, usesOverlayPageBrowser {
                         Color.black.opacity(0.14)
                             .contentShape(Rectangle())
@@ -333,6 +477,7 @@ struct PDFWorkspaceView: View {
             }
         }
         .task(id: rawFile.path) {
+            streamSession?.requestPages(around: currentPageIndex)
             await loadAnnotations()
         }
         .onChange(of: statusText, initial: true) { _, value in
@@ -534,7 +679,7 @@ struct PDFWorkspaceView: View {
             .accessibilityLabel("Insert PDF pages after current page")
 
             Button {
-                exportPageCount = PDFDocument(url: rawFile.url)?.pageCount ?? 0
+                exportPageCount = streamSession?.metadata.pageCount ?? PDFDocument(url: rawFile.url)?.pageCount ?? 0
                 isExportScopePresented = true
             } label: {
                 Image(systemName: isExportingPDF ? "hourglass" : "square.and.arrow.up")
@@ -602,6 +747,8 @@ struct PDFWorkspaceView: View {
     private func pageBrowserPanel(width: CGFloat) -> some View {
         PDFPageThumbnailBrowser(
             url: rawFile.url,
+            streamPath: streamSession?.path,
+            streamedPageCount: streamSession?.metadata.pageCount,
             currentPageIndex: currentPageIndex,
             onSelectPage: navigateToPage(_:),
             onClose: {
@@ -652,6 +799,18 @@ struct PDFWorkspaceView: View {
     }
 
     private func navigateToPage(_ pageIndex: Int) {
+        if let streamSession {
+            Task {
+                await streamSession.preparePage(pageIndex)
+                applyPageNavigation(pageIndex)
+                streamSession.requestPages(around: pageIndex)
+            }
+            return
+        }
+        applyPageNavigation(pageIndex)
+    }
+
+    private func applyPageNavigation(_ pageIndex: Int) {
         currentPageIndex = pageIndex
         store.selectedPDFFocus = PDFDocumentFocus(
             path: rawFile.path,
@@ -1415,36 +1574,34 @@ struct PDFWorkspaceView: View {
         isExportingPDF = true
         statusText = "Exporting..."
         let annotations = annotations ?? emptyAnnotationDocument()
-        let sourceURL = rawFile.url
         let outputURL = exportDirectory()
             .appendingPathComponent(exportFileName(includeAnnotations: includeAnnotations))
         let requestedPages = selectedPageIndexes()
 
-        Task.detached {
+        Task {
             do {
-                try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
-                guard let sourceDocument = PDFDocument(url: sourceURL) else { throw CocoaError(.fileNoSuchFile) }
-                let pages = normalizedPageIndexes(requestedPages, pageCount: sourceDocument.pageCount)
-                if includeAnnotations {
-                    let exportDocument = try copyPDFDocument(sourceDocument, pageIndexes: pages)
-                    let exportAnnotations = annotations.sliced(to: pages, documentPath: outputURL.lastPathComponent)
-                    try renderFlattenedPDF(document: exportDocument, annotations: exportAnnotations, to: outputURL)
-                } else if requestedPages.isEmpty {
-                    try replaceFileCopy(from: sourceURL, to: outputURL)
-                } else {
-                    let exportDocument = try copyPDFDocument(sourceDocument, pageIndexes: pages)
-                    guard exportDocument.write(to: outputURL) else { throw CocoaError(.fileWriteUnknown) }
-                }
-                await MainActor.run {
-                    isExportingPDF = false
-                    statusText = "Export ready"
-                    exportedPDFShare = PDFExportShare(urls: [outputURL])
-                }
+                let sourceURL = try await originalPDFURLForOperation()
+                try await Task.detached {
+                    try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+                    guard let sourceDocument = PDFDocument(url: sourceURL) else { throw CocoaError(.fileNoSuchFile) }
+                    let pages = normalizedPageIndexes(requestedPages, pageCount: sourceDocument.pageCount)
+                    if includeAnnotations {
+                        let exportDocument = try copyPDFDocument(sourceDocument, pageIndexes: pages)
+                        let exportAnnotations = annotations.sliced(to: pages, documentPath: outputURL.lastPathComponent)
+                        try renderFlattenedPDF(document: exportDocument, annotations: exportAnnotations, to: outputURL)
+                    } else if requestedPages.isEmpty {
+                        try replaceFileCopy(from: sourceURL, to: outputURL)
+                    } else {
+                        let exportDocument = try copyPDFDocument(sourceDocument, pageIndexes: pages)
+                        guard exportDocument.write(to: outputURL) else { throw CocoaError(.fileWriteUnknown) }
+                    }
+                }.value
+                isExportingPDF = false
+                statusText = "Export ready"
+                exportedPDFShare = PDFExportShare(urls: [outputURL])
             } catch {
-                await MainActor.run {
-                    isExportingPDF = false
-                    statusText = "Export failed"
-                }
+                isExportingPDF = false
+                statusText = "Export failed"
             }
         }
     }
@@ -1473,21 +1630,23 @@ struct PDFWorkspaceView: View {
         isExportingPDF = true
         statusText = "Exporting..."
         let annotations = annotations ?? emptyAnnotationDocument()
-        let sourceURL = rawFile.url
         let requestedPages = selectedPageIndexes()
         let packageBaseName = "\(basePDFName())\(requestedPages.isEmpty ? "" : "-pages")"
         let outputDirectory = exportDirectory()
 
-        Task.detached {
+        Task {
             do {
-                guard let sourceDocument = PDFDocument(url: sourceURL) else { throw CocoaError(.fileNoSuchFile) }
-                let pages = normalizedPageIndexes(requestedPages, pageCount: sourceDocument.pageCount)
-                let exportDocument = try copyPDFDocument(sourceDocument, pageIndexes: pages)
-                guard let pdfData = exportDocument.dataRepresentation() else { throw CocoaError(.fileWriteUnknown) }
-                let exportAnnotations = annotations.sliced(to: pages, documentPath: "\(packageBaseName).pdf")
-                let encoder = JSONEncoder()
-                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-                let annotationData = try encoder.encode(exportAnnotations)
+                let sourceURL = try await originalPDFURLForOperation()
+                let (pdfData, annotationData) = try await Task.detached { () -> (Data, Data) in
+                    guard let sourceDocument = PDFDocument(url: sourceURL) else { throw CocoaError(.fileNoSuchFile) }
+                    let pages = normalizedPageIndexes(requestedPages, pageCount: sourceDocument.pageCount)
+                    let exportDocument = try copyPDFDocument(sourceDocument, pageIndexes: pages)
+                    guard let pdfData = exportDocument.dataRepresentation() else { throw CocoaError(.fileWriteUnknown) }
+                    let exportAnnotations = annotations.sliced(to: pages, documentPath: "\(packageBaseName).pdf")
+                    let encoder = JSONEncoder()
+                    encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                    return (pdfData, try encoder.encode(exportAnnotations))
+                }.value
                 let response = try await api.exportCodmesPDFPackage(
                     name: packageBaseName,
                     pdfData: pdfData,
@@ -1499,16 +1658,12 @@ struct PDFWorkspaceView: View {
                 let outputURL = outputDirectory.appendingPathComponent(response.fileName)
                 try FileManager.default.createDirectory(at: outputURL.deletingLastPathComponent(), withIntermediateDirectories: true)
                 try packageData.write(to: outputURL, options: .atomic)
-                await MainActor.run {
-                    isExportingPDF = false
-                    statusText = "Editable Codmes PDF ready"
-                    exportedPDFShare = PDFExportShare(urls: [outputURL])
-                }
+                isExportingPDF = false
+                statusText = "Editable Codmes PDF ready"
+                exportedPDFShare = PDFExportShare(urls: [outputURL])
             } catch {
-                await MainActor.run {
-                    isExportingPDF = false
-                    statusText = "Export failed: \(error.localizedDescription)"
-                }
+                isExportingPDF = false
+                statusText = "Export failed: \(error.localizedDescription)"
             }
         }
     }
@@ -1537,6 +1692,12 @@ struct PDFWorkspaceView: View {
         parsePDFPageRange(exportPageRange)
     }
 
+    private func originalPDFURLForOperation() async throws -> URL {
+        guard streamSession != nil else { return rawFile.url }
+        guard let api = store.api else { throw WorkspaceAPIError.invalidURL }
+        return try await api.downloadRawFile(path: rawFile.path, name: rawFile.name)
+    }
+
     private func importPDFPages(from urls: [URL]) {
         guard let api = store.api else { return }
         let scoped = urls.map { ($0, $0.startAccessingSecurityScopedResource()) }
@@ -1554,10 +1715,15 @@ struct PDFWorkspaceView: View {
         statusText = "Inserting PDF..."
         let existingAnnotations = annotations ?? emptyAnnotationDocument()
         let targetPath = rawFile.path
-        let sourceURL = rawFile.url
+        let fallbackSourceURL = rawFile.url
+        let requiresOriginalDownload = streamSession != nil
+        let sourceName = rawFile.name
         let insertAfter = currentPageIndex
         Task.detached {
             do {
+                let sourceURL = requiresOriginalDownload
+                    ? try await api.downloadRawFile(path: targetPath, name: sourceName)
+                    : fallbackSourceURL
                 guard let baseDocument = PDFDocument(url: sourceURL),
                       let incomingDocument = PDFDocument(url: pdfURL) else {
                     throw CocoaError(.fileNoSuchFile)
@@ -1686,11 +1852,15 @@ struct PDFWorkspaceView: View {
 }
 
 private struct PDFPageThumbnailBrowser: View {
+    @EnvironmentObject private var store: WorkspaceStore
     let url: URL
+    let streamPath: String?
+    let streamedPageCount: Int?
     let currentPageIndex: Int
     let onSelectPage: (Int) -> Void
     let onClose: () -> Void
-    @State private var document: PDFDocument?
+    @State private var pageCount: Int?
+    @State private var renderer: PDFPageThumbnailRenderer?
     @State private var didFailToLoad = false
 
     var body: some View {
@@ -1700,8 +1870,8 @@ private struct PDFPageThumbnailBrowser: View {
                     .foregroundStyle(.secondary)
                 Text("Pages")
                     .font(.headline)
-                if let document {
-                    Text("\(min(currentPageIndex + 1, document.pageCount)) / \(document.pageCount)")
+                if let pageCount {
+                    Text("\(min(currentPageIndex + 1, pageCount)) / \(pageCount)")
                         .font(.caption.monospacedDigit())
                         .foregroundStyle(.secondary)
                 }
@@ -1718,15 +1888,23 @@ private struct PDFPageThumbnailBrowser: View {
 
             Divider()
 
-            if let document {
+            if let pageCount {
                 GeometryReader { proxy in
                     ScrollViewReader { scrollProxy in
                         ScrollView {
                             LazyVGrid(columns: gridColumns(for: proxy.size.width), spacing: 12) {
-                                ForEach(0..<document.pageCount, id: \.self) { pageIndex in
-                                    if let page = document.page(at: pageIndex) {
+                                ForEach(0..<pageCount, id: \.self) { pageIndex in
+                                    if let renderer {
                                         PDFPageThumbnailCell(
-                                            page: page,
+                                            renderer: renderer,
+                                            pageIndex: pageIndex,
+                                            isCurrent: pageIndex == currentPageIndex,
+                                            onSelect: { onSelectPage(pageIndex) }
+                                        )
+                                        .id(pageIndex)
+                                    } else if let streamPath {
+                                        RemotePDFPageThumbnailCell(
+                                            path: streamPath,
                                             pageIndex: pageIndex,
                                             isCurrent: pageIndex == currentPageIndex,
                                             onSelect: { onSelectPage(pageIndex) }
@@ -1738,7 +1916,7 @@ private struct PDFPageThumbnailBrowser: View {
                             .padding(12)
                         }
                         .task {
-                            try? await Task.sleep(nanoseconds: 120_000_000)
+                            await Task.yield()
                             scrollProxy.scrollTo(currentPageIndex, anchor: .center)
                         }
                         .onChange(of: currentPageIndex) { _, pageIndex in
@@ -1758,8 +1936,24 @@ private struct PDFPageThumbnailBrowser: View {
         }
         .background(.background)
         .task(id: url) {
-            document = PDFDocument(url: url)
-            didFailToLoad = document == nil
+            pageCount = nil
+            renderer = nil
+            didFailToLoad = false
+
+            if let streamedPageCount {
+                pageCount = streamedPageCount
+                return
+            }
+
+            let nextRenderer = PDFPageThumbnailRenderer(url: url)
+            guard let count = await nextRenderer.loadPageCount() else {
+                didFailToLoad = true
+                return
+            }
+            guard !Task.isCancelled else { return }
+            renderer = nextRenderer
+            pageCount = count
+            await nextRenderer.prewarm(pageIndexes: prioritizedPageIndexes(around: currentPageIndex, pageCount: count))
         }
     }
 
@@ -1772,10 +1966,63 @@ private struct PDFPageThumbnailBrowser: View {
         #endif
         return Array(repeating: GridItem(.flexible(), spacing: 12), count: columnCount)
     }
+
+    private func prioritizedPageIndexes(around pageIndex: Int, pageCount: Int) -> [Int] {
+        guard pageCount > 0 else { return [] }
+        let current = min(max(pageIndex, 0), pageCount - 1)
+        return [current, current + 1, current - 1, current + 2, current - 2]
+            .filter { $0 >= 0 && $0 < pageCount }
+    }
+}
+
+private struct RemotePDFPageThumbnailCell: View {
+    @EnvironmentObject private var store: WorkspaceStore
+    let path: String
+    let pageIndex: Int
+    let isCurrent: Bool
+    let onSelect: () -> Void
+
+    var body: some View {
+        Button(action: onSelect) {
+            VStack(spacing: 7) {
+                AsyncImage(url: thumbnailURL) { phase in
+                    ZStack {
+                        Color.white
+                        if case let .success(image) = phase {
+                            image.resizable().scaledToFit()
+                        }
+                    }
+                }
+                .aspectRatio(0.72, contentMode: .fit)
+                .clipped()
+                .overlay { Rectangle().stroke(Color.black.opacity(0.12), lineWidth: 1) }
+
+                Text("Page \(pageIndex + 1)")
+                    .font(.caption.weight(isCurrent ? .semibold : .regular))
+                    .foregroundStyle(isCurrent ? Color.accentColor : Color.primary)
+                    .monospacedDigit()
+            }
+            .padding(7)
+            .frame(maxWidth: 270)
+            .background(isCurrent ? Color.accentColor.opacity(0.12) : Color.clear)
+            .overlay {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .stroke(isCurrent ? Color.accentColor : Color.clear, lineWidth: 2)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Page \(pageIndex + 1)")
+        .accessibilityAddTraits(isCurrent ? .isSelected : [])
+    }
+
+    private var thumbnailURL: URL? {
+        try? store.api?.pdfThumbnailURL(path: path, page: pageIndex + 1)
+    }
 }
 
 private struct PDFPageThumbnailCell: View {
-    let page: PDFPage
+    let renderer: PDFPageThumbnailRenderer
     let pageIndex: Int
     let isCurrent: Bool
     let onSelect: () -> Void
@@ -1790,9 +2037,6 @@ private struct PDFPageThumbnailCell: View {
                         platformImage(image)
                             .resizable()
                             .scaledToFit()
-                    } else {
-                        ProgressView()
-                            .controlSize(.small)
                     }
                 }
                 .aspectRatio(0.72, contentMode: .fit)
@@ -1822,8 +2066,9 @@ private struct PDFPageThumbnailCell: View {
         .accessibilityAddTraits(isCurrent ? .isSelected : [])
         .task(id: pageIndex) {
             guard image == nil else { return }
-            await Task.yield()
-            image = page.thumbnail(of: CGSize(width: 320, height: 440), for: .cropBox)
+            guard let data = await renderer.thumbnailData(pageIndex: pageIndex),
+                  !Task.isCancelled else { return }
+            image = PDFPagePreviewImage(data: data)
         }
     }
 
@@ -1837,9 +2082,79 @@ private struct PDFPageThumbnailCell: View {
     }
 }
 
+private final class PDFPageThumbnailRenderer: @unchecked Sendable {
+    private let url: URL
+    private let queue = DispatchQueue(label: "com.codmes.pdf-thumbnail-renderer", qos: .userInitiated)
+    private let cache = NSCache<NSNumber, NSData>()
+    private var document: PDFDocument?
+
+    init(url: URL) {
+        self.url = url
+        cache.countLimit = 64
+        cache.totalCostLimit = 24 * 1024 * 1024
+    }
+
+    func loadPageCount() async -> Int? {
+        await withCheckedContinuation { continuation in
+            queue.async { [self] in
+                let document = loadDocumentIfNeeded()
+                continuation.resume(returning: document?.pageCount)
+            }
+        }
+    }
+
+    func prewarm(pageIndexes: [Int]) async {
+        for pageIndex in pageIndexes {
+            guard !Task.isCancelled else { return }
+            _ = await thumbnailData(pageIndex: pageIndex)
+        }
+    }
+
+    func thumbnailData(pageIndex: Int) async -> Data? {
+        if let cached = cache.object(forKey: NSNumber(value: pageIndex)) {
+            return cached as Data
+        }
+        return await withCheckedContinuation { continuation in
+            queue.async { [self] in
+                let key = NSNumber(value: pageIndex)
+                if let cached = cache.object(forKey: key) {
+                    continuation.resume(returning: cached as Data)
+                    return
+                }
+                guard let page = loadDocumentIfNeeded()?.page(at: pageIndex),
+                      let data = encodedThumbnail(for: page) else {
+                    continuation.resume(returning: nil)
+                    return
+                }
+                cache.setObject(data as NSData, forKey: key, cost: data.count)
+                continuation.resume(returning: data)
+            }
+        }
+    }
+
+    private func loadDocumentIfNeeded() -> PDFDocument? {
+        if let document { return document }
+        let loaded = PDFDocument(url: url)
+        document = loaded
+        return loaded
+    }
+
+    private func encodedThumbnail(for page: PDFPage) -> Data? {
+        let image = page.thumbnail(of: CGSize(width: 320, height: 440), for: .cropBox)
+#if os(iOS)
+        return image.pngData()
+#else
+        return image.tiffRepresentation
+#endif
+    }
+}
+
 #if os(macOS)
 private struct MacAnnotatedPDFKitView: NSViewRepresentable {
     let url: URL
+    var documentOverride: PDFDocument?
+    var documentRevision: Int
+    var forceDocumentReload: Bool
     var focus: PDFDocumentFocus?
     var annotations: PDFAnnotationDocument?
     var tool: MacPDFMarkupTool
@@ -1920,11 +2235,27 @@ private struct MacAnnotatedPDFKitView: NSViewRepresentable {
         view.onObjectDeleted = onObjectDeleted
         view.onLassoSelectionChanged = onLassoSelectionChanged
         view.onObjectEditRequested = onObjectEditRequested
-        if view.document?.documentURL != url {
-            view.document = PDFDocument(url: url)
+        let targetDocument = documentOverride ?? PDFDocument(url: url)
+        if view.document !== targetDocument {
+            view.document = targetDocument
             view.applyReadingScaleIfNeeded(force: true)
+            context.coordinator.documentRevision = documentRevision
+        } else if context.coordinator.documentRevision != documentRevision {
+            context.coordinator.documentRevision = documentRevision
+            if forceDocumentReload, let documentOverride {
+                let pageIndex = view.currentPage.flatMap { view.document?.index(for: $0) }
+                let scale = view.scaleFactor
+                context.coordinator.resetOverlays()
+                view.document = nil
+                view.document = documentOverride
+                view.scaleFactor = scale
+                if let pageIndex, let page = documentOverride.page(at: pageIndex) {
+                    view.go(to: page)
+                }
+            } else {
+                view.layoutDocumentView()
+            }
         }
-        view.applyCodmesInkAnnotations(annotations)
         context.coordinator.applyFocus(focus, to: view)
         context.coordinator.refreshVisibleOverlays()
         if let current = view.currentPage, let index = view.document?.index(for: current), index >= 0 {
@@ -1953,6 +2284,11 @@ private struct MacAnnotatedPDFKitView: NSViewRepresentable {
         var onStrokesChanged: (Int, [CodmesInkStroke]) -> Void
         var onCurrentPageChanged: (Int) -> Void
         private var overlays: [Int: MacPDFPageAnnotationOverlay] = [:]
+        var documentRevision = -1
+
+        func resetOverlays() {
+            overlays.removeAll()
+        }
         private var lastTextEditRequest = 0
         private var pendingTextEditObjectId: String?
         private var lastFocusKey = ""
@@ -1994,6 +2330,7 @@ private struct MacAnnotatedPDFKitView: NSViewRepresentable {
             let pageIndex = document.index(for: page)
             let overlay = MacPDFPageAnnotationOverlay()
             overlays[pageIndex] = overlay
+            (view as? CodmesMacPDFView)?.applyCodmesInkAnnotations(annotations, pageIndex: pageIndex)
             applyObjects(to: overlay, pageIndex: pageIndex)
             return overlay
         }
@@ -2001,16 +2338,22 @@ private struct MacAnnotatedPDFKitView: NSViewRepresentable {
         func pdfView(_ pdfView: PDFView, willDisplayOverlayView overlayView: NSView, for page: PDFPage) {
             guard let document = pdfView.document,
                   let overlay = overlayView as? MacPDFPageAnnotationOverlay else { return }
-            applyObjects(to: overlay, pageIndex: document.index(for: page))
+            let pageIndex = document.index(for: page)
+            overlays[pageIndex] = overlay
+            (pdfView as? CodmesMacPDFView)?.applyCodmesInkAnnotations(annotations, pageIndex: pageIndex)
+            applyObjects(to: overlay, pageIndex: pageIndex)
         }
 
         func pdfView(_ pdfView: PDFView, willEndDisplayingOverlayView overlayView: NSView, for page: PDFPage) {
             guard let document = pdfView.document else { return }
-            overlays[document.index(for: page)] = nil
+            let pageIndex = document.index(for: page)
+            (pdfView as? CodmesMacPDFView)?.clearCodmesInkAnnotations(pageIndex: pageIndex)
+            overlays[pageIndex] = nil
         }
 
         func refreshVisibleOverlays() {
             for (pageIndex, overlay) in overlays {
+                pdfView?.applyCodmesInkAnnotations(annotations, pageIndex: pageIndex)
                 applyObjects(to: overlay, pageIndex: pageIndex)
             }
         }
@@ -3115,36 +3458,42 @@ private final class CodmesMacPDFView: PDFView {
     }
 
     func applyCodmesInkAnnotations(_ annotations: PDFAnnotationDocument?) {
-        guard let document else { return }
-        for index in 0..<document.pageCount {
-            guard let page = document.page(at: index) else { continue }
-            for annotation in page.annotations where annotation.contents?.hasPrefix("codmes-") == true || annotation.userName?.hasPrefix("codmes-") == true {
-                page.removeAnnotation(annotation)
-            }
+        guard let document,
+              let page = currentPage,
+              document.index(for: page) >= 0 else { return }
+        applyCodmesInkAnnotations(annotations, pageIndex: document.index(for: page))
+    }
+
+    func clearCodmesInkAnnotations(pageIndex: Int) {
+        guard let page = document?.page(at: pageIndex) else { return }
+        for annotation in page.annotations where annotation.contents?.hasPrefix("codmes-") == true || annotation.userName?.hasPrefix("codmes-") == true {
+            page.removeAnnotation(annotation)
         }
+    }
+
+    func applyCodmesInkAnnotations(_ annotations: PDFAnnotationDocument?, pageIndex: Int) {
+        guard let page = document?.page(at: pageIndex) else { return }
+        clearCodmesInkAnnotations(pageIndex: pageIndex)
         guard let annotations else { return }
-        for pageIndex in 0..<document.pageCount {
-            guard let page = document.page(at: pageIndex) else { continue }
-            let pageBounds = page.bounds(for: .mediaBox)
-            let strokes = annotations.noteStrokes(pageIndex: pageIndex)
-            for stroke in strokes where stroke.points.count > 1 {
-                let ink = PDFAnnotation(bounds: pageBounds, forType: .ink, withProperties: nil)
-                ink.contents = "codmes-ink-preview:\(stroke.id)"
-                ink.color = NSColor(hexString: stroke.color) ?? .labelColor
-                let path = NSBezierPath()
-                let first = stroke.points[0]
-                path.move(to: pagePoint(first, pageBounds: pageBounds))
-                for point in stroke.points.dropFirst() {
-                    path.line(to: pagePoint(point, pageBounds: pageBounds))
-                }
-                path.lineWidth = max(0.5, stroke.width)
-                ink.add(path)
-                page.addAnnotation(ink)
+        let pageBounds = page.bounds(for: .mediaBox)
+        let strokes = annotations.noteStrokes(pageIndex: pageIndex)
+        for stroke in strokes where stroke.points.count > 1 {
+            let ink = PDFAnnotation(bounds: pageBounds, forType: .ink, withProperties: nil)
+            ink.contents = "codmes-ink-preview:\(stroke.id)"
+            ink.color = NSColor(hexString: stroke.color) ?? .labelColor
+            let path = NSBezierPath()
+            let first = stroke.points[0]
+            path.move(to: pagePoint(first, pageBounds: pageBounds))
+            for point in stroke.points.dropFirst() {
+                path.line(to: pagePoint(point, pageBounds: pageBounds))
             }
-            for object in annotations.noteObjects(pageIndex: pageIndex) {
-                guard !object.type.lowercased().contains("text") else { continue }
-                addObjectPreview(object, to: page, pageBounds: pageBounds)
-            }
+            path.lineWidth = max(0.5, stroke.width)
+            ink.add(path)
+            page.addAnnotation(ink)
+        }
+        for object in annotations.noteObjects(pageIndex: pageIndex) {
+            guard !object.type.lowercased().contains("text") else { continue }
+            addObjectPreview(object, to: page, pageBounds: pageBounds)
         }
     }
 
@@ -4557,6 +4906,9 @@ fileprivate final class PDFTextResizeHandleView: UIView {
 
 private struct AnnotatedPDFKitView: UIViewRepresentable {
     let url: URL
+    var documentOverride: PDFDocument?
+    var documentRevision: Int
+    var forceDocumentReload: Bool
     var annotations: PDFAnnotationDocument?
     var focus: PDFDocumentFocus?
     var tool: PDFMarkupTool
@@ -4660,7 +5012,30 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         context.coordinator.eraserWidth = eraserWidth
         context.coordinator.selectedObjectId = selectedObjectId
         context.coordinator.syncExternalLassoSelection(lassoSelection)
-        if context.coordinator.currentURL != url {
+        if let documentOverride {
+            if view.document !== documentOverride {
+                context.coordinator.currentURL = url
+                context.coordinator.overlays.removeAll()
+                view.document = documentOverride
+                view.applyReadingScaleIfNeeded(force: true)
+                context.coordinator.documentRevision = documentRevision
+            } else if context.coordinator.documentRevision != documentRevision {
+                context.coordinator.documentRevision = documentRevision
+                if forceDocumentReload {
+                    let pageIndex = view.currentPage.flatMap { view.document?.index(for: $0) }
+                    let scale = view.scaleFactor
+                    context.coordinator.overlays.removeAll()
+                    view.document = nil
+                    view.document = documentOverride
+                    view.scaleFactor = scale
+                    if let pageIndex, let page = documentOverride.page(at: pageIndex) {
+                        view.go(to: page)
+                    }
+                } else {
+                    view.layoutDocumentView()
+                }
+            }
+        } else if context.coordinator.currentURL != url {
             context.coordinator.currentURL = url
             context.coordinator.overlays.removeAll()
             view.document = PDFDocument(url: url)
@@ -4736,6 +5111,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         weak var objectEditTapGesture: UITapGestureRecognizer?
         weak var clearSelectionTapGesture: UITapGestureRecognizer?
         var currentURL: URL?
+        var documentRevision = -1
         var annotations: PDFAnnotationDocument?
         var focus: PDFDocumentFocus?
         var tool: PDFMarkupTool = .pen
@@ -4871,6 +5247,7 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             overlay.canvas.drawingPolicy = .anyInput
             overlay.canvas.isUserInteractionEnabled = false
             overlays[pageIndex] = overlay
+            applyCodmesInkAnnotations(pageIndex: pageIndex)
             applyTool(to: overlay)
             applyAnnotation(to: overlay.canvas, pageIndex: pageIndex)
             applyObjects(to: overlay, pageIndex: pageIndex)
@@ -4884,6 +5261,8 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         func pdfView(_ pdfView: PDFView, willDisplayOverlayView overlayView: UIView, for page: PDFPage) {
             guard let overlay = overlayView as? PDFPageAnnotationOverlay,
                   let pageIndex = pdfView.document?.index(for: page) else { return }
+            overlays[pageIndex] = overlay
+            applyCodmesInkAnnotations(pageIndex: pageIndex)
             applyTool(to: overlay)
             applyAnnotation(to: overlay.canvas, pageIndex: pageIndex)
             applyObjects(to: overlay, pageIndex: pageIndex)
@@ -4891,6 +5270,14 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
             applyLassoSelectionOutline(to: overlay, pageIndex: pageIndex)
             applyShapeHandles(to: overlay, pageIndex: pageIndex)
             applyTextResizeHandles(to: overlay, pageIndex: pageIndex)
+        }
+
+        func pdfView(_ pdfView: PDFView, willEndDisplayingOverlayView overlayView: UIView, for page: PDFPage) {
+            guard let pageIndex = pdfView.document?.index(for: page) else { return }
+            clearCodmesInkAnnotations(pageIndex: pageIndex)
+            highlightViews[pageIndex]?.removeFromSuperview()
+            highlightViews[pageIndex] = nil
+            overlays[pageIndex] = nil
         }
 
         func applyToolToVisibleOverlays() {
@@ -5042,23 +5429,28 @@ private struct AnnotatedPDFKitView: UIViewRepresentable {
         }
 
         func applyCodmesInkAnnotations() {
-            guard let document = pdfView?.document else { return }
-            for index in 0..<document.pageCount {
-                guard let page = document.page(at: index) else { continue }
-                for annotation in page.annotations where annotation.contents?.hasPrefix("codmes-ink-") == true {
-                    page.removeAnnotation(annotation)
-                }
+            for pageIndex in overlays.keys {
+                applyCodmesInkAnnotations(pageIndex: pageIndex)
             }
+        }
+
+        private func clearCodmesInkAnnotations(pageIndex: Int) {
+            guard let page = pdfView?.document?.page(at: pageIndex) else { return }
+            for annotation in page.annotations where annotation.contents?.hasPrefix("codmes-ink-") == true {
+                page.removeAnnotation(annotation)
+            }
+        }
+
+        private func applyCodmesInkAnnotations(pageIndex: Int) {
+            guard let page = pdfView?.document?.page(at: pageIndex) else { return }
+            clearCodmesInkAnnotations(pageIndex: pageIndex)
             guard let annotations else { return }
-            for pageIndex in 0..<document.pageCount {
-                guard let page = document.page(at: pageIndex) else { continue }
-                let strokes = annotations.noteStrokes(pageIndex: pageIndex)
-                let hiddenStrokeIds = movingLassoStrokeIds(pageIndex: pageIndex)
-                    .union(activeShapeHandleStrokeIds(pageIndex: pageIndex))
-                for stroke in strokes {
-                    guard !hiddenStrokeIds.contains(stroke.id) else { continue }
-                    addInkPreview(stroke, to: page, contentsPrefix: "codmes-ink-preview")
-                }
+            let strokes = annotations.noteStrokes(pageIndex: pageIndex)
+            let hiddenStrokeIds = movingLassoStrokeIds(pageIndex: pageIndex)
+                .union(activeShapeHandleStrokeIds(pageIndex: pageIndex))
+            for stroke in strokes {
+                guard !hiddenStrokeIds.contains(stroke.id) else { continue }
+                addInkPreview(stroke, to: page, contentsPrefix: "codmes-ink-preview")
             }
         }
 

@@ -371,10 +371,10 @@ struct FileBrowserPane: View {
     }
 
     private func open(_ item: WorkspaceItem) {
+        guard !item.isDirectory else { return }
+        onOpenFile?()
         Task {
-            guard !item.isDirectory else { return }
             await store.loadFile(item)
-            onOpenFile?()
         }
     }
 
@@ -431,7 +431,7 @@ struct FileBrowserPane: View {
     }
 
     private var selectedFilePath: String? {
-        store.selectedFile?.path ?? store.selectedRawFile?.path
+        store.loadingRawFile?.path ?? store.selectedFile?.path ?? store.selectedRawFile?.path
     }
 
     private var workspaceRootName: String {
@@ -520,6 +520,11 @@ struct FileBrowserPane: View {
                     Text(item.name)
                         .lineLimit(1)
                         .truncationMode(.middle)
+                    if store.loadingRawFile?.path == item.path, store.rawFileLoadError == nil {
+                        ProgressView()
+                            .controlSize(.small)
+                            .frame(width: 16, height: 16)
+                    }
                     Spacer(minLength: 4)
                 }
                 .frame(maxWidth: .infinity, minHeight: 30, alignment: .leading)
@@ -877,12 +882,24 @@ struct FilePreviewView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let rawFile = store.selectedRawFile {
+            if let loadingFile = store.loadingRawFile {
+                RawFileLoadingView(
+                    item: loadingFile,
+                    errorMessage: store.rawFileLoadError,
+                    retry: {
+                        Task { await store.loadFile(loadingFile) }
+                    }
+                )
+            } else if let rawFile = store.selectedRawFile {
 #if os(macOS)
                 HeaderView(title: rawFile.name, subtitle: rawFile.path)
 #endif
                 if rawFile.kind == "pdf" {
-                    PDFWorkspaceView(rawFile: rawFile)
+                    if let session = rawFile.streamSession {
+                        StreamedPDFWorkspaceHost(rawFile: rawFile, session: session)
+                    } else {
+                        PDFWorkspaceView(rawFile: rawFile)
+                    }
                 } else if rawFile.kind == "image" {
                     AsyncImage(url: rawFile.url) { phase in
                         switch phase {
@@ -979,6 +996,57 @@ struct FilePreviewView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
+
+}
+
+private struct StreamedPDFWorkspaceHost: View {
+    let rawFile: RawFilePreview
+    @ObservedObject var session: StreamedPDFSession
+
+    var body: some View {
+        PDFWorkspaceView(
+            rawFile: rawFile,
+            streamSession: session,
+            streamRevision: session.revision
+        )
+    }
+}
+
+private struct RawFileLoadingView: View {
+    let item: WorkspaceItem
+    let errorMessage: String?
+    let retry: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+#if os(macOS)
+            HeaderView(title: item.name, subtitle: item.path)
+#endif
+            if let errorMessage {
+                ContentUnavailableView {
+                    Label("Could not open PDF", systemImage: "exclamationmark.triangle")
+                } description: {
+                    Text(errorMessage)
+                } actions: {
+                    Button(action: retry) {
+                        Label("Try Again", systemImage: "arrow.clockwise")
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                VStack(spacing: 12) {
+                    ProgressView()
+                        .controlSize(.large)
+                    Text("Opening PDF...")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
 }
 
 struct CodeFileRenderedView: View {

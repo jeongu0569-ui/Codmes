@@ -57,6 +57,23 @@ test("workspace server protects APIs with CODMES_SERVER_TOKEN and exposes manage
     assert.equal(recursiveTree.children.some((item) => item.path === "Notes/Work/Docs/Architecture.md"), true);
 
     await fs.writeFile(path.join(workspaceRoot, "Documents", "sample.pdf"), "%PDF-1.4\n%%EOF", "utf8");
+    const rawRange = await fetch(`${baseUrl}/api/raw?path=Documents/sample.pdf`, {
+      headers: {
+        authorization: `Bearer ${token}`,
+        range: "bytes=0-3"
+      }
+    });
+    assert.equal(rawRange.status, 206);
+    assert.equal(rawRange.headers.get("accept-ranges"), "bytes");
+    assert.equal(rawRange.headers.get("content-range"), "bytes 0-3/14");
+    assert.equal(await rawRange.text(), "%PDF");
+    const rawHead = await fetch(`${baseUrl}/api/raw?path=Documents/sample.pdf`, {
+      method: "HEAD",
+      headers: { authorization: `Bearer ${token}` }
+    });
+    assert.equal(rawHead.status, 200);
+    assert.equal(rawHead.headers.get("content-length"), "14");
+    assert.equal(await rawHead.text(), "");
     const emptyAnnotations = await fetchJson(`${baseUrl}/api/file/annotations?path=Documents/sample.pdf`, { token });
     assert.equal(emptyAnnotations.documentPath, "Documents/sample.pdf");
     assert.equal(emptyAnnotations.pages.length, 0);

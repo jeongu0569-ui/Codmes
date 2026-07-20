@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import { constants as fsConstants, createReadStream, watch } from "node:fs";
 import http from "node:http";
 import path from "node:path";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
   WORKSPACE_DIRS,
@@ -66,10 +66,15 @@ const WORKSPACE_HOST = process.env.CODMES_HOST || process.env.WORKSPACE_HOST || 
 const DEFAULT_WORKSPACE_ROOT = path.join(process.env.HOME || process.cwd(), "CodmesWorkspace");
 const WORKSPACE_ROOT = path.resolve(process.env.CODMES_WORKSPACE_ROOT || DEFAULT_WORKSPACE_ROOT);
 const SERVER_TOKEN = process.env.CODMES_SERVER_TOKEN || "";
+const PDF_STREAM_CACHE_LIMIT_BYTES = Math.max(
+  256 * 1024 * 1024,
+  Number.parseInt(process.env.CODMES_PDF_STREAM_CACHE_BYTES || String(8 * 1024 * 1024 * 1024), 10)
+);
 const searchWatchers = [];
 const pendingSearchUpdates = new Set();
 let searchUpdateTimer = null;
 let searchIndexUpdateChain = Promise.resolve();
+const pdfStreamArtifactTasks = new Map();
 
 const TEXT_FILE_LIMIT = 5 * 1024 * 1024;
 
@@ -276,11 +281,20 @@ async function handleRequest(req, res) {
     if (req.method === "GET" && url.pathname === "/api/file") {
       return sendJson(res, await readTextFile(url));
     }
-    if (req.method === "GET" && url.pathname === "/api/raw") {
-      return streamRawFile(res, url);
+    if ((req.method === "GET" || req.method === "HEAD") && url.pathname === "/api/raw") {
+      return streamRawFile(req, res, url);
     }
     if (req.method === "GET" && url.pathname === "/api/pdf-thumbnail") {
       return streamPdfThumbnail(res, url);
+    }
+    if (req.method === "GET" && url.pathname === "/api/pdf/metadata") {
+      return sendJson(res, await readPdfMetadata(url));
+    }
+    if (req.method === "GET" && url.pathname === "/api/pdf/skeleton") {
+      return streamPdfSkeleton(res, url);
+    }
+    if (req.method === "GET" && url.pathname === "/api/pdf/page") {
+      return streamPdfPage(res, url);
     }
     if (req.method === "PUT" && url.pathname === "/api/file") {
       return sendJson(res, await writeTextFile(req, url));
@@ -893,22 +907,69 @@ async function readTextFile(url) {
   };
 }
 
-async function streamRawFile(res, url) {
+async function streamRawFile(req, res, url) {
   const filePath = requireQuery(url, "path");
   const { absolutePath } = resolveWorkspacePath(WORKSPACE_ROOT, filePath);
   const stat = await fs.stat(absolutePath);
   if (stat.isDirectory()) throw Object.assign(new Error("Cannot stream a folder."), { status: 400 });
-  res.writeHead(200, {
-    "content-length": String(stat.size),
+  const range = parseByteRange(req.headers.range, stat.size);
+  const headers = {
+    "accept-ranges": "bytes",
     "content-type": contentTypeForPath(filePath)
+  };
+
+  if (range?.invalid) {
+    res.writeHead(416, {
+      ...headers,
+      "content-range": `bytes */${stat.size}`
+    });
+    return res.end();
+  }
+
+  const start = range?.start ?? 0;
+  const end = range?.end ?? Math.max(0, stat.size - 1);
+  const status = range ? 206 : 200;
+  res.writeHead(status, {
+    ...headers,
+    "content-length": String(stat.size === 0 ? 0 : end - start + 1),
+    ...(range ? { "content-range": `bytes ${start}-${end}/${stat.size}` } : {})
   });
-  createReadStream(absolutePath).pipe(res);
+  if (req.method === "HEAD" || stat.size === 0) return res.end();
+  createReadStream(absolutePath, { start, end }).pipe(res);
+}
+
+function parseByteRange(value, size) {
+  if (!value) return null;
+  const match = /^bytes=(\d*)-(\d*)$/i.exec(String(value).trim());
+  if (!match || size <= 0) return { invalid: true };
+
+  const rawStart = match[1];
+  const rawEnd = match[2];
+  if (!rawStart && !rawEnd) return { invalid: true };
+
+  let start;
+  let end;
+  if (!rawStart) {
+    const suffixLength = Number.parseInt(rawEnd, 10);
+    if (!Number.isSafeInteger(suffixLength) || suffixLength <= 0) return { invalid: true };
+    start = Math.max(0, size - suffixLength);
+    end = size - 1;
+  } else {
+    start = Number.parseInt(rawStart, 10);
+    end = rawEnd ? Number.parseInt(rawEnd, 10) : size - 1;
+    if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || start >= size || end < start) {
+      return { invalid: true };
+    }
+    end = Math.min(end, size - 1);
+  }
+  return { start, end };
 }
 
 async function streamPdfThumbnail(res, url) {
   const filePath = requireQuery(url, "path");
   const page = Math.max(1, Number.parseInt(url.searchParams.get("page") || "1", 10) || 1);
   const crop = pdfThumbnailCrop(url);
+  const scale = pdfThumbnailScale(url);
   const highlightQuery = String(url.searchParams.get("highlight") || "").trim().slice(0, 120);
   const { relativePath, absolutePath } = resolveWorkspacePath(WORKSPACE_ROOT, filePath);
   if (path.extname(relativePath).toLowerCase() !== ".pdf") {
@@ -916,7 +977,7 @@ async function streamPdfThumbnail(res, url) {
   }
   const stat = await fs.stat(absolutePath);
   if (stat.isDirectory()) throw Object.assign(new Error("Cannot render a folder."), { status: 400 });
-  const thumbnailPath = await renderPdfThumbnail(absolutePath, relativePath, stat, page, crop, highlightQuery);
+  const thumbnailPath = await renderPdfThumbnail(absolutePath, relativePath, stat, page, crop, highlightQuery, scale);
   const thumbnailStat = await fs.stat(thumbnailPath);
   res.writeHead(200, {
     "cache-control": "public, max-age=86400",
@@ -926,9 +987,160 @@ async function streamPdfThumbnail(res, url) {
   createReadStream(thumbnailPath).pipe(res);
 }
 
-async function renderPdfThumbnail(absolutePath, relativePath, stat, page, crop, highlightQuery) {
+async function readPdfMetadata(url) {
+  const filePath = requireQuery(url, "path");
+  const { relativePath, absolutePath } = resolveWorkspacePath(WORKSPACE_ROOT, filePath);
+  if (path.extname(relativePath).toLowerCase() !== ".pdf") {
+    throw Object.assign(new Error("PDF metadata source must be a PDF file."), { status: 400 });
+  }
+  const stat = await fs.stat(absolutePath);
+  if (stat.isDirectory()) throw Object.assign(new Error("Cannot inspect a folder."), { status: 400 });
+  const python = await documentWorkerPython();
+  const script = `
+import fitz, json, sys
+doc = fitz.open(sys.argv[1])
+rect = doc.load_page(0).rect if doc.page_count else fitz.Rect(0, 0, 1, 1)
+print(json.dumps({"pageCount": doc.page_count, "pageWidth": rect.width, "pageHeight": rect.height}))
+doc.close()
+`;
+  const output = await runPythonScript(python, script, [absolutePath]);
+  const metadata = JSON.parse(output);
+  return {
+    path: relativePath,
+    size: stat.size,
+    pageCount: metadata.pageCount,
+    pageWidth: metadata.pageWidth,
+    pageHeight: metadata.pageHeight
+  };
+}
+
+async function streamPdfSkeleton(res, url) {
+  const source = await resolvePdfStreamSource(url);
+  const outputPath = await cachedPdfStreamArtifact(
+    `skeleton-v1\n${source.relativePath}\n${source.stat.size}:${source.stat.mtimeMs}`,
+    "skeleton.pdf",
+    async (temporaryPath) => {
+      const python = await documentWorkerPython();
+      const script = `
+import fitz, sys
+source = fitz.open(sys.argv[1])
+output = fitz.open()
+for index in range(source.page_count):
+    rect = source.load_page(index).rect
+    output.new_page(width=max(rect.width, 1), height=max(rect.height, 1))
+output.save(sys.argv[2], garbage=3, deflate=True)
+output.close()
+source.close()
+`;
+      await runPythonScript(python, script, [source.absolutePath, temporaryPath]);
+    }
+  );
+  return streamPdfArtifact(res, outputPath);
+}
+
+async function streamPdfPage(res, url) {
+  const source = await resolvePdfStreamSource(url);
+  const page = Math.max(1, Number.parseInt(url.searchParams.get("page") || "1", 10) || 1);
+  const outputPath = await cachedPdfStreamArtifact(
+    `page-v1\n${source.relativePath}\n${source.stat.size}:${source.stat.mtimeMs}\n${page}`,
+    `page-${page}.pdf`,
+    async (temporaryPath) => {
+      const python = await documentWorkerPython();
+      const script = `
+import fitz, sys
+source = fitz.open(sys.argv[1])
+page_index = int(sys.argv[3]) - 1
+if page_index < 0 or page_index >= source.page_count:
+    raise ValueError("PDF page is out of range")
+output = fitz.open()
+output.insert_pdf(source, from_page=page_index, to_page=page_index, links=True, annots=False)
+output.save(sys.argv[2], garbage=3, deflate=True)
+output.close()
+source.close()
+`;
+      await runPythonScript(python, script, [source.absolutePath, temporaryPath, String(page)]);
+    }
+  );
+  return streamPdfArtifact(res, outputPath);
+}
+
+async function resolvePdfStreamSource(url) {
+  const filePath = requireQuery(url, "path");
+  const { relativePath, absolutePath } = resolveWorkspacePath(WORKSPACE_ROOT, filePath);
+  if (path.extname(relativePath).toLowerCase() !== ".pdf") {
+    throw Object.assign(new Error("PDF stream source must be a PDF file."), { status: 400 });
+  }
+  const stat = await fs.stat(absolutePath);
+  if (stat.isDirectory()) throw Object.assign(new Error("Cannot stream a folder."), { status: 400 });
+  return { relativePath, absolutePath, stat };
+}
+
+async function cachedPdfStreamArtifact(cacheIdentity, suffix, produce) {
+  const key = createHash("sha256").update(cacheIdentity).digest("hex");
+  const directory = path.join(WORKSPACE_ROOT, ".codmes", "index", "pdf-stream");
+  const outputPath = path.join(directory, `${key}-${suffix}`);
+  try {
+    await fs.access(outputPath);
+    const now = new Date();
+    await fs.utimes(outputPath, now, now).catch(() => {});
+    return outputPath;
+  } catch {
+    // Generate below.
+  }
+
+  if (!pdfStreamArtifactTasks.has(outputPath)) {
+    const task = (async () => {
+      await fs.mkdir(directory, { recursive: true });
+      const temporaryPath = `${outputPath}.${randomUUID()}.tmp`;
+      try {
+        await produce(temporaryPath);
+        await fs.rename(temporaryPath, outputPath);
+        await trimPdfStreamCache(directory, PDF_STREAM_CACHE_LIMIT_BYTES, outputPath);
+      } finally {
+        await fs.rm(temporaryPath, { force: true });
+      }
+      return outputPath;
+    })().finally(() => {
+      pdfStreamArtifactTasks.delete(outputPath);
+    });
+    pdfStreamArtifactTasks.set(outputPath, task);
+  }
+  return pdfStreamArtifactTasks.get(outputPath);
+}
+
+async function trimPdfStreamCache(directory, limitBytes, keepingPath) {
+  const names = await fs.readdir(directory).catch(() => []);
+  const entries = await Promise.all(names.map(async (name) => {
+    const artifactPath = path.join(directory, name);
+    const stat = await fs.stat(artifactPath).catch(() => null);
+    return stat?.isFile() ? { path: artifactPath, size: stat.size, modifiedAt: stat.mtimeMs } : null;
+  }));
+  const files = entries.filter(Boolean);
+  let totalBytes = files.reduce((sum, file) => sum + file.size, 0);
+  if (totalBytes <= limitBytes) return;
+
+  files.sort((left, right) => left.modifiedAt - right.modifiedAt);
+  for (const file of files) {
+    if (totalBytes <= limitBytes) break;
+    if (file.path === keepingPath || pdfStreamArtifactTasks.has(file.path)) continue;
+    await fs.rm(file.path, { force: true }).catch(() => {});
+    totalBytes -= file.size;
+  }
+}
+
+async function streamPdfArtifact(res, artifactPath) {
+  const stat = await fs.stat(artifactPath);
+  res.writeHead(200, {
+    "cache-control": "public, max-age=86400",
+    "content-length": String(stat.size),
+    "content-type": "application/pdf"
+  });
+  createReadStream(artifactPath).pipe(res);
+}
+
+async function renderPdfThumbnail(absolutePath, relativePath, stat, page, crop, highlightQuery, scale) {
   const cropKey = crop ? `${crop.x}:${crop.y}:${crop.width}:${crop.height}` : "cover";
-  const key = Buffer.from(`pdf-preview-v4\n${relativePath}\n${stat.size}:${stat.mtimeMs}\n${page}\n${cropKey}\n${highlightQuery.toLocaleLowerCase()}`, "utf8").toString("base64url");
+  const key = Buffer.from(`pdf-preview-v5\n${relativePath}\n${stat.size}:${stat.mtimeMs}\n${page}\n${cropKey}\n${highlightQuery.toLocaleLowerCase()}\n${scale}`, "utf8").toString("base64url");
   const outputPath = path.join(WORKSPACE_ROOT, ".codmes", "index", "thumbnails", `${key}.png`);
   try {
     await fs.access(outputPath);
@@ -945,6 +1157,7 @@ page = doc.load_page(page_index)
 crop_args = sys.argv[4:8]
 crop_values = [float(value) for value in crop_args] if len(crop_args) == 4 and all(crop_args) else []
 highlight_query = sys.argv[8].strip() if len(sys.argv) >= 9 else ""
+render_scale = float(sys.argv[9]) if len(sys.argv) >= 10 else 0.45
 page_rect = page.rect
 if highlight_query:
     matches = page.search_for(highlight_query)
@@ -981,14 +1194,15 @@ if crop_values:
         page_rect.x0 + (left + crop_width) * page_rect.width,
         page_rect.y0 + (top + crop_height) * page_rect.height
     )
-    pix = page.get_pixmap(matrix=fitz.Matrix(1.15, 1.15), clip=clip, alpha=False)
+    crop_scale = max(1.15, render_scale)
+    pix = page.get_pixmap(matrix=fitz.Matrix(crop_scale, crop_scale), clip=clip, alpha=False)
 else:
-    pix = page.get_pixmap(matrix=fitz.Matrix(0.45, 0.45), alpha=False)
+    pix = page.get_pixmap(matrix=fitz.Matrix(render_scale, render_scale), alpha=False)
 pix.save(out_path)
 doc.close()
 `;
   const cropArgs = crop ? [crop.x, crop.y, crop.width, crop.height].map(String) : ["", "", "", ""];
-  await runPythonScript(python, script, [absolutePath, outputPath, String(page), ...cropArgs, highlightQuery]);
+  await runPythonScript(python, script, [absolutePath, outputPath, String(page), ...cropArgs, highlightQuery, String(scale)]);
   return outputPath;
 }
 
@@ -1003,6 +1217,12 @@ function pdfThumbnailCrop(url) {
     width: Math.min(width, 1 - x),
     height: Math.min(height, 1 - y)
   };
+}
+
+function pdfThumbnailScale(url) {
+  const value = Number.parseFloat(url.searchParams.get("scale") || "0.45");
+  if (!Number.isFinite(value)) return 0.45;
+  return Math.min(2.5, Math.max(0.35, value));
 }
 
 async function runPythonScript(python, script, args) {
@@ -1033,7 +1253,13 @@ async function writeTextFile(req, url) {
   await fs.mkdir(path.dirname(absolutePath), { recursive: true });
   await fs.writeFile(absolutePath, content, "utf8");
   await refreshSearchIndexPaths([relativePath]);
-  return { ok: true, path: relativePath };
+  const stat = await fs.stat(absolutePath);
+  return {
+    ok: true,
+    path: relativePath,
+    size: stat.size,
+    modifiedAt: stat.mtime.toISOString()
+  };
 }
 
 async function createFile(req) {

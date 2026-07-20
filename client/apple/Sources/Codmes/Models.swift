@@ -59,12 +59,36 @@ struct FileResponse: Codable {
     var content: String
 }
 
+struct FileWriteResponse: Codable {
+    let ok: Bool
+    let path: String
+    let size: Int
+    let modifiedAt: String
+}
+
 struct RawFilePreview: Identifiable {
     var id: String { path }
     let path: String
     let name: String
     let kind: String
     let url: URL
+    let streamSession: StreamedPDFSession?
+
+    init(path: String, name: String, kind: String, url: URL, streamSession: StreamedPDFSession? = nil) {
+        self.path = path
+        self.name = name
+        self.kind = kind
+        self.url = url
+        self.streamSession = streamSession
+    }
+}
+
+struct PDFMetadataResponse: Codable {
+    let path: String
+    let size: Int
+    let pageCount: Int
+    let pageWidth: Double
+    let pageHeight: Double
 }
 
 struct PDFDocumentFocus: Equatable {

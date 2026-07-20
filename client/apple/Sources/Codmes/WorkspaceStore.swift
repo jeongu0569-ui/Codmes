@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 @MainActor
@@ -11,6 +12,8 @@ final class WorkspaceStore: ObservableObject {
     @Published var codePath = ""
     @Published var selectedFile: FileResponse?
     @Published var selectedRawFile: RawFilePreview?
+    @Published var loadingRawFile: WorkspaceItem?
+    @Published var rawFileLoadError: String?
     @Published var selectedPDFFocus: PDFDocumentFocus?
     @Published var editorText = ""
     @Published var isEditingFile = false
@@ -61,10 +64,15 @@ final class WorkspaceStore: ObservableObject {
     @Published var searchSetupMessage = ""
     @Published var hiddenModelProviderIds = WorkspaceStore.loadStringSet("codmes.hiddenModelProviderIds")
     @Published var hiddenModelIds = WorkspaceStore.loadStringSet("codmes.hiddenModelIds")
+    @Published var localFileCacheLimitGB = WorkspaceStore.initialFileCacheLimitGB()
+    @Published var localFileCacheUsageBytes: Int64 = 0
 
     private let liveClient = LiveChatClient()
     private var activeActivityLineId: UUID?
     private var isChatTurnOpen = false
+    private var activeFileLoadID: UUID?
+    private var rawFileCache: [String: (signature: String, preview: RawFilePreview)] = [:]
+    private let fileDiskCache = WorkspaceFileDiskCache()
     private let chunkedUploadThresholdBytes: Int64 = 8 * 1024 * 1024
     private let uploadChunkSize = 1024 * 1024
 
@@ -75,6 +83,31 @@ final class WorkspaceStore: ObservableObject {
 
     var effectiveServerURLText: String {
         normalizedServerURL(serverURLText)
+    }
+
+    var localFileCacheLimitBytes: Int64 {
+        Int64(localFileCacheLimitGB) * 1_024 * 1_024 * 1_024
+    }
+
+    func setLocalFileCacheLimitGB(_ value: Int) {
+        localFileCacheLimitGB = min(max(value, 1), 50)
+        UserDefaults.standard.set(localFileCacheLimitGB, forKey: "workspace.localFileCacheLimitGB")
+        Task {
+            await fileDiskCache.trim(to: localFileCacheLimitBytes, keeping: selectedRawFile?.url)
+            await refreshLocalFileCacheUsage()
+        }
+    }
+
+    func refreshLocalFileCacheUsage() async {
+        localFileCacheUsageBytes = await fileDiskCache.usageBytes()
+    }
+
+    func clearLocalFileCache() async {
+        await fileDiskCache.clear(keeping: selectedRawFile?.url)
+        rawFileCache = rawFileCache.filter {
+            FileManager.default.fileExists(atPath: $0.value.preview.url.path)
+        }
+        await refreshLocalFileCacheUsage()
     }
 
     private var currentServerURL: URL? {
@@ -1304,30 +1337,144 @@ final class WorkspaceStore: ObservableObject {
 
     func loadFile(_ item: WorkspaceItem) async {
         guard !item.isDirectory, let api else { return }
+
+        let loadID = UUID()
+        activeFileLoadID = loadID
         isLoading = true
-        defer { isLoading = false }
+        rawFileLoadError = nil
+
+        if item.kind == "pdf" {
+            loadingRawFile = item
+            selectedFile = nil
+            selectedRawFile = nil
+            editorText = ""
+            isEditingFile = false
+        } else {
+            loadingRawFile = nil
+        }
+
+        defer {
+            if activeFileLoadID == loadID {
+                isLoading = false
+            }
+        }
         do {
             if selectedPDFFocus?.path != item.path {
                 selectedPDFFocus = nil
             }
             if item.kind == "pdf" {
-                let url = try await api.downloadRawFile(path: item.path, name: item.name)
-                selectedRawFile = RawFilePreview(path: item.path, name: item.name, kind: item.kind, url: url)
+                let signature = "\(item.size):\(item.modifiedAt)"
+                let preview: RawFilePreview
+                if let cached = rawFileCache[item.path],
+                   cached.signature == signature,
+                   FileManager.default.fileExists(atPath: cached.preview.url.path) {
+                    preview = cached.preview
+                } else if let cached = await fileDiskCache.cachedURL(for: item) {
+                    preview = RawFilePreview(path: item.path, name: item.name, kind: item.kind, url: cached)
+                } else {
+                    async let metadataRequest = api.pdfMetadata(path: item.path)
+                    async let skeletonRequest = api.downloadPDFSkeleton(path: item.path, name: item.name)
+                    let (metadata, skeletonURL) = try await (metadataRequest, skeletonRequest)
+                    guard activeFileLoadID == loadID else { return }
+                    let cache = fileDiskCache
+                    let limitBytes = localFileCacheLimitBytes
+                    guard let session = StreamedPDFSession(
+                        path: item.path,
+                        name: item.name,
+                        metadata: metadata,
+                        skeletonURL: skeletonURL,
+                        api: api,
+                        cachedPageLoader: { pageIndex in
+                            await cache.cachedURL(for: Self.streamedPDFPageItem(source: item, pageIndex: pageIndex))
+                        },
+                        pageCacheWriter: { temporaryURL, pageIndex in
+                            try await cache.storeDownloadedFile(
+                                temporaryURL,
+                                for: Self.streamedPDFPageItem(source: item, pageIndex: pageIndex),
+                                limitBytes: limitBytes
+                            )
+                        }
+                    ) else {
+                        throw CocoaError(.fileReadCorruptFile)
+                    }
+                    let initialPageIndex = max(0, (selectedPDFFocus?.page ?? 1) - 1)
+                    await session.preparePage(initialPageIndex)
+                    session.requestPages(around: initialPageIndex)
+                    preview = RawFilePreview(
+                        path: item.path,
+                        name: item.name,
+                        kind: item.kind,
+                        url: skeletonURL,
+                        streamSession: session
+                    )
+                }
+                guard activeFileLoadID == loadID else { return }
+                if let previous = rawFileCache[item.path], previous.preview.url != preview.url {
+                    try? FileManager.default.removeItem(at: previous.preview.url)
+                }
+                rawFileCache[item.path] = (signature, preview)
+                selectedRawFile = preview
                 selectedFile = nil
                 editorText = ""
-            } else if item.kind == "image" {
-                let url = try api.rawURL(path: item.path)
+            } else if ["image", "spreadsheet", "document"].contains(item.kind) {
+                let url: URL
+                if let cached = await fileDiskCache.cachedURL(for: item) {
+                    url = cached
+                } else {
+                    let downloaded = try await api.downloadRawFile(path: item.path, name: item.name)
+                    url = try await fileDiskCache.storeDownloadedFile(
+                        downloaded,
+                        for: item,
+                        limitBytes: localFileCacheLimitBytes
+                    )
+                }
+                guard activeFileLoadID == loadID else { return }
                 selectedRawFile = RawFilePreview(path: item.path, name: item.name, kind: item.kind, url: url)
                 selectedFile = nil
                 editorText = ""
             } else {
-                selectedFile = try await api.file(path: item.path)
+                let file: FileResponse
+                if let cachedURL = await fileDiskCache.cachedURL(for: item),
+                   let content = try? String(contentsOf: cachedURL, encoding: .utf8) {
+                    file = FileResponse(
+                        path: item.path,
+                        name: item.name,
+                        kind: item.kind,
+                        size: item.size,
+                        modifiedAt: item.modifiedAt,
+                        content: content
+                    )
+                } else {
+                    file = try await api.file(path: item.path)
+                    _ = try await fileDiskCache.store(
+                        Data(file.content.utf8),
+                        for: WorkspaceItem(
+                            name: file.name,
+                            path: file.path,
+                            kind: file.kind,
+                            isDirectory: false,
+                            size: file.size,
+                            modifiedAt: file.modifiedAt
+                        ),
+                        limitBytes: localFileCacheLimitBytes
+                    )
+                }
+                guard activeFileLoadID == loadID else { return }
+                selectedFile = file
                 selectedRawFile = nil
                 editorText = selectedFile?.content ?? ""
             }
+            loadingRawFile = nil
+            rawFileLoadError = nil
             isEditingFile = false
             statusMessage = "Opened \(item.name)"
         } catch {
+            guard activeFileLoadID == loadID else { return }
+            if item.kind == "pdf" {
+                rawFileLoadError = error.localizedDescription
+            } else {
+                loadingRawFile = nil
+            }
             statusMessage = error.localizedDescription
         }
     }
@@ -1422,15 +1569,34 @@ final class WorkspaceStore: ObservableObject {
     }
 
     func saveSelectedFile() async {
-        guard let api, var selectedFile, selectedFileCanEdit else { return }
+        guard let api, let selectedFile, selectedFileCanEdit else { return }
         isLoading = true
         defer { isLoading = false }
         do {
-            try await api.writeFile(path: selectedFile.path, content: editorText)
-            selectedFile.content = editorText
-            self.selectedFile = selectedFile
+            let response = try await api.writeFile(path: selectedFile.path, content: editorText)
+            let updatedFile = FileResponse(
+                path: selectedFile.path,
+                name: selectedFile.name,
+                kind: selectedFile.kind,
+                size: response.size,
+                modifiedAt: response.modifiedAt,
+                content: editorText
+            )
+            _ = try await fileDiskCache.store(
+                Data(editorText.utf8),
+                for: WorkspaceItem(
+                    name: updatedFile.name,
+                    path: updatedFile.path,
+                    kind: updatedFile.kind,
+                    isDirectory: false,
+                    size: updatedFile.size,
+                    modifiedAt: updatedFile.modifiedAt
+                ),
+                limitBytes: localFileCacheLimitBytes
+            )
+            self.selectedFile = updatedFile
             isEditingFile = false
-            statusMessage = "Saved \(selectedFile.name)"
+            statusMessage = "Saved \(updatedFile.name)"
         } catch {
             statusMessage = error.localizedDescription
         }
@@ -1532,8 +1698,11 @@ final class WorkspaceStore: ObservableObject {
     private func clearSelectionIfNeeded(paths: [String]) {
         guard let selectedPath = selectedResourcePath else { return }
         if paths.contains(where: { selectedPath == $0 || selectedPath.hasPrefix($0 + "/") }) {
+            activeFileLoadID = nil
             selectedFile = nil
             selectedRawFile = nil
+            loadingRawFile = nil
+            rawFileLoadError = nil
             editorText = ""
             isEditingFile = false
         }
@@ -1556,8 +1725,11 @@ final class WorkspaceStore: ObservableObject {
         let rootName = workspaceRootFolderName(for: root)
         guard selectedPath.hasPrefix(rootName + "/") else { return }
         if !children.contains(where: { $0.path == selectedPath }) {
+            activeFileLoadID = nil
             selectedFile = nil
             selectedRawFile = nil
+            loadingRawFile = nil
+            rawFileLoadError = nil
             editorText = ""
             isEditingFile = false
         }
@@ -2313,11 +2485,11 @@ final class WorkspaceStore: ObservableObject {
     }
 
     private var selectedResourcePath: String? {
-        selectedFile?.path ?? selectedRawFile?.path
+        loadingRawFile?.path ?? selectedFile?.path ?? selectedRawFile?.path
     }
 
     private var selectedResourceKind: String? {
-        selectedFile?.kind ?? selectedRawFile?.kind
+        loadingRawFile?.kind ?? selectedFile?.kind ?? selectedRawFile?.kind
     }
 
     private func nestedPath(root: String, workspacePath: String) -> String {
@@ -2368,6 +2540,127 @@ final class WorkspaceStore: ObservableObject {
             UserDefaults.standard.removeObject(forKey: "workspace.serverAuthToken")
         }
         return legacy
+    }
+
+    private static func initialFileCacheLimitGB() -> Int {
+        let stored = UserDefaults.standard.integer(forKey: "workspace.localFileCacheLimitGB")
+        if stored > 0 { return min(stored, 50) }
+#if os(macOS)
+        return 20
+#else
+        return 6
+#endif
+    }
+
+    private static func streamedPDFPageItem(source: WorkspaceItem, pageIndex: Int) -> WorkspaceItem {
+        WorkspaceItem(
+            name: "page-\(pageIndex + 1).pdf",
+            path: "\(source.path)#codmes-stream-page-\(pageIndex + 1)",
+            kind: "pdf",
+            isDirectory: false,
+            size: source.size,
+            modifiedAt: source.modifiedAt
+        )
+    }
+}
+
+private actor WorkspaceFileDiskCache {
+    private let fileManager = FileManager.default
+    private let directory: URL
+
+    init() {
+        let base = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
+            ?? FileManager.default.temporaryDirectory
+        directory = base
+            .appendingPathComponent("Codmes", isDirectory: true)
+            .appendingPathComponent("WorkspaceFiles", isDirectory: true)
+    }
+
+    func cachedURL(for item: WorkspaceItem) -> URL? {
+        let url = cacheURL(for: item)
+        guard fileManager.fileExists(atPath: url.path) else { return nil }
+        touch(url)
+        return url
+    }
+
+    func storeDownloadedFile(_ temporaryURL: URL, for item: WorkspaceItem, limitBytes: Int64) throws -> URL {
+        try prepareDirectory()
+        let destination = cacheURL(for: item)
+        if fileManager.fileExists(atPath: destination.path) {
+            try? fileManager.removeItem(at: temporaryURL)
+            touch(destination)
+        } else {
+            try fileManager.moveItem(at: temporaryURL, to: destination)
+            touch(destination)
+        }
+        trim(to: limitBytes, keeping: destination)
+        return destination
+    }
+
+    func store(_ data: Data, for item: WorkspaceItem, limitBytes: Int64) throws -> URL {
+        try prepareDirectory()
+        let destination = cacheURL(for: item)
+        try data.write(to: destination, options: .atomic)
+        touch(destination)
+        trim(to: limitBytes, keeping: destination)
+        return destination
+    }
+
+    func usageBytes() -> Int64 {
+        cacheEntries().reduce(0) { $0 + $1.size }
+    }
+
+    func trim(to limitBytes: Int64, keeping protectedURL: URL?) {
+        var entries = cacheEntries()
+        var total = entries.reduce(Int64(0)) { $0 + $1.size }
+        guard total > limitBytes else { return }
+        entries.sort { $0.lastAccess < $1.lastAccess }
+        for entry in entries where entry.url != protectedURL {
+            guard total > limitBytes else { break }
+            try? fileManager.removeItem(at: entry.url)
+            total -= entry.size
+        }
+    }
+
+    func clear(keeping protectedURL: URL?) {
+        for entry in cacheEntries() where entry.url != protectedURL {
+            try? fileManager.removeItem(at: entry.url)
+        }
+    }
+
+    private func cacheURL(for item: WorkspaceItem) -> URL {
+        let signature = "\(item.path)\n\(item.size):\(item.modifiedAt)"
+        let digest = SHA256.hash(data: Data(signature.utf8))
+            .map { String(format: "%02x", $0) }
+            .joined()
+        let ext = URL(fileURLWithPath: item.name).pathExtension.lowercased()
+        return directory.appendingPathComponent(ext.isEmpty ? digest : "\(digest).\(ext)")
+    }
+
+    private func prepareDirectory() throws {
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+    }
+
+    private func touch(_ url: URL) {
+        try? fileManager.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
+    }
+
+    private func cacheEntries() -> [(url: URL, size: Int64, lastAccess: Date)] {
+        guard let urls = try? fileManager.contentsOfDirectory(
+            at: directory,
+            includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        ) else { return [] }
+        return urls.compactMap { url in
+            guard let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]) else {
+                return nil
+            }
+            return (
+                url: url,
+                size: Int64(values.fileSize ?? 0),
+                lastAccess: values.contentModificationDate ?? .distantPast
+            )
+        }
     }
 }
 

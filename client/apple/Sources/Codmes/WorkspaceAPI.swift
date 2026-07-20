@@ -58,7 +58,8 @@ struct WorkspaceAPI {
         path: String,
         page: Int,
         crop: NormalizedBoundingBox? = nil,
-        highlightQuery: String? = nil
+        highlightQuery: String? = nil,
+        scale: Double? = nil
     ) throws -> URL {
         var components = try components("/api/pdf-thumbnail")
         var queryItems = [
@@ -76,35 +77,67 @@ struct WorkspaceAPI {
         if let highlightQuery, !highlightQuery.isEmpty {
             queryItems.append(URLQueryItem(name: "highlight", value: highlightQuery))
         }
+        if let scale {
+            queryItems.append(URLQueryItem(name: "scale", value: String(scale)))
+        }
         components.queryItems = authQueryItems(queryItems)
         guard let url = components.url else { throw WorkspaceAPIError.invalidURL }
         return url
     }
 
+    func pdfMetadata(path: String) async throws -> PDFMetadataResponse {
+        var components = try components("/api/pdf/metadata")
+        components.queryItems = [URLQueryItem(name: "path", value: path)]
+        return try await request(components)
+    }
+
+    func downloadPDFSkeleton(path: String, name: String) async throws -> URL {
+        var components = try components("/api/pdf/skeleton")
+        components.queryItems = [URLQueryItem(name: "path", value: path)]
+        guard let url = components.url else { throw WorkspaceAPIError.invalidURL }
+        return try await downloadFile(url: url, name: "skeleton-\(name)")
+    }
+
+    func downloadPDFPage(path: String, page: Int, name: String) async throws -> URL {
+        var components = try components("/api/pdf/page")
+        components.queryItems = [
+            URLQueryItem(name: "path", value: path),
+            URLQueryItem(name: "page", value: String(page))
+        ]
+        guard let url = components.url else { throw WorkspaceAPIError.invalidURL }
+        return try await downloadFile(url: url, name: "page-\(page)-\(name)")
+    }
+
     func downloadRawFile(path: String, name: String) async throws -> URL {
         let url = try rawURL(path: path)
+        return try await downloadFile(url: url, name: name)
+    }
+
+    private func downloadFile(url: URL, name: String) async throws -> URL {
         var request = URLRequest(url: url)
         request.setValue("*/*", forHTTPHeaderField: "accept")
         applyAuth(to: &request)
-        let (data, response) = try await session.data(for: request)
+        let (downloadURL, response) = try await session.download(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         guard (200..<300).contains(status) else {
-            throw WorkspaceAPIError.badStatus(status, String(data: data, encoding: .utf8) ?? "")
+            let body = (try? String(contentsOf: downloadURL, encoding: .utf8)) ?? ""
+            throw WorkspaceAPIError.badStatus(status, body)
         }
-        let temporaryDirectory = FileManager.default.temporaryDirectory
+        let fileManager = FileManager.default
+        let temporaryDirectory = fileManager.temporaryDirectory
             .appendingPathComponent("CodmesRawPreviews", isDirectory: true)
-        try FileManager.default.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
+        try fileManager.createDirectory(at: temporaryDirectory, withIntermediateDirectories: true)
         let fileURL = temporaryDirectory
             .appendingPathComponent(UUID().uuidString + "-" + name)
-        try data.write(to: fileURL, options: .atomic)
+        try fileManager.moveItem(at: downloadURL, to: fileURL)
         return fileURL
     }
 
-    func writeFile(path: String, content: String) async throws {
+    func writeFile(path: String, content: String) async throws -> FileWriteResponse {
         var components = try components("/api/file")
         components.queryItems = [URLQueryItem(name: "path", value: path)]
         let body = ["content": content]
-        let _: EmptyResponse = try await request(components, method: "PUT", body: body)
+        return try await request(components, method: "PUT", body: body)
     }
 
     func createFile(path: String, content: String = "") async throws {
