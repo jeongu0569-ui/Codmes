@@ -18,15 +18,15 @@ iPhone·iPad 기능은 UIKit으로 따로 구현합니다. Notes와 PDF의 annot
 
 ## 주요 기능
 
-- [Chat](docs/chat.md): session, model, live streaming, context와 tool approval
-- [Notes와 PDF](docs/notes.md): file tree, PDF 읽기와 annotation, 대용량 streaming
-- [Search](docs/search/README.md): file과 본문 검색, 문서 추출, PDF page 결과
-- [Code](docs/code.md): source 편집, code agent task, patch와 check
-- [Runtime과 Server](docs/server/README.md): provider, model, tool과 Workspace API
+- [Chat](docs/features/chat.md): session, model, live streaming, context와 tool approval
+- [Notes와 PDF](docs/features/notes.md): file tree, PDF 읽기와 annotation, 대용량 streaming
+- [Search](docs/features/search.md): file과 본문 검색, 문서 추출, PDF page 결과
+- [Code](docs/features/code.md): source 편집, code agent task, patch와 check
+- [Runtime과 Server](docs/server/architecture.md): provider, model, tool과 Workspace API
 
 Apple 앱은 server의 절대 경로를 직접 다루지 않고 HTTP와 WebSocket API를 통해
-Workspace-relative path만 사용합니다. 자세한 제품 범위와 현재 한계는
-[제품 문서](docs/product.md)와 [roadmap](docs/roadmap.md)을 참고하세요.
+Workspace-relative path만 사용합니다. 아직 구현되지 않은 범위는
+[roadmap](docs/roadmap.md)을 참고하세요.
 
 ## 빠른 시작
 
@@ -134,9 +134,9 @@ npm run check
 
 ## 문서
 
-- [개발 문서 홈](docs/README.md)
-- [실행, 검증, 보안과 backup](docs/runbook.md)
-- [Server architecture와 API](docs/server/README.md)
-- [Apple client](docs/client/README.md)
-- [UI/UX 원칙](docs/ui-ux/README.md)
-- [Debug 기록](docs/debug/README.md)
+- [Server architecture](docs/server/architecture.md)
+- [Server API](docs/server/api-contract.md)
+- [Server data model](docs/server/data-model.md)
+- [Apple client](docs/client/apple.md)
+- [UI/UX 원칙](docs/client/ui-ux.md)
+- [Debug 기록](docs/debug/)

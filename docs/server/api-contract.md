@@ -55,7 +55,7 @@ PUT /api/file/annotations?path=Notes/example.pdf
 ```
 
 저장에 성공하면 해당 문서의 검색 항목도 갱신한다. 상태 형식과 저장 위치는
-[Notes annotation 문서](../notes.md#annotation-data)를 참고한다.
+[Notes annotation 문서](../features/notes.md#annotation-data)를 참고한다.
 
 ## Search와 context
 

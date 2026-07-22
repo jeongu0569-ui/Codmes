@@ -46,9 +46,8 @@ streaming한다. PDF를 포함해 server에서 받은 파일은 local disk cache
 cache 한도는 설정에서 1~50GB로 조절하며, 한도를 넘으면 오래 사용하지 않은
 파일부터 제거한다.
 
-세부 사항과 플랫폼 차이는 [Notes와 PDF 문서](../notes.md)를 참고한다.
+세부 사항과 플랫폼 차이는 [Notes와 PDF 문서](../features/notes.md)를 참고한다.
 
 ## 빌드
 
-명령과 workspace server 실행 방법은
-[runbook.md](../runbook.md)에 정리한다.
+명령과 Workspace server 실행 방법은 루트 [README](../../README.md)에 정리한다.
