@@ -355,6 +355,41 @@ test("remote Chat MCP keeps bearer out of approval state and calls exactly once 
   runtime.close();
 });
 
+test("MCP continuation saves a second approval request", async () => {
+  const root = await fixtureWorkspace();
+  await setDefaultModel(root, "custom", "demo-model");
+  await setCredentialValue(root, "custom", "CODMES_CUSTOM_BASE_URL", "http://model.test/v1");
+  await setCredentialValue(root, "custom", "CODMES_CUSTOM_API_KEY", "test-key");
+  await setMcpCredential(root, "knu", "test-token");
+  await writeSecurityConfig(root, { approvalMode: "auto", allowShell: true, allowedCommands: [], deniedCommands: [], requireApproval: ["mcp.tool.call"] });
+  await writeRuntimeConfig(root, { defaultModel: { provider: "custom", model: "demo-model" }, mcpServers: [{ name: "knu", transport: "streamable_http", url: "https://example.test/mcp", credential_id: "knu", surfaces: ["knu"], enabled: true }] });
+  let modelRequests = 0;
+  const runtime = new OpenAICompatibleRuntime({
+    workspaceRoot: root,
+    mcpClientFactory: () => ({ status: "stopped", async start() { this.status = "running"; }, async listTools() { return ["prepare", "status"].map((name) => ({ name, inputSchema: { type: "object" } })); }, async callTool(name) { return { content: [{ type: "text", text: name }] }; }, stop() {} }),
+    fetchImpl: async () => {
+      modelRequests += 1;
+      const name = modelRequests === 1 ? "prepare" : modelRequests === 2 ? "status" : null;
+      const chunks = name
+        ? [`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_${name}","type":"function","function":{"name":"mcp__knu__${name}","arguments":"{}"}}]}}]}\n\n`, "data: [DONE]\n\n"]
+        : ['data: {"choices":[{"delta":{"content":"done"}}]}\n\n', "data: [DONE]\n\n"];
+      return { ok: true, headers: { get: () => "text/event-stream" }, body: streamChunks(chunks) };
+    }
+  });
+  const engine = new WorkspaceAgentEngine({ workspaceRoot: root }, runtime);
+  const session = await engine.createSession({});
+  const first = await engine.submitPrompt({ sessionId: session.sessionId, message: "prepare", surface: "knu" });
+  const second = await engine.respondToWorkspaceApproval(first.approvalId, { approved: true });
+  assert.equal(second.result.status, "approval_required");
+  const paused = await engine.readTask(first.taskId);
+  assert.equal(paused.status, "approval_required");
+  assert.equal(paused.pendingState.toolName, "status");
+  const done = await engine.respondToWorkspaceApproval(second.result.approvalId, { approved: true });
+  assert.equal(done.result.status, "completed");
+  assert.equal((await engine.readTask(first.taskId)).result.reply, "done");
+  runtime.close();
+});
+
 test("approval.inbox.respond rejected marks MCP approval task failed", async () => {
   const root = await fixtureWorkspace();
   await setDefaultModel(root, "custom", "demo-model");
