@@ -310,7 +310,7 @@ export class StreamableHttpMcpClient {
     tokenAccessor,
     allowUnauthenticated = false,
     logger = console,
-    timeoutMs = 15000,
+    timeoutMs = 60000,
     fetchImpl = globalThis.fetch
   } = {}) {
     this.name = name;

@@ -245,56 +245,7 @@ export class WorkspaceAgentEngine extends EventEmitter {
       };
     } catch (error) {
       if (error?.approvalRequired) {
-        const approval = await this.state.recordApprovalRequest({
-          category: error.category || "approval.required",
-          summary: error.summary || error.message || "Approval required",
-          reason: error.reason,
-          sessionId: params.sessionId,
-          taskId: task.id,
-          payload: {
-            ...(error.payload || {}),
-            pendingState: error.pendingState,
-            serverName: error.pendingState?.serverName,
-            toolName: error.pendingState?.toolName,
-            arguments: error.pendingState?.arguments
-          }
-        });
-        await this.state.finishTask(task.id, {
-          status: "approval_required",
-          approvalIds: [approval.id],
-          pendingState: error.pendingState,
-          result: {
-            ok: false,
-            status: "approval_required",
-            approvalId: approval.id,
-            taskId: task.id,
-            pendingState: error.pendingState
-          },
-          error: null
-        });
-        const event = {
-          type: "approval.request",
-          engine: "workspace-agent",
-          runtime: this.runtimeName(),
-          sessionId: params.sessionId,
-          taskId: task.id,
-          approvalId: approval.id,
-          category: approval.category,
-          summary: approval.summary,
-          reason: approval.reason
-        };
-        this.trackEventWrite(this.state.recordAgentEvent(event));
-        this.emit("event", event);
-        await this.flush();
-        return {
-          ok: false,
-          status: "approval_required",
-          approvalId: approval.id,
-          taskId: task.id,
-          pendingState: error.pendingState,
-          engine: "workspace-agent",
-          runtime: this.runtimeName()
-        };
+        return await this.pauseTaskForApproval(task.id, error, { sessionId: params.sessionId });
       }
       await this.state.finishTask(task.id, {
         status: "failed",
@@ -567,6 +518,39 @@ export class WorkspaceAgentEngine extends EventEmitter {
     await Promise.allSettled([...this.eventWrites]);
   }
 
+  async pauseTaskForApproval(taskId, error, params = {}) {
+    const approval = await this.state.recordApprovalRequest({
+      category: error.category || "approval.required",
+      summary: error.summary || error.message || "Approval required",
+      reason: error.reason,
+      sessionId: params.sessionId,
+      taskId,
+      payload: {
+        ...(error.payload || {}),
+        pendingState: error.pendingState,
+        serverName: error.pendingState?.serverName,
+        toolName: error.pendingState?.toolName,
+        arguments: error.pendingState?.arguments
+      }
+    });
+    await this.state.finishTask(taskId, {
+      status: "approval_required",
+      approvalIds: [approval.id],
+      pendingState: error.pendingState,
+      result: { ok: false, status: "approval_required", approvalId: approval.id, taskId, pendingState: error.pendingState },
+      error: null
+    });
+    const event = {
+      type: "approval.request", engine: "workspace-agent", runtime: this.runtimeName(),
+      sessionId: params.sessionId || error.pendingState?.sessionId, taskId, approvalId: approval.id,
+      category: approval.category, summary: approval.summary, reason: approval.reason
+    };
+    this.trackEventWrite(this.state.recordAgentEvent(event));
+    this.emit("event", event);
+    await this.flush();
+    return { ok: false, status: "approval_required", approvalId: approval.id, taskId, pendingState: error.pendingState, engine: "workspace-agent", runtime: this.runtimeName() };
+  }
+
   async resumeTask(taskId, params = {}) {
     await this.state.ensure();
     const task = await this.state.readTask(taskId);
@@ -588,12 +572,19 @@ export class WorkspaceAgentEngine extends EventEmitter {
     if (!this.runtime || typeof this.runtime.resumePendingState !== "function") {
       throw Object.assign(new Error("Runtime does not support pending task resume."), { status: 501 });
     }
-    const result = await this.runtime.resumePendingState(pendingState, {
-      taskId,
-      approvalId: params.approvalId,
-      approval: params.approval,
-      codeRuntime: this.codeRuntime
-    });
+    let result;
+    try {
+      result = await this.runtime.resumePendingState(pendingState, {
+        taskId,
+        approvalId: params.approvalId,
+        approval: params.approval,
+        codeRuntime: this.codeRuntime
+      });
+    } catch (error) {
+      if (error?.approvalRequired) return await this.pauseTaskForApproval(taskId, error);
+      await this.state.finishTask(taskId, { status: "failed", error: error?.message || "Task resume failed.", pendingState: null });
+      throw error;
+    }
     const status = result.ok === false ? "failed" : "completed";
     const updated = await this.state.finishTask(taskId, {
       status,
